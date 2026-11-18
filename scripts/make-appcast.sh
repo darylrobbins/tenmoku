@@ -6,7 +6,7 @@ usage() {
 	cat <<EOF
 Usage: scripts/make-appcast.sh --zip PATH --version X.Y.Z --download-url URL
                                --signature BASE64 --out appcast.xml
-                               [--notes-url URL] [--min-system 11.0]
+                               [--notes-file PATH | --notes-url URL] [--min-system 11.0]
 
 Writes an RSS feed with one item, the release in PATH. One is enough: Sparkle updates any
 older version straight to the latest. The file is written only once xmllint accepts it.
@@ -19,7 +19,11 @@ older version straight to the latest. The file is written only once xmllint acce
   --signature BASE64   the zip's EdDSA signature, from Sparkle's signing tool. This script
                        only takes the result and never sees the key that made it.
   --out PATH           the appcast to write; its directory must exist
-  --notes-url URL      sparkle:releaseNotesLink, https only (default: none)
+  --notes-file PATH    the release notes (release-notes/X.Y.Z.md), as the item's
+                       <description sparkle:format="markdown"> in CDATA, which Sparkle's
+                       update alert shows; refused if empty or holding ]]> (default: none)
+  --notes-url URL      sparkle:releaseNotesLink, https only (default: none); Sparkle shows
+                       the page instead of a description, so not with --notes-file
   --min-system X.Y     sparkle:minimumSystemVersion (default: the bundle's
                        LSMinimumSystemVersion)
   -h, --help           this text
@@ -43,6 +47,7 @@ download_url=""
 signature=""
 out=""
 notes_url=""
+notes_file=""
 min_system=""
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -52,6 +57,7 @@ while [ $# -gt 0 ]; do
 	--signature) need_arg "$@"; signature=$2; shift 2 ;;
 	--out) need_arg "$@"; out=$2; shift 2 ;;
 	--notes-url) need_arg "$@"; notes_url=$2; shift 2 ;;
+	--notes-file) need_arg "$@"; notes_file=$2; shift 2 ;;
 	--min-system) need_arg "$@"; min_system=$2; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) die "unknown argument: $1 (see --help)" ;;
@@ -88,6 +94,14 @@ case "$signature" in
 *[!A-Za-z0-9+/=]*) die "--signature must be base64, got '$signature'" ;;
 esac
 [ -f "$zip" ] || die "zip not found: $zip"
+notes_text=""
+if [ -n "$notes_file" ]; then
+	[ -z "$notes_url" ] || die "give --notes-file or --notes-url, not both: Sparkle shows only the link"
+	[ -f "$notes_file" ] || die "notes file not found: $notes_file"
+	grep -q '[^[:space:]]' "$notes_file" || die "the notes file $notes_file is empty"
+	! grep -q -F ']]>' "$notes_file" || die "the notes file $notes_file holds ]]>, which would end the description's CDATA"
+	notes_text=$(cat "$notes_file")
+fi
 
 # By its full name: Sparkle's Updater.app has a Contents/Info.plist of its own inside the zip.
 info=Tenmoku.app/Contents/Info.plist
@@ -117,6 +131,12 @@ notes_line=""
 if [ -n "$notes_url" ]; then
 	notes_line="
       <sparkle:releaseNotesLink>$(xml_escape "$notes_url")</sparkle:releaseNotesLink>"
+fi
+# Markdown: Sparkle 2.10.1 renders it on every macOS it runs on (12.0 and later, its own
+# minimum); see docs/decisions/kc9c8hcj9f-release-notes.md.
+if [ -n "$notes_file" ]; then
+	notes_line="$notes_line
+      <description sparkle:format=\"markdown\"><![CDATA[$notes_text]]></description>"
 fi
 
 tmp="$out.tmp.$$"

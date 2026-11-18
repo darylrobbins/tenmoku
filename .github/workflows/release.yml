@@ -12,8 +12,10 @@ name: Release
 # app ships ad-hoc signed and with no appcast. The Velopack feeds are signed (a .sig beside each)
 # only with the TENMOKU_UPDATE_PRIVATE_KEY secret and TENMOKU_UPDATE_PUBLIC_KEY variable; an
 # unsigned feed is one the app never takes. The Windows and Linux builds are not code signed. A
-# manual run builds the same files as workflow artifacts and publishes nothing. See
-# docs/release/macos-signing.md, "Releasing", and docs/release/platforms.md.
+# manual run builds the same files as workflow artifacts and publishes nothing. The release's
+# body and the appcast's description are the tag's release-notes/<version>.md, which the version
+# job requires of a tag. See docs/release/macos-signing.md, "Releasing", and
+# docs/release/platforms.md.
 
 on:
   push:
@@ -33,8 +35,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
-      # Check for Updates compares releases with the version built in from Cargo.toml.
-      - name: Check the tag is Cargo.toml's version
+      # Check for Updates compares releases with the version built in from Cargo.toml. The
+      # release notes, release-notes/<version>.md, are the release's body and the appcast's.
+      - name: Check the tag is Cargo.toml's version and has its release notes
         if: github.ref_type == 'tag'
         run: scripts/check-release-version.sh "$GITHUB_REF_NAME"
       - name: Read Cargo.toml's version
@@ -46,6 +49,14 @@ jobs:
           ' Cargo.toml)
           [ -n "$version" ] || { echo "::error::no [workspace.package] version in Cargo.toml"; exit 1; }
           echo "version=$version" >>"$GITHUB_OUTPUT"
+      # A manual run publishes nothing, so notes still to write only warn.
+      - name: Check the release notes (a warning on a manual run)
+        if: github.ref_type != 'tag'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          scripts/check-release-version.sh --notes "$VERSION" ||
+            echo "::warning::release-notes/$VERSION.md is missing or malformed (above): a tag of this version would be refused"
 
   macos-arm64:
     needs: version
@@ -121,9 +132,18 @@ jobs:
           # On stdin only: an argument would show in the process list.
           signature=$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$SPARKLE_TOOLS/sign_update" --ed-key-file - -p "dist/$name") ||
             { echo "::error::Sparkle could not sign the zip: is the secret an exported private key?"; exit 1; }
+          # The release notes become the update alert's text. A tag always has them (the
+          # version job checked); a manual run may not yet.
+          notes="release-notes/$VERSION.md"
+          if [ -f "$notes" ]; then
+            set -- --notes-file "$notes"
+          else
+            echo "no $notes: the appcast has no description"
+            set --
+          fi
           scripts/make-appcast.sh --zip "dist/$name" --version "$VERSION" \
             --download-url "${DOWNLOAD_URL_PREFIX%/}/$name" --signature "$signature" \
-            --out dist/appcast.xml
+            --out dist/appcast.xml "$@"
       - name: Upload the zip as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
@@ -413,6 +433,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # For release-notes/<version>.md, at the tagged commit.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
       - name: Download every build job's files
         uses: actions/download-artifact@v8
         with:
@@ -427,6 +452,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GLIBC: ${{ needs.linux-x86_64.outputs.glibc }}
         run: |
+          # The body: the release notes (the version job refused a tag without them), then where
+          # each download is for.
+          version="${GITHUB_REF_NAME#v}"
+          notes="release-notes/$version.md"
+          [ -s "$notes" ] || { echo "::error::no $notes at $GITHUB_REF_NAME"; exit 1; }
+          body="$RUNNER_TEMP/release-body.md"
+          {
+            cat "$notes"
+            # A blank line between, whether or not the file ends in a newline.
+            [ -z "$(tail -c 1 "$notes")" ] || echo
+            echo
+            echo "Downloads: macOS on Apple Silicon (macos-arm64.zip); Windows on x64 or ARM64, an installer (windows-x64-Setup.exe, windows-arm64-Setup.exe) or a portable zip (windows-x64.zip, windows-arm64.zip); Linux on x86_64, an AppImage (linux-x86_64.AppImage) or a portable archive (linux-x86_64.tar.gz), both needing glibc $GLIBC or later. The releases.*.json and .nupkg files are the Windows and Linux update feeds. How to install, update and uninstall each, and to open a build the OS warns is unsigned: https://github.com/$GH_REPO/blob/$GITHUB_REF_NAME/docs/release/platforms.md"
+          } >"$body" || { echo "::error::could not write the release body to $body"; exit 1; }
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             # --clobber replaces only what it is given. A rebuilt zip under the old appcast.xml
             # would fail Sparkle's signature check on every installed copy, so leave both alone.
@@ -443,8 +481,8 @@ jobs:
               fi
             done
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$body"
           else
-            notes="Downloads: macOS on Apple Silicon (macos-arm64.zip); Windows on x64 or ARM64, an installer (windows-x64-Setup.exe, windows-arm64-Setup.exe) or a portable zip (windows-x64.zip, windows-arm64.zip); Linux on x86_64, an AppImage (linux-x86_64.AppImage) or a portable archive (linux-x86_64.tar.gz), both needing glibc $GLIBC or later. The releases.*.json and .nupkg files are the Windows and Linux update feeds. How to install, update and uninstall each, and to open a build the OS warns is unsigned: https://github.com/$GH_REPO/blob/$GITHUB_REF_NAME/docs/release/platforms.md"
-            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes \
-              --title "Tenmoku $GITHUB_REF_NAME" --notes "$notes"
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+              --title "Tenmoku $GITHUB_REF_NAME" --notes-file "$body"
           fi

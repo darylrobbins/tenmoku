@@ -113,27 +113,52 @@ expected for local builds.
 `.github/workflows/release.yml` does the steps above on a GitHub macOS arm64 runner, beside
 jobs that build the Windows x64, Windows ARM64 and Linux x86_64 downloads
 ([platforms.md](platforms.md)); one publish job attaches every job's files. To cut a
-release, set `version` under `[workspace.package]` in `Cargo.toml` to `X.Y.Z`, refresh
-`Cargo.lock` with `cargo check --workspace`, commit both, tag that commit `vX.Y.Z` and push the
-tag:
+release `X.Y.Z`:
+
+1. Draft its notes: `scripts/draft-release-notes.sh --out release-notes/X.Y.Z.md` lists each
+   commit since the last `v*` tag (or `--since vA.B.C`) under `## New` (feature tasks),
+   `## Fixed` (bugfix tasks), `## Internal (delete before release)` (refactor, chore and docs
+   tasks, `Flake:` fixes, version bumps) or `## Unsorted` (no task, or no `rgt` to ask), by the
+   task's type from `rgt task show`.
+2. Edit `release-notes/X.Y.Z.md` into what a user would notice: short bullets under `## New`,
+   `## Improved` and `## Fixed` only, in that order, with no H1, images, raw HTML or `]]>`
+   (the rules are in `crates/fe-workbench/src/whats_new.rs`). Delete the Internal and Unsorted
+   sections, moving what belongs into the three.
+3. Set `version` under `[workspace.package]` in `Cargo.toml` to `X.Y.Z`, refresh `Cargo.lock`
+   with `cargo check --workspace`, and commit both with `release-notes/X.Y.Z.md`: one version
+   bump commit.
+4. Tag that commit `vX.Y.Z` and push the tag:
 
 ```zsh
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
+That one file is the release's text everywhere: the What's New tab built into the app, the
+GitHub Release's body (the notes, then a paragraph on which download is for which platform),
+and the description of the item in `appcast.xml` that Sparkle's update alert shows
+(`scripts/make-appcast.sh --notes-file`, as Markdown).
+
 The tag minus its `v` becomes the app's version in `Info.plist`, while the binary has
 `Cargo.toml`'s built in, which Check for Updates compares with the latest release. So the
 workflow starts with `scripts/check-release-version.sh`, which refuses a tag that isn't exactly
 `v` plus `Cargo.toml`'s version: a release that got past it would offer itself as its own update.
+It also refuses the tag when `release-notes/X.Y.Z.md` is missing or empty, or has an H1 (`# `)
+line, an Internal or Unsorted heading left from the draft, or `]]>`, naming the file, the line
+and the rule; `scripts/check-release-version.sh --notes X.Y.Z` checks the file alone before you
+tag. The release fails there, before any build. A manual run without the file only warns. The
+rest of step 2's rules are fe-workbench's `the_shipped_notes_are_well_formed` test, which parses
+every notes file in each gate run, so commit the notes through the gate before tagging.
 
 The macOS job builds `cargo build --release -p fastedit --locked`, fetches Sparkle, bundles
 `Tenmoku.app` with it, checks that its binary's `--version` is the release's, runs
 `scripts/sign-notarize-macos.sh`, zips the app as `Tenmoku-X.Y.Z-macos-arm64.zip` with a
 `.sha256` beside it, signs the zip for Sparkle and writes `appcast.xml`, and uploads them as a
 workflow artifact. Once every platform's job has passed, the publish job attaches all their
-files to the GitHub Release for the tag (creating it with generated notes, or replacing the
-files on a release that already exists). Running the workflow by hand (Actions > Release > Run
+files to the GitHub Release for the tag, with the body read from the tagged commit's
+`release-notes/X.Y.Z.md` (`gh release create --notes-file`). On a release that already exists
+it replaces the files and sets the body again from the file (`gh release edit --notes-file`), so
+a re-run leaves the body the tag's notes, whatever was edited by hand. Running the workflow by hand (Actions > Release > Run
 workflow) builds the same files as workflow artifacts and publishes nothing.
 
 Signing and notarization use six repository secrets (Settings > Secrets and variables >

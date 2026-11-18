@@ -78,6 +78,8 @@ expect "sparkle:edSignature" "$enc/@*[local-name()='edSignature']" "$sig"
 expect "the signature's namespace" "namespace-uri($enc/@*[local-name()='edSignature'])" "$sparkle_ns"
 [ "$(x "count($(elem releaseNotesLink))")" = 0 ] || fail "a releaseNotesLink without --notes-url"
 ok "no releaseNotesLink without --notes-url"
+[ "$(x "count(//item/description)")" = 0 ] || fail "a description without --notes-file"
+ok "no description without --notes-file"
 pub=$(x "//item/pubDate")
 echo "$pub" | grep -q -E '^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} \+0000$' ||
 	fail "pubDate is not RFC 822: '$pub'"
@@ -86,6 +88,30 @@ ok "pubDate is RFC 822: $pub"
 run --notes-url "$notes" --min-system 12.5 >/dev/null
 expect "sparkle:releaseNotesLink, unescaped" "$(elem releaseNotesLink)" "$notes"
 expect "--min-system over the bundle's" "$(elem minimumSystemVersion)" 12.5
+rm -f "$out"
+
+# --notes-file: the item's description, the file's text as is in CDATA, as markdown. The text
+# has what XML would otherwise escape, and a $ and backticks a shell could expand.
+cat >"$t/notes.md" <<'EOF'
+## New
+
+- Tabs & splits: `<C-w>` keys, and a line with <angle brackets>, "quotes", \n and $HOME.
+
+## Fixed
+
+- Check for Updates works again.
+EOF
+run --notes-file "$t/notes.md" >/dev/null
+xmllint --noout "$out" || fail "xmllint refused the appcast with notes"
+ok "xmllint accepts the appcast with --notes-file"
+[ "$(x "count(//item/description)")" = 1 ] || fail "not one description: $(x "count(//item/description)")"
+[ "$(x "//item/description")" = "$(cat "$t/notes.md")" ] ||
+	fail "the description is not the notes file's text: $(x "//item/description")"
+ok "the description is the notes file's text"
+grep -q -F '<description sparkle:format="markdown"><![CDATA[## New' "$out" || fail "the description is not CDATA: $(cat "$out")"
+ok "the description is CDATA"
+expect "the description's format" "//item/description/@*[local-name()='format']" markdown
+expect "the format's namespace" "namespace-uri(//item/description/@*[local-name()='format'])" "$sparkle_ns"
 rm -f "$out"
 
 # Each refusal leaves no appcast and names what was wrong.
@@ -128,5 +154,13 @@ refused_with "a missing zip" "not found" --zip "$t/absent.zip"
 (cd "$t/z" && zip -q ../other.zip "$updater/Info.plist")
 refused_with "a zip without the app" "does not hold" --zip "$t/other.zip"
 refused_with "an unknown argument" unknown --bogus
+printf '## Fixed\n\n- A line that ends the CDATA: ]]> here.\n' >"$t/cdata.md"
+refused_with "a notes file holding ]]>" ']]>' --notes-file "$t/cdata.md"
+: >"$t/empty.md"
+refused_with "an empty notes file" empty --notes-file "$t/empty.md"
+printf '\n  \n\t\n' >"$t/blank.md"
+refused_with "a notes file of blank lines" empty --notes-file "$t/blank.md"
+refused_with "a missing notes file" "not found" --notes-file "$t/absent.md"
+refused_with "--notes-file with --notes-url" "not both" --notes-file "$t/notes.md" --notes-url "$notes"
 
 echo ok

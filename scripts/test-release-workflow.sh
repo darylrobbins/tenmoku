@@ -1,7 +1,9 @@
 #!/bin/sh
 # Checks for the release workflow (.github/workflows/release.yml) and its signing script:
 # actionlint, the workflow's trigger, its build jobs (runners, smoke steps, artifacts) and publish
-# job (needs, tag pushes only), tag check, build and publish steps, where its secrets and
+# job (needs, tag pushes only), tag check (and fixture runs of check-release-version.sh on a temp
+# copy of the layout, its release notes rules among them), build and publish steps (the body from
+# release-notes/<version>.md, the appcast's --notes-file), where its secrets and
 # write permission appear, the Windows and Linux packaging scripts (a run of package-linux.sh on
 # a fixture binary), the signing script's hygiene, a run of the signing script with no
 # secrets against a fixture bundle (a copy of /usr/bin/true, as test-bundle-macos.sh does), the
@@ -43,25 +45,128 @@ has "gh release upload " "upload to an existing release"
 ok "trigger, runner, build, bundle, sign and gh release steps"
 
 # A tag must name the version the binary is built with: Check for Updates compares that one.
-check="$here/check-release-version.sh"
+# And it must have its release notes: the release's body and the appcast's description.
 has 'run: scripts/check-release-version.sh "\$GITHUB_REF_NAME"$' "tag and Cargo version check"
+version_job=$(awk -v j="  version:" '/^jobs:$/ { in_jobs = 1 } in_jobs && $0 == j { on = 1; next } on && /^  [^ ]/ { exit } on' "$wf")
+tag_step=$(printf '%s\n' "$version_job" | awk '/- name: Check the tag is Cargo.toml.s version and has its release notes$/ { on = 1; print; next } on && /^      - / { exit } on')
+printf '%s\n' "$tag_step" | grep -q -x "        if: github.ref_type == 'tag'" || fail "the version job's tag check is not on tag pushes"
+printf '%s\n' "$tag_step" | grep -q -x '        run: scripts/check-release-version.sh "$GITHUB_REF_NAME"' ||
+	fail "the version job's tag check does not run check-release-version.sh on the tag"
+grep -q 'check_notes "$version"$' "$here/check-release-version.sh" || fail "check-release-version.sh does not check the tag's notes"
 awk '
 	/check-release-version.sh/ && !checked { checked = NR }
 	/cargo build --release/ && !built { built = NR }
 	END { exit !(checked && built && checked < built) }
 ' "$wf" || fail "the tag is not checked before the build"
-version=$(awk '
-	/^\[/ { in_pkg = ($0 == "[workspace.package]") }
-	in_pkg && /^version[ \t]*=/ { gsub(/.*=[ \t]*"|".*/, ""); print; exit }
-' "$root/Cargo.toml")
-[ -n "$version" ] || fail "no [workspace.package] version in Cargo.toml"
-"$check" "v$version" >/dev/null || fail "the tag v$version was refused at Cargo.toml's version"
+# check-release-version.sh in a temp copy of the layout: scripts/, Cargo.toml, release-notes/.
+lay="$t/layout"
+mkdir -p "$lay/scripts" "$lay/release-notes"
+cp "$here/check-release-version.sh" "$lay/scripts/"
+check="$lay/scripts/check-release-version.sh"
+version=1.2.3
+printf '[workspace]\nmembers = []\n\n[workspace.package]\nversion = "%s"\nedition = "2024"\n' "$version" >"$lay/Cargo.toml"
+notes="$lay/release-notes/$version.md"
+good='## New
+
+- Something a user would notice.
+
+## Improved
+
+- Faster, with `code` and a [link](https://example.test/).
+
+## Fixed
+
+- A fix.'
+printf '%s\n' "$good" >"$notes"
+"$check" "v$version" >"$t/check.log" 2>&1 || { cat "$t/check.log"; fail "the tag v$version was refused with good notes"; }
+grep -q "release-notes/$version.md is well formed" "$t/check.log" || fail "no notes line: $(cat "$t/check.log")"
 for tag in "v$version.1" "v9$version" "$version" "v$version-rc1" v "" v1.2; do
 	if "$check" "$tag" >/dev/null 2>&1; then
 		fail "check-release-version.sh took the tag '$tag' at Cargo.toml's version $version"
 	fi
 done
-ok "a tag must be v plus Cargo.toml's version, checked before the build"
+# passes WHAT: the notes now in place pass. The check has line rules only (fe-workbench's
+# tests::whats_new owns the Markdown grammar), so text that only looks like a block passes.
+passes() {
+	"$check" --notes "$version" >"$t/check.log" 2>&1 || { cat "$t/check.log"; fail "good notes with $1 were refused"; }
+	ok "good notes with $1 pass"
+}
+printf '## New\n\n- `code` starts this bullet, and ```three``` backticks make a span too.\n- Keys like `<C-w>` and `# x` sit in code spans.\n' >"$notes"
+passes "inline code spans"
+printf '## New\n\n- | now works as a search character, as does a | b.\n' >"$notes"
+passes "a literal |"
+printf '## New\n\n- = and == are told apart.\n- Searching for\n  = =\n  now works.\n' >"$notes"
+passes "= in bullets"
+printf '## New\n\n- Search for ![ now works, and \\![alt](file) is text.\n' >"$notes"
+passes "a literal !["
+printf '## New\n\n- ####### seven hashes, ## two mid-line, and #tags are text.\n' >"$notes"
+passes "runs of #"
+cat >"$notes" <<'EOF'
+## New
+
+- Parent
+  - Child
+
+    A paragraph in Child.
+
+  Back in Parent.
+- - A child on its parent's line
+
+      Its own paragraph.
+
+## Fixed
+
+* Starred.
+  + With a plus inside.
+EOF
+passes "nested lists with paragraphs"
+for shipped in "$root"/release-notes/*.md; do
+	v=$(basename "$shipped" .md)
+	"$here/check-release-version.sh" --notes "$v" >"$t/check.log" 2>&1 ||
+		{ cat "$t/check.log"; fail "the shipped release-notes/$v.md was refused"; }
+done
+ok "a tag must be v plus Cargo.toml's version, checked before the build; good notes pass, the shipped ones too"
+
+# refused WHAT RULE: the notes now in place fail the tag, naming the file and RULE.
+refused() {
+	if "$check" "v$version" >"$t/check.log" 2>&1; then
+		fail "notes with $1 passed"
+	fi
+	grep -q -F "release-notes/$version.md" "$t/check.log" || fail "$1: the file is not named: $(cat "$t/check.log")"
+	grep -q -F -- "$2" "$t/check.log" || fail "$1: the rule '$2' is not named: $(cat "$t/check.log")"
+	ok "notes with $1 are refused: $(grep -F -- "$2" "$t/check.log" | head -n 1)"
+}
+rm "$notes"
+refused "no file" "is missing"
+: >"$notes"
+refused "an empty file" "is empty"
+printf '\n \n' >"$notes"
+refused "only blank lines" "is empty"
+printf '# Tenmoku 1.2.3\n\n%s\n' "$good" >"$notes"
+refused "an H1" "release-notes/1.2.3.md:1: an H1 (# Tenmoku 1.2.3)"
+printf '%s\n\n## Internal (delete before release)\n\n- Flake: a test.\n' "$good" >"$notes"
+refused "an Internal heading" "release-notes/1.2.3.md:13: the draft's heading \"## Internal (delete before release)\""
+printf '%s\n\n## Unsorted\n\n- Something.\n' "$good" >"$notes"
+refused "an Unsorted heading" "release-notes/1.2.3.md:13: the draft's heading \"## Unsorted\""
+printf '## Fixed\n\n- A fix ]]> that ends CDATA.\n' >"$notes"
+refused "]]>" "release-notes/1.2.3.md:3: holds ]]>"
+"$check" "v$version.1" >"$t/check.log" 2>&1 && fail "a wrong tag passed"
+grep -q "isn't v$version" "$t/check.log" || fail "a wrong tag's message: $(cat "$t/check.log")"
+ok "a wrong tag is still refused for the tag, before its notes are read"
+
+# A manual run only warns: the version job's dispatch step, run on the layout with no notes.
+dispatch=$(printf '%s\n' "$version_job" | awk '/- name: Check the release notes \(a warning on a manual run\)$/ { on = 1; print; next } on && /^      - / { exit } on')
+printf '%s\n' "$dispatch" | grep -q -x "        if: github.ref_type != 'tag'" || fail "the notes warning step is not for manual runs"
+printf '%s\n' "$dispatch" | grep -q -x '          VERSION: ${{ steps.version.outputs.version }}' || fail "the notes warning step lacks the version"
+printf '%s\n' "$dispatch" | awk '/^        run: \|$/ { on = 1; next } on { sub(/^          /, ""); print }' >"$t/dispatch-step.sh"
+rm -f "$notes"
+(cd "$lay" && VERSION=$version bash -e "$t/dispatch-step.sh") >"$t/dispatch.log" 2>&1 ||
+	{ cat "$t/dispatch.log"; fail "a manual run without notes failed the version job"; }
+grep -q "^::warning::release-notes/$version.md is missing or malformed" "$t/dispatch.log" || fail "no warning: $(cat "$t/dispatch.log")"
+printf '%s\n' "$good" >"$notes"
+(cd "$lay" && VERSION=$version bash -e "$t/dispatch-step.sh") >"$t/dispatch.log" 2>&1 || fail "a manual run with notes failed"
+grep -q '::warning' "$t/dispatch.log" && fail "a manual run with good notes warned: $(cat "$t/dispatch.log")"
+ok "a manual run without notes warns and goes on"
 
 # contents: write once, in the publish job's own permissions (job keys sit at 4 spaces).
 [ "$(grep -c 'contents: write' "$wf")" -eq 1 ] || fail "contents: write appears other than once"
@@ -237,7 +342,23 @@ echo "$publish_job" | grep -q -x '          merge-multiple: true' || fail "publi
 for j in version macos-arm64 windows linux-x86_64; do
 	job "$j" | grep -q 'gh release' && fail "$j runs gh release: only publish may"
 done
-echo "$publish_job" | grep -q -F -- '--notes "$notes"' || fail "the release notes do not get the downloads text"
+# The body: the tag's notes file then the downloads text, as --notes-file on create and edit.
+first_step=$(echo "$publish_job" | awk '/^    steps:$/ { on = 1; next } on && /^      - / { print; exit }')
+[ "$first_step" = "      - uses: actions/checkout@v7" ] || fail "publish does not check out first: $first_step"
+echo "$publish_job" | grep -q -x '          ref: ${{ github.ref }}' || fail "publish does not check out the tag"
+echo "$publish_job" | grep -q -x '          persist-credentials: false' || fail "publish's checkout keeps the token"
+echo "$publish_job" | grep -q -F 'notes="release-notes/$version.md"' || fail "publish does not read release-notes/<version>.md"
+echo "$publish_job" | grep -q -F 'gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \' &&
+	echo "$publish_job" | grep -q -F -- '--title "Tenmoku $GITHUB_REF_NAME" --notes-file "$body"' ||
+	fail "gh release create does not take --notes-file"
+echo "$publish_job" | grep -q -x -F '            gh release edit "$GITHUB_REF_NAME" --notes-file "$body"' ||
+	fail "a re-run does not set the body with gh release edit --notes-file"
+if grep -n -e '--generate-notes' "$wf"; then
+	fail "release.yml still generates notes (line above)"
+fi
+if echo "$publish_job" | grep -n -e '--notes "'; then
+	fail "publish still passes --notes text (line above)"
+fi
 echo "$publish_job" | grep -q -F 'needs glibc $GLIBC or later' || echo "$publish_job" | grep -q -F 'needing glibc $GLIBC or later' ||
 	fail "the release notes do not name the minimum glibc"
 for word in windows-x64-Setup.exe windows-arm64-Setup.exe linux-x86_64.AppImage; do
@@ -313,6 +434,11 @@ has 'gh release upload "\$GITHUB_REF_NAME" dist/\* ' "appcast.xml goes up with a
 has 'gh release create "\$GITHUB_REF_NAME" dist/\* ' "appcast.xml goes up with a new release"
 ok "appcast.xml is written to dist/ and uploaded with the zip"
 
+# The appcast step passes the version's notes file when there is one.
+has 'notes="release-notes/\$VERSION.md"' "the appcast step's notes file"
+has '--out dist/appcast.xml "\$@"$' "the appcast step passes its --notes-file"
+has 'set -- --notes-file "\$notes"$' "the appcast step's --notes-file"
+
 # The real bodies of the sign and publish steps, against a fake gh that logs what it is asked.
 step_body() {
 	awk -v name="- name: $1" '
@@ -334,19 +460,62 @@ case "$*" in
 	printf '%s\n' "$FAKE_ASSETS"
 	;;
 "release view "*) exit "$FAKE_VIEW_RC" ;;
-*) echo "$*" >>"$FAKE_GH_LOG" ;;
+*)
+	echo "$*" >>"$FAKE_GH_LOG"
+	# The body it was given, as the last such command left it.
+	while [ $# -gt 0 ]; do
+		[ "$1" != --notes-file ] || cp "$2" "$FAKE_GH_LOG.body"
+		shift
+	done
+	;;
 esac
 EOF
 chmod +x "$t/bin/gh"
+
+# The sign step in a checkout-like folder: a fake sign_update, and a make-appcast.sh stub that
+# logs its arguments; with and without the version's notes file.
+mkdir -p "$t/signrun/scripts" "$t/signrun/dist" "$t/tools"
+printf '#!/bin/sh\ncat >/dev/null\necho AbCd==\n' >"$t/tools/sign_update"
+printf '#!/bin/sh\necho "$@" >"$APPCAST_ARGS"\n' >"$t/signrun/scripts/make-appcast.sh"
+chmod +x "$t/tools/sign_update" "$t/signrun/scripts/make-appcast.sh"
+: >"$t/signrun/dist/Tenmoku-1.2.3-macos-arm64.zip"
+sign_run() {
+	(cd "$t/signrun" && SPARKLE_ED_PRIVATE_KEY=fake SPARKLE_TOOLS="$t/tools" VERSION=1.2.3 \
+		DOWNLOAD_URL_PREFIX=https://example.test/dl APPCAST_ARGS="$t/appcast.args" bash -e "$t/sign-step.sh") >"$t/signrun.log" 2>&1 ||
+		{ cat "$t/signrun.log"; fail "the sign step failed"; }
+}
+sign_run
+grep -q -e '--out dist/appcast.xml$' "$t/appcast.args" || fail "no notes file, yet make-appcast.sh got: $(cat "$t/appcast.args")"
+grep -q 'no release-notes/1.2.3.md: the appcast has no description' "$t/signrun.log" || fail "no line for the missing notes: $(cat "$t/signrun.log")"
+mkdir -p "$t/signrun/release-notes"
+printf '## Fixed\n\n- A fix.\n' >"$t/signrun/release-notes/1.2.3.md"
+sign_run
+grep -q -e '--out dist/appcast.xml --notes-file release-notes/1.2.3.md$' "$t/appcast.args" ||
+	fail "make-appcast.sh did not get the notes file: $(cat "$t/appcast.args")"
+ok "the appcast step passes release-notes/\$VERSION.md as --notes-file when it is there"
 # Runs the publish step in a fresh dist/ holding the zip, and appcast.xml when $1 is "appcast".
 publish() {
-	rm -rf "$t/run" "$t/gh.log"
-	mkdir -p "$t/run/dist"
+	rm -rf "$t/run" "$t/gh.log" "$t/gh.log.body" "$t/runner"
+	mkdir -p "$t/run/dist" "$t/run/release-notes" "$t/runner"
 	: >"$t/gh.log"
 	: >"$t/run/dist/Tenmoku-1.2.3-macos-arm64.zip"
 	[ "$1" != appcast ] || : >"$t/run/dist/appcast.xml"
-	(cd "$t/run" && PATH="$t/bin:$PATH" GITHUB_REF_NAME=v1.2.3 FAKE_GH_LOG="$t/gh.log" bash -e "$t/publish-step.sh") \
-		>"$t/publish.log" 2>&1
+	printf '%s\n' "$good" >"$t/run/release-notes/1.2.3.md"
+	publish_again
+}
+# The publish step again on the same folder.
+publish_again() {
+	(cd "$t/run" && PATH="$t/bin:$PATH" GITHUB_REF_NAME=v1.2.3 FAKE_GH_LOG="$t/gh.log" RUNNER_TEMP="$t/runner" \
+		GH_REPO=owner/repo GLIBC=2.39 bash -e "$t/publish-step.sh") >"$t/publish.log" 2>&1
+}
+# The body gh was last given: the notes file, a blank line, then the downloads paragraph.
+body_is_notes() {
+	[ -f "$t/gh.log.body" ] || fail "$1: gh got no --notes-file"
+	{
+		printf '%s\n\n' "$good"
+		echo "Downloads: macOS on Apple Silicon (macos-arm64.zip); Windows on x64 or ARM64, an installer (windows-x64-Setup.exe, windows-arm64-Setup.exe) or a portable zip (windows-x64.zip, windows-arm64.zip); Linux on x86_64, an AppImage (linux-x86_64.AppImage) or a portable archive (linux-x86_64.tar.gz), both needing glibc 2.39 or later. The releases.*.json and .nupkg files are the Windows and Linux update feeds. How to install, update and uninstall each, and to open a build the OS warns is unsigned: https://github.com/owner/repo/blob/v1.2.3/docs/release/platforms.md"
+	} >"$t/body.expected"
+	cmp -s "$t/body.expected" "$t/gh.log.body" || fail "$1: the body is not the notes then the downloads: $(diff "$t/body.expected" "$t/gh.log.body")"
 }
 
 # A signed release, then a rerun with the secret gone: the sign step skips, the publish refuses.
@@ -365,7 +534,9 @@ ok "a rerun with no appcast over a signed release is refused and uploads nothing
 
 publish appcast || { cat "$t/publish.log"; fail "a signed rerun of a signed release failed"; }
 grep -q '^release upload v1.2.3 .*dist/appcast.xml .*--clobber' "$t/gh.log" || fail "the signed rerun: $(cat "$t/gh.log")"
-ok "a signed rerun replaces appcast.xml with the zip"
+grep -q "^release edit v1.2.3 --notes-file $t/runner/" "$t/gh.log" || fail "the rerun did not set the body: $(cat "$t/gh.log")"
+body_is_notes "the rerun"
+ok "a signed rerun replaces appcast.xml with the zip and sets the body from the notes file"
 
 FAKE_ASSETS='Tenmoku-1.2.3-macos-arm64.zip'
 publish none || { cat "$t/publish.log"; fail "an unsigned rerun of an unsigned release failed"; }
@@ -383,8 +554,7 @@ grep -q 'has releases.linux-x86_64-stable.json.sig and this run made none' "$t/p
 	fail "no reason given: $(cat "$t/publish.log")"
 [ ! -s "$t/gh.log" ] || fail "the refused rerun still changed the release: $(cat "$t/gh.log")"
 : >"$t/run/dist/releases.linux-x86_64-stable.json.sig"
-(cd "$t/run" && PATH="$t/bin:$PATH" GITHUB_REF_NAME=v1.2.3 FAKE_GH_LOG="$t/gh.log" bash -e "$t/publish-step.sh") \
-	>"$t/publish.log" 2>&1 || { cat "$t/publish.log"; fail "a signed rerun of a signed feed failed"; }
+publish_again || { cat "$t/publish.log"; fail "a signed rerun of a signed feed failed"; }
 grep -q '^release upload v1.2.3 .*dist/releases.linux-x86_64-stable.json.sig .*--clobber' "$t/gh.log" ||
 	fail "the signed feed rerun: $(cat "$t/gh.log")"
 ok "a rerun with no feed .sig over a signed feed is refused; a signed one replaces it"
@@ -401,7 +571,39 @@ FAKE_ASSETS_FAIL=''
 FAKE_VIEW_RC=1
 publish appcast || { cat "$t/publish.log"; fail "a new signed release failed"; }
 grep -q '^release create v1.2.3 .*dist/appcast.xml ' "$t/gh.log" || fail "the new release: $(cat "$t/gh.log")"
-ok "a new release is created with appcast.xml"
+grep -q -e "--notes-file $t/runner/" "$t/gh.log" || fail "the new release has no --notes-file: $(cat "$t/gh.log")"
+grep -q -e '--generate-notes' "$t/gh.log" && fail "the new release generates notes: $(cat "$t/gh.log")"
+body_is_notes "the new release"
+ok "a new release is created with appcast.xml and the notes file then the downloads as its body"
+# A notes file with no newline at its end still gets a blank line before the downloads.
+printf '%s' "$good" >"$t/run/release-notes/1.2.3.md"
+publish_again || { cat "$t/publish.log"; fail "a new release from notes with no final newline failed"; }
+body_is_notes "notes with no final newline"
+FAKE_VIEW_RC=0
+publish_again || { cat "$t/publish.log"; fail "a rerun from notes with no final newline failed"; }
+grep -q "^release edit v1.2.3 --notes-file " "$t/gh.log" || fail "the rerun did not set the body: $(cat "$t/gh.log")"
+body_is_notes "a rerun from notes with no final newline"
+FAKE_VIEW_RC=1
+ok "notes with no final newline still get a blank line before the downloads, on create and on a rerun"
+# A body that can't be written stops the step before any gh call, whichever bash runs it (3.2's
+# -e lets a failed redirect of a { } group go on).
+: >"$t/gh.log"
+if (cd "$t/run" && PATH="$t/bin:$PATH" GITHUB_REF_NAME=v1.2.3 FAKE_GH_LOG="$t/gh.log" RUNNER_TEMP="$t/absent" \
+	GH_REPO=owner/repo GLIBC=2.39 bash -e "$t/publish-step.sh") >"$t/publish.log" 2>&1; then
+	fail "the publish step went on with no body written"
+fi
+grep -q 'could not write the release body' "$t/publish.log" || fail "no reason given: $(cat "$t/publish.log")"
+[ ! -s "$t/gh.log" ] || fail "an unwritten body still changed the release: $(cat "$t/gh.log")"
+ok "a body that cannot be written stops the publish step before gh"
+
+rm "$t/run/release-notes/1.2.3.md" "$t/gh.log.body"
+: >"$t/gh.log"
+if publish_again; then
+	fail "a tag with no notes file was published"
+fi
+grep -q 'no release-notes/1.2.3.md at v1.2.3' "$t/publish.log" || fail "no reason given: $(cat "$t/publish.log")"
+[ ! -s "$t/gh.log" ] || fail "a release with no notes was changed: $(cat "$t/gh.log")"
+ok "publish refuses a tag with no notes file and changes nothing"
 
 # C5: no tracing, no echo of secret-named variables.
 if grep -n -E "set -x|echo.*(PASSWORD|CERTIFICATE|APPLE_APP)" "$sign"; then
@@ -525,6 +727,15 @@ ok "install.sh escapes a folder named $odd for the desktop entry"
 
 [ -f "$root/crates/fastedit/tests/version_flag.rs" ] || fail "no crates/fastedit/tests/version_flag.rs"
 ok "crates/fastedit/tests/version_flag.rs covers the --version the smoke steps run"
+
+# The Releasing section: the notes file drafted, edited and committed with the bump, and no
+# generated notes.
+section_notes=$(awk '/^## / { on = ($0 ~ /^## Releasing/) } on' "$root/docs/release/macos-signing.md")
+for word in scripts/draft-release-notes.sh release-notes/X.Y.Z.md 'version bump' '--notes-file' appcast; do
+	echo "$section_notes" | grep -q -F -- "$word" || fail "the Releasing section does not name $word"
+done
+echo "$section_notes" | grep -q -i 'generated notes' && fail "the Releasing section still says generated notes"
+ok "the Releasing section has the draft, edit and commit-with-the-bump steps, and no generated notes"
 
 # C6: the Releasing section names the secrets and the tag format.
 doc="$root/docs/release/macos-signing.md"
