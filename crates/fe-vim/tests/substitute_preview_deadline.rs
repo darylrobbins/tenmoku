@@ -5,8 +5,35 @@
 //! counted point of the work (`set_work_limit`), not by lifting the time
 //! limit and waiting.
 
-use fe_vim::HeadlessVim;
-use fe_vim::search::{set_work_limit, work_done};
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
+
+use fe_vim::search::{DEFAULT_TIME_LIMIT, set_time_limit, set_work_limit, work_done};
+use fe_vim::{HeadlessVim, set_search_preview_limit};
+
+/// Lifts the preview's real-time limits while a counted preview runs, so only
+/// the work limit can stop it on a loaded machine; restores the shipped ones
+/// on drop. The search limit is process-wide, so the guard holds a lock for
+/// the whole preview and the tests run one at a time.
+struct Unhurried(#[allow(dead_code)] MutexGuard<'static, ()>);
+
+static LIMITS: Mutex<()> = Mutex::new(());
+
+impl Unhurried {
+    fn new() -> Self {
+        let guard = LIMITS.lock().unwrap_or_else(|p| p.into_inner());
+        set_search_preview_limit(Some(Duration::from_secs(600)));
+        set_time_limit(Duration::from_secs(600));
+        Unhurried(guard)
+    }
+}
+
+impl Drop for Unhurried {
+    fn drop(&mut self) {
+        set_search_preview_limit(None);
+        set_time_limit(DEFAULT_TIME_LIMIT);
+    }
+}
 
 /// How long the templates are: under the preview's size cap.
 const LEN: u64 = 1000;
@@ -36,6 +63,7 @@ fn preview_after(
     let text = vim.text();
     vim.feed(":").unwrap();
     let registers = format!("{:?}", vim.registers().last_search());
+    let _unhurried = Unhurried::new();
     set_work_limit(limit);
     let before = work_done();
     let preview = vim
