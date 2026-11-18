@@ -139,13 +139,41 @@ fn draw(vcx: &mut VisualTestContext) {
 
 /// Draws until `done`: plugins load and stop on threads of their own.
 fn until(vcx: &mut VisualTestContext, what: &str, done: impl Fn(&App) -> bool) {
+    wait(vcx, what, None, done);
+}
+
+/// Draws until `done`, sending the settings batch again each second: a
+/// batch the host took before it was ready for it, under load, is not lost
+/// for good, as a later watcher event would not lose it.
+fn wait(
+    vcx: &mut VisualTestContext,
+    what: &str,
+    resend: Option<(&BatchSender, PathBuf)>,
+    done: impl Fn(&App) -> bool,
+) {
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut sent = Instant::now();
     loop {
         draw(vcx);
         if vcx.update(|_, cx| done(cx)) {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        if let Some((sender, user)) = &resend
+            && sent.elapsed() >= Duration::from_secs(1)
+        {
+            sender.send(vec![user.clone()]);
+            sent = Instant::now();
+        }
+        if Instant::now() >= deadline {
+            let seen = vcx.update(|_, cx| {
+                format!(
+                    "states: {:?}, diagnostics: {:?}",
+                    fe_workbench::plugin_states(cx),
+                    diagnostics(cx).to_vec()
+                )
+            });
+            panic!("timed out waiting for {what}; {seen}");
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -173,12 +201,20 @@ fn listed(vcx: &mut VisualTestContext) -> Vec<String> {
     })
 }
 
-/// Writes the user's settings and sends the batch the watcher would.
-fn save_settings(state: &Path, text: &str, sender: &BatchSender, vcx: &mut VisualTestContext) {
+/// Writes the user's settings and sends the batch the watcher would, then
+/// waits for `done`, sending it again while it doesn't hold.
+fn save_settings(
+    state: &Path,
+    text: &str,
+    sender: &BatchSender,
+    vcx: &mut VisualTestContext,
+    what: &str,
+    done: impl Fn(&App) -> bool,
+) {
     let user = state.join("settings.toml");
     fs::write(&user, text).unwrap();
-    sender.send(vec![user]);
-    draw(vcx);
+    sender.send(vec![user.clone()]);
+    wait(vcx, what, Some((sender, user)), done);
 }
 
 #[gpui::test]
@@ -227,15 +263,27 @@ fn the_preview_setting_applies_live(cx: &mut TestAppContext) {
 
     // On: the granted plugin loads, with no restart and no prompt.
     let on = "[extensions]\nplugins_preview = true\n";
-    save_settings(state.path(), on, &sender, vcx);
-    until(vcx, "the plugin to load", is(PluginState::Running));
+    save_settings(
+        state.path(),
+        on,
+        &sender,
+        vcx,
+        "the plugin to load",
+        is(PluginState::Running),
+    );
     assert!(!vcx.has_pending_prompt());
     assert_eq!(cached(state.path()), 1);
 
     // Off: it unloads once its shutdown has run, its commands withdrawn and
     // its grant kept.
-    save_settings(state.path(), "", &sender, vcx);
-    until(vcx, "the plugin to unload", is(PluginState::PreviewOff));
+    save_settings(
+        state.path(),
+        "",
+        &sender,
+        vcx,
+        "the plugin to unload",
+        is(PluginState::PreviewOff),
+    );
     assert_eq!(listed(vcx), Vec::<String>::new());
     let record = store(state.path()).get(PLUGIN).unwrap().unwrap();
     assert_eq!(record.version, Some((1, 0, 0)));
@@ -247,8 +295,14 @@ fn the_preview_setting_applies_live(cx: &mut TestAppContext) {
     assert!(!vcx.has_pending_prompt());
 
     // On again: it loads without asking.
-    save_settings(state.path(), on, &sender, vcx);
-    until(vcx, "the plugin to load again", is(PluginState::Running));
+    save_settings(
+        state.path(),
+        on,
+        &sender,
+        vcx,
+        "the plugin to load again",
+        is(PluginState::Running),
+    );
     assert!(!vcx.has_pending_prompt());
     assert_eq!(
         vcx.update(|_, cx| fe_workbench::pending_plugin_grants(cx)),
