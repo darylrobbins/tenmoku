@@ -1,7 +1,7 @@
 ---
 task_uid: "01m71sdh6sp5q22gn5krsav71f"
 task: "T1682"
-rev: 1
+rev: 2
 type: "feature"
 complexity: "l"
 criteria:
@@ -22,7 +22,7 @@ criteria:
     required: true
     manual: false
   - id: "C5"
-    text: "F1 fixed: record_owned and cleanup use every live, identity-checked (pid + start time) recorded process as a discovery root, while tracking and in cleanup. A new stand-in under tools/e2e-macos/standins/ where an orphan starts a long-lived TERM-resistant child after its parent has exited is run with MODE=hang under --timeout, MODE=exit, SIGINT and SIGTERM, and on each path the orphan and its child are gone (pgrep finds none) and the exit status is 124, 1, 130 and 143 as the record's table; the record's four earlier stand-in runs give the same results as before; the stand-in outputs are quoted in the finish evidence (C1's manual note quotes the record's F1 item)"
+    text: "F1 fixed: record_owned and cleanup use every live, identity-checked (pid + start time) recorded process as a discovery root, while tracking and in cleanup. A new stand-in under tools/e2e-macos/standins/ where an orphan starts a long-lived TERM-resistant child after its parent has exited is run with MODE=hang under --timeout, MODE=exit, SIGINT and SIGTERM, and on each path the orphan and its child are gone (pgrep finds none) and the exit status is 124, 1, 130 and 143 as the record's table; the record's four earlier stand-in runs give the same results as before; the stand-in outputs are quoted in the finish evidence (C1's manual note quotes the record's F1 item) Process groups are anchored (codex r3 F4, F6): each tracked command starts through a wrapper that records its own pid and start time and is acknowledged by the script before the command runs, runs the command in a process group the wrapper leads or holds, and stays alive until cleanup ends, so a tracked pgid can't be reused; group members are adopted only while their anchor's pid + start time still verifies, a zombie's identity still counts in reuse checks, and an empty identity at registration is an error, never a silent skip. New stand-ins show (a) a reused group whose new leader was reaped or is a zombie is not adopted (an unrelated process survives cleanup) and (b) a command that leaves a long-lived child and exits at once has that child gone on each exit path."
     required: true
     manual: false
   - id: "C6"
