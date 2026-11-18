@@ -657,6 +657,8 @@ fn a_running_build_grows_its_bars(cx: &mut TestAppContext) {
         rows.len() == 2 && rows.iter().all(|row| !row.layout.running)
     });
     let rows = project.rows();
-    assert_eq!(rows[1].name, "app");
-    assert!(rows[1].duration.is_some());
+    // Rows are ordered by start time, and the fresh crate and the app begin
+    // within the same moments, so look the app up by name.
+    let app = rows.iter().find(|row| row.name == "app").unwrap();
+    assert!(app.duration.is_some());
 }
