@@ -163,8 +163,11 @@ impl Workbench {
         // Not a terminal whose shell exited meanwhile, which closes its
         // tab; Problems or the Git log shown in the bottom panel come back.
         let bottom = self.terminal_dock.read(cx).dock().active();
-        restored.terminal &= bottom != Some(crate::terminal_panel::TERMINAL)
-            || self.terminal.read(cx).view().is_some();
+        let session = self.terminal.read(cx).view().is_some();
+        restored.terminal &= bottom != Some(crate::terminal_panel::TERMINAL) || session;
+        // Nor the sidebar, the terminal moved there.
+        let sidebar = self.dock.read(cx).state().active();
+        restored.sidebar &= sidebar != Some(crate::terminal_panel::TERMINAL) || session;
         self.set_chrome(restored, cx);
         self.set_rail_hidden(false, cx);
         self.zen.tabs_hidden = false;

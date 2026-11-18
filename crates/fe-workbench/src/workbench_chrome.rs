@@ -15,23 +15,15 @@ use gpui::{
 
 #[cfg(test)]
 use super::toast;
-use super::{Launch, LayoutKeys, TERMINAL_BUTTON, Workbench, active_diff_view};
+use super::{Launch, LayoutKeys, Workbench, active_diff_view};
 
-/// The rail's foot buttons, each its bottom tool window's id.
-const BOTTOM_BUTTONS: [&str; 5] = [
-    crate::dock::PROBLEMS_BUTTON,
-    crate::dock::RUNS_BUTTON,
-    crate::dock::DEBUG_BUTTON,
-    crate::dock::GIT_LOG_BUTTON,
-    TERMINAL_BUTTON,
-];
 use crate::run_widget_debug::RunChoice;
 use crate::title_bar;
 #[path = "run_widget.rs"]
 mod run_widget;
 use crate::{
     Dock, MenuBarView, OutlinePanel, Pane, PaneGroup, ProjectPanel, StatusBar,
-    dock::{DockOp, ProblemsOp},
+    dock::{BOTTOM_TABS, DockOp, Place, ProblemsOp},
     dock_layout,
     find_bar::FindOp,
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
@@ -46,7 +38,7 @@ use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
     PaneView as _, PanelId, Shell, Workspace, WorkspaceEvent,
     close::{self, Items, LiveItems},
-    dock::MoveTo,
+    dock::{DockDrop, DockEvent, DockedPanel, MoveTo},
     layout::{self, WindowLayout},
 };
 
@@ -192,11 +184,15 @@ impl Workbench {
                     // window open in the bottom panel showing in its place
                     // if it was shown, else the panel hiding. Focus moves
                     // to the editor only from what the close hid.
+                    // Moved to the sidebar, the sidebar hides if it shows it.
                     TerminalPanelEvent::Exited => {
-                        workbench.terminal_dock.update(cx, |dock, cx| {
-                            dock.dock_mut().close_tab(TERMINAL);
-                            cx.notify();
-                        });
+                        match workbench.place_of(TERMINAL, cx) {
+                            Place::Bottom => workbench.terminal_dock.update(cx, |dock, cx| {
+                                dock.dock_mut().close_tab(TERMINAL);
+                                cx.notify();
+                            }),
+                            Place::Sidebar => _ = workbench.hide_sidebar_tool(TERMINAL, cx),
+                        }
                         workbench.leave_hidden_panel(window, cx);
                     }
                     TerminalPanelEvent::RenameRequested(id) => {
@@ -205,35 +201,168 @@ impl Workbench {
                     TerminalPanelEvent::ShowRequested => workbench.show_terminal_dock(window, cx),
                 },
             );
+        // A tool window dropped on it, from the sidebar's rail, moves.
         let hid = cx.subscribe_in(
             dock,
             window,
-            |workbench, _, kiln_shell::dock::DockEvent::HidFocus, window, cx| {
-                window.focus(&workbench.focus_handle(cx), cx);
+            |workbench, _, event, window, cx| match *event {
+                DockEvent::HidFocus => window.focus(&workbench.focus_handle(cx), cx),
+                DockEvent::PanelDropped {
+                    panel,
+                    from,
+                    target,
+                } => workbench.tool_window_dropped(panel, from, target, window, cx),
             },
         );
         // Each foot button is lit while the bottom dock shows its tool
         // window, in any of its groups.
         let shown = cx.observe(dock, |workbench, dock, cx| {
             let shown = dock.read(cx).dock().shown_panels();
-            workbench.dock.update(cx, |dock, cx| {
-                for id in BOTTOM_BUTTONS {
-                    dock.set_action_highlighted(id, shown.contains(&PanelId(id)), cx)
-                }
-            });
+            workbench
+                .dock
+                .update(cx, |dock, cx| dock.light_foot(shown, cx));
         });
         [exited, hid, shown]
     }
 
-    /// Shows the bottom dock with the tool window `panel`, focused.
+    /// Shows the tool window `panel` in whichever dock holds it, focused
+    /// if it focuses on show: the bottom dock unless it was moved to the
+    /// sidebar ([`Place`]).
     pub(crate) fn show_bottom_panel(
         &mut self,
         panel: PanelId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.terminal_dock
-            .update(cx, |dock, cx| dock.show(panel, window, cx));
+        self.settle_placements(cx);
+        match self.place_of(panel, cx) {
+            Place::Bottom => {
+                self.terminal_dock
+                    .update(cx, |dock, cx| dock.show(panel, window, cx));
+            }
+            Place::Sidebar => {
+                self.dock
+                    .update(cx, |dock, cx| dock.show_tool(panel, window, cx));
+            }
+        }
+    }
+
+    /// Which dock holds the tool window `panel`.
+    pub(crate) fn place_of(&self, panel: PanelId, cx: &App) -> Place {
+        self.dock.read(cx).place_of(panel)
+    }
+
+    /// Whether the tool window `panel` shows, in whichever dock holds it.
+    pub(crate) fn tool_shown(&self, panel: PanelId, cx: &App) -> bool {
+        match self.place_of(panel, cx) {
+            Place::Bottom => self.terminal_dock.read(cx).dock().is_shown(panel),
+            Place::Sidebar => self.dock.read(cx).state().rail_highlighted() == Some(panel),
+        }
+    }
+
+    /// Hides the sidebar if it shows the tool window `panel`, as its
+    /// lit button does. Focus in it stays: the caller moves it.
+    fn hide_sidebar_tool(&mut self, panel: PanelId, cx: &mut Context<Self>) -> bool {
+        self.dock.update(cx, |dock, cx| {
+            let shown = dock.state().rail_highlighted() == Some(panel);
+            if shown {
+                dock.dock_mut().set_visible(false);
+                cx.notify();
+            }
+            shown
+        })
+    }
+
+    /// Moves each tool window registered in the dock its place isn't to
+    /// the one it is, unshown: a restored layout's, and a panel made since,
+    /// as History is on first use.
+    pub(crate) fn settle_placements(&mut self, cx: &mut Context<Self>) {
+        settle_placements((&self.dock, &self.terminal_dock), cx);
+    }
+
+    /// Moves the tool window `panel` to the dock `to`: takes it from the
+    /// one holding it, puts it in `to` (in the bottom dock, where `at`
+    /// says, else in its focused group), notes its place and shows it
+    /// there, focused. False, doing nothing, if it doesn't move or is
+    /// there already.
+    pub(crate) fn move_tool_window(
+        &mut self,
+        panel: PanelId,
+        to: Place,
+        at: Option<DockDrop>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = crate::dock::movable(panel.0) else {
+            return false;
+        };
+        if self.place_of(panel, cx) == to {
+            return false;
+        }
+        let docks = (&self.dock, &self.terminal_dock);
+        if !move_between(docks, panel, to, at, cx) {
+            return false;
+        }
+        self.show_bottom_panel(panel, window, cx);
+        if let Some(focus) = self.bottom_tool_focus(panel, cx) {
+            window.focus(&focus, cx);
+        }
+        true
+    }
+
+    /// The tool window `panel`, of the dock view `from`, dropped on a dock
+    /// at `target`: from the bottom dock into the sidebar, or from the
+    /// sidebar's rail into the bottom dock's groups or onto its foot.
+    pub(crate) fn tool_window_dropped(
+        &mut self,
+        panel: PanelId,
+        from: gpui::EntityId,
+        target: DockDrop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (sidebar, bottom) = (self.dock.entity_id(), self.terminal_dock.entity_id());
+        let to = match target {
+            DockDrop::Into if from == bottom => Place::Sidebar,
+            DockDrop::Foot if from == sidebar => Place::Bottom,
+            _ if from == sidebar && target.move_to().is_some() => Place::Bottom,
+            _ => return,
+        };
+        let at = (target != DockDrop::Foot).then_some(target);
+        self.move_tool_window(panel, to, at, window, cx);
+    }
+
+    /// `dock.move_tool_window_to_sidebar` (`to` the sidebar) and
+    /// `dock.move_tool_window_to_bottom_panel`: moves the tool window
+    /// holding focus, else the bottom panel's focused group's (the
+    /// sidebar's shown panel), to `to`, if it can go there.
+    pub(crate) fn move_tool_window_to(
+        &mut self,
+        to: Place,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focused = self.focused_tool(window, cx);
+        let panel = match focused {
+            Some(panel) => Some(panel),
+            None => match to {
+                Place::Sidebar => self.terminal_dock.read(cx).dock().rail_highlighted(),
+                Place::Bottom => self.dock.read(cx).state().rail_highlighted(),
+            },
+        };
+        if let Some(panel) = panel {
+            self.move_tool_window(panel, to, None, window, cx);
+        }
+    }
+
+    /// The tool window holding focus, in either dock.
+    fn focused_tool(&self, window: &Window, cx: &App) -> Option<PanelId> {
+        let bottom = self.terminal_dock.read(cx).dock().panel_ids();
+        let sidebar = self.dock.read(cx).state().panel_ids();
+        (bottom.into_iter().chain(sidebar)).find(|&panel| {
+            (self.bottom_tool_focus(panel, cx))
+                .is_some_and(|focus| focus.contains_focused(window, cx))
+        })
     }
 
     /// Focuses the tool window the bottom dock shows, its focused group's,
@@ -254,7 +383,9 @@ impl Workbench {
         true
     }
 
-    /// The focus of the bottom dock's tool window `panel`, if it exists.
+    /// The focus of the tool window `panel`, wherever it is, if it
+    /// exists: a bottom one's, or what focusing a sidebar panel focuses
+    /// ([`Dock::panel_focus`]).
     pub(crate) fn bottom_tool_focus(&self, panel: PanelId, cx: &App) -> Option<FocusHandle> {
         Some(match panel.0 {
             id if id == crate::dock::PROBLEMS_BUTTON => {
@@ -265,7 +396,12 @@ impl Workbench {
             id if id == crate::dock::GIT_LOG_BUTTON => {
                 self.dock.read(cx).git_log()?.focus_handle(cx)
             }
-            _ => self.terminal.focus_handle(cx),
+            id if id == TERMINAL.0 => self.terminal.focus_handle(cx),
+            _ => {
+                let sidebar = self.dock.read(cx);
+                let panel = crate::DockPanel::of(panel)?;
+                sidebar.panel_focus(panel, cx)?
+            }
         })
     }
 
@@ -291,6 +427,14 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Moved to the sidebar, the sidebar hides if it shows it.
+        if self.place_of(panel, cx) == Place::Sidebar {
+            let hid = self.hide_sidebar_tool(panel, cx);
+            if hid && self.dock.read(cx).hidden_panel_focused(window, cx) {
+                window.focus(&self.focus_handle(cx), cx);
+            }
+            return hid;
+        }
         let focused = self.bottom_panel_focused(window, cx);
         let hid = self.terminal_dock.update(cx, |dock, cx| {
             let hid = dock.dock_mut().hide_panel(panel);
@@ -423,18 +567,15 @@ impl Workbench {
         });
     }
 
-    /// Whether a tool window of the bottom dock has focus.
+    /// Whether a tool window of the bottom dock has focus: those placed
+    /// there ([`Place`]).
     pub(crate) fn bottom_panel_focused(&self, window: &Window, cx: &App) -> bool {
-        let sidebar = self.dock.read(cx);
-        self.terminal.read(cx).is_focused(window, cx)
-            || (self.runs_panel.focus_handle(cx)).contains_focused(window, cx)
-            || (self.debug_panel.focus_handle(cx)).contains_focused(window, cx)
-            || sidebar
-                .problems()
-                .focus_handle(cx)
-                .contains_focused(window, cx)
-            || (sidebar.git_log())
-                .is_some_and(|log| log.focus_handle(cx).contains_focused(window, cx))
+        let panels = self.terminal_dock.read(cx).dock().panel_ids();
+        panels.into_iter().any(|panel| match panel == TERMINAL {
+            true => self.terminal.read(cx).is_focused(window, cx),
+            false => (self.bottom_tool_focus(panel, cx))
+                .is_some_and(|focus| focus.contains_focused(window, cx)),
+        })
     }
 
     /// A click on the rail's foot button `id`, which runs `command`: hides
@@ -462,6 +603,17 @@ impl Workbench {
     /// active editor if the terminal has focus: its group alone if another
     /// shows beside it, else the dock.
     pub(crate) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Moved to the sidebar, the sidebar hides.
+        if self.place_of(TERMINAL, cx) == Place::Sidebar {
+            if self.tool_shown(TERMINAL, cx) && self.terminal.read(cx).is_focused(window, cx) {
+                self.hide_sidebar_tool(TERMINAL, cx);
+                window.focus(&self.focus_handle(cx), cx);
+                return;
+            }
+            self.terminal
+                .update(cx, |terminal, cx| terminal.start(window, cx));
+            return self.show_terminal_dock(window, cx);
+        }
         let shown = self.terminal_dock.read(cx).is_visible();
         if shown && self.terminal.read(cx).is_focused(window, cx) {
             self.terminal_dock.update(cx, |dock, cx| {
@@ -573,10 +725,10 @@ impl Workbench {
             .update(cx, |terminal, cx| terminal.toggle_vi_mode(window, cx));
     }
 
-    /// Shows the bottom dock with the terminal.
+    /// Shows the bottom dock with the terminal, or the sidebar if it was
+    /// moved there.
     pub(crate) fn show_terminal_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.terminal_dock
-            .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
+        self.show_bottom_panel(TERMINAL, window, cx);
     }
 
     pub fn panel(&self) -> &Entity<ProjectPanel> {
@@ -592,23 +744,27 @@ impl Workbench {
     /// Does a dock op, for a key or a rail click, with the active editor as
     /// the fallback focus: showing the project panel focuses it, showing
     /// search focuses its input, and showing the outline leaves focus where
-    /// it is unless on a hidden panel.
-    /// `problems.show`, `runs.show` and the Git log's show op show their
-    /// tool windows in the bottom dock.
+    /// it is unless on a hidden panel. `problems.show`, `runs.show` and the
+    /// Git log's show op show their tool windows in the bottom dock: each
+    /// show op in whichever dock holds its tool window ([`Place`]), first,
+    /// so what the sidebar does after (search's replace field, Changes'
+    /// focus) stands.
     pub(crate) fn run_dock_op(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) {
+        self.settle_placements(cx);
+        let tool = match op {
+            DockOp::Problems(ProblemsOp::Show) => Some(crate::DockPanel::Problems.id()),
+            DockOp::ShowGitLog => Some(PanelId(crate::dock::GIT_LOG_BUTTON)),
+            DockOp::ShowRuns => Some(PanelId(crate::dock::RUNS_BUTTON)),
+            // A sidebar panel moved to the bottom panel.
+            _ => (crate::dock::shown_by(op))
+                .filter(|&panel| self.place_of(panel, cx) == Place::Bottom),
+        };
+        if let Some(panel) = tool {
+            self.show_bottom_panel(panel, window, cx);
+        }
         self.dock.update(cx, |dock, cx| dock.run(op, window, cx));
-        match op {
-            DockOp::ShowProject => window.focus(&self.panel.focus_handle(cx), cx),
-            DockOp::Problems(ProblemsOp::Show) => {
-                self.show_bottom_panel(crate::DockPanel::Problems.id(), window, cx)
-            }
-            DockOp::ShowGitLog => {
-                self.show_bottom_panel(PanelId(crate::dock::GIT_LOG_BUTTON), window, cx)
-            }
-            DockOp::ShowRuns => {
-                self.show_bottom_panel(PanelId(crate::dock::RUNS_BUTTON), window, cx)
-            }
-            _ => {}
+        if op == DockOp::ShowProject {
+            window.focus(&self.panel.focus_handle(cx), cx);
         }
         self.leave_hidden_panel(window, cx);
     }
@@ -616,7 +772,7 @@ impl Workbench {
     /// Focuses the active editor if a panel of the sidebar or a tool
     /// window of the bottom panel has focus but isn't shown, its dock being
     /// hidden or showing another.
-    pub(super) fn leave_hidden_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn leave_hidden_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let bottom = self.terminal_dock.read(cx).dock();
         if self.dock.read(cx).hidden_panel_focused(window, cx)
             || bottom.hidden_panel_focused(window, cx)
@@ -639,7 +795,8 @@ impl Workbench {
     }
 
     /// `dock.grow` or `dock.shrink`: resizes the bottom dock by `by` while
-    /// one of its tool windows has focus, else the sidebar.
+    /// one of its tool windows has focus, those placed there, else the
+    /// sidebar.
     pub(crate) fn resize_focused_dock(
         &mut self,
         by: gpui::Pixels,
@@ -1213,7 +1370,8 @@ fn restored_groups(groups: &Value, shown: Option<PanelId>) -> Value {
     let mut first = None;
     for group in groups.as_array_mut().into_iter().flatten() {
         let active = (group.get("active").and_then(Value::as_str))
-            .and_then(|id| RESTORABLE.into_iter().find(|kept| *kept == id));
+            .and_then(|id| crate::dock::movable(id).and_then(restorable))
+            .map(|panel| panel.0);
         group["active"] = active.map_or(Value::Null, Value::from);
         let collapsed = (group.get("collapsed").and_then(Value::as_bool)).unwrap_or(false);
         if !collapsed && first.is_none() {
@@ -1229,9 +1387,11 @@ fn restored_groups(groups: &Value, shown: Option<PanelId>) -> Value {
 }
 
 /// `panel` if the bottom panel shows it again on a restore: Problems, Runs
-/// or the Git log, not the terminal, whose sessions end with the window.
+/// or the Git log, or a sidebar panel moved there, not the terminal, whose
+/// sessions end with the window.
 fn restorable(panel: PanelId) -> Option<PanelId> {
-    RESTORABLE.contains(&panel.0).then_some(panel)
+    let moved = !crate::dock::BOTTOM_TOOLS.contains(&panel.0);
+    (moved || RESTORABLE.contains(&panel.0)).then_some(panel)
 }
 
 /// The bottom panel's tool windows a restore shows again: see
@@ -1324,6 +1484,13 @@ impl LayoutKeys {
             ("terminal_dock", terminal_dock_sizes(terminal, cx)),
             ("breadcrumbs", Value::from(self.breadcrumbs.get())),
         ];
+        // The tool windows moved from their places, alone.
+        let moved = self.sidebar.read(cx).placements();
+        if !moved.is_empty() {
+            let moved =
+                (moved.into_iter()).map(|(id, at)| (id.0.to_owned(), Value::from(at.name())));
+            keys.push(("placements", Value::Object(moved.collect())));
+        }
         if let Some(bounds) = self.bounds.get() {
             keys.push(("bounds", layout::save_bounds(bounds)));
         }
@@ -1356,6 +1523,21 @@ impl LayoutKeys {
     /// `workbench.rail` put it: the terminal's dock gives way if it was
     /// saved there ([`dock_layout::displaced`]).
     pub(super) fn restore(&self, entry: &Value, cx: &mut App) {
+        // The tool windows' places first, so the docks' state finds them:
+        // without, each in its default place.
+        let saved = entry.get("placements").and_then(Value::as_object);
+        let places: Vec<(PanelId, Place)> = (saved.into_iter().flatten())
+            .filter_map(|(id, at)| Some((crate::dock::movable(id)?, Place::named(at.as_str()?)?)))
+            .collect();
+        self.sidebar.update(cx, |dock, cx| {
+            for (panel, _) in dock.placements() {
+                dock.set_place(panel, Place::default_of(panel), cx);
+            }
+            for (panel, at) in places {
+                dock.set_place(panel, at, cx);
+            }
+        });
+        settle_placements((&self.sidebar, &self.terminal), cx);
         let position = |dock| {
             let name = entry.get("docks")?.get(dock)?.as_str()?;
             dock_layout::position_named(name)
@@ -1380,7 +1562,11 @@ impl LayoutKeys {
                 cx.notify();
             });
             let shown = saved.get("shown").and_then(Value::as_str);
-            let shown = RESTORABLE.into_iter().find(|id| shown == Some(*id));
+            let here = self.terminal.read(cx).dock().panel_ids();
+            let shown = (shown.and_then(crate::dock::movable))
+                .and_then(restorable)
+                .filter(|panel| here.contains(panel))
+                .map(|panel| panel.0);
             bottom = shown.map(PanelId).or(bottom);
             // Split into groups, each comes back in its place, showing
             // what it showed if that comes back.
@@ -1412,6 +1598,81 @@ impl LayoutKeys {
                 .filter_map(|(root, choice)| Some((root.clone(), RunChoice::from_value(choice)?)));
             *self.run_tasks.borrow_mut() = tasks.collect();
         }
+    }
+}
+
+/// Moves each tool window registered in the dock its place isn't to the
+/// one it is, unshown ([`Workbench::settle_placements`]).
+fn settle_placements((sidebar, bottom): (&Entity<Dock>, &Entity<kiln_shell::Dock>), cx: &mut App) {
+    let dock = sidebar.read(cx);
+    let to_bottom: Vec<PanelId> = (dock.state().panel_ids().into_iter())
+        .filter(|&panel| dock.place_of(panel) == Place::Bottom)
+        .collect();
+    let to_sidebar: Vec<PanelId> = (bottom.read(cx).dock().panel_ids().into_iter())
+        .filter(|&panel| dock.place_of(panel) == Place::Sidebar)
+        .collect();
+    let moves = (to_bottom.into_iter().map(|panel| (panel, Place::Bottom)))
+        .chain(to_sidebar.into_iter().map(|panel| (panel, Place::Sidebar)));
+    for (panel, to) in moves.collect::<Vec<_>>() {
+        move_between((sidebar, bottom), panel, to, None, cx);
+    }
+}
+
+/// Takes the tool window `panel` from the dock it isn't placed `to` and
+/// puts it in the one it is, notes its place, unshown: in the bottom dock
+/// where `at` says, else its focused group. False if it wasn't there.
+fn move_between(
+    (sidebar, bottom): (&Entity<Dock>, &Entity<kiln_shell::Dock>),
+    panel: PanelId,
+    to: Place,
+    at: Option<DockDrop>,
+    cx: &mut App,
+) -> bool {
+    let taken: Option<DockedPanel> = match to {
+        Place::Sidebar => bottom.update(cx, |dock, cx| {
+            let taken = dock.dock_mut().take_panel(panel);
+            cx.notify();
+            taken
+        }),
+        Place::Bottom => sidebar.update(cx, |dock, cx| dock.take(panel, cx)),
+    };
+    let Some(taken) = taken else {
+        return false;
+    };
+    match to {
+        Place::Sidebar => sidebar.update(cx, |dock, cx| dock.insert(taken, cx)),
+        Place::Bottom => bottom.update(cx, |dock, cx| {
+            insert_in_bottom(dock.dock_mut(), taken, at);
+            cx.notify();
+        }),
+    }
+    sidebar.update(cx, |dock, cx| dock.set_place(panel, to, cx));
+    true
+}
+
+/// Puts `panel` in the bottom dock: a bottom tool window in its place among
+/// the tabs, a sidebar panel after them; then in the group `at` names, or
+/// else in the focused group, if that isn't the first.
+fn insert_in_bottom(dock: &mut DockState, panel: DockedPanel, at: Option<DockDrop>) {
+    let id = panel.id();
+    let rank = |id: PanelId| BOTTOM_TABS.iter().position(|tab| *tab == id.0);
+    let own = rank(id).unwrap_or(BOTTOM_TABS.len());
+    let at_rail = (dock.panel_ids().into_iter())
+        .position(|other| rank(other).unwrap_or(BOTTOM_TABS.len()) > own)
+        .unwrap_or(usize::MAX);
+    let focused = dock.active().and_then(|active| dock.group_of(active));
+    dock.insert_panel(panel, at_rail);
+    let to = match at.and_then(DockDrop::move_to) {
+        Some(to) => Some(to),
+        None => focused
+            .filter(|&group| group > 0)
+            .map(|group| MoveTo::Group {
+                group,
+                index: usize::MAX,
+            }),
+    };
+    if let Some(to) = to {
+        dock.move_panel(id, to);
     }
 }
 

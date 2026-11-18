@@ -88,13 +88,23 @@ pub enum DockDrop {
     /// Into `group`'s strip at slot `index`, before the tab drawn there
     /// now: in the tab's own group, a reorder.
     Insert { group: usize, index: usize },
+    /// Into this dock, a side dock without tabs: another dock's panel
+    /// dropped on its column or its rail's top group ([`super::transfer`]).
+    Into,
+    /// Onto a side rail's foot group: its own panel's rail button dropped
+    /// there, which a host maps to its bottom dock.
+    Foot,
 }
 
-/// A dock's tab being dragged: the dock's view, and its panel.
+/// A dock's tab, or a side dock's rail button, being dragged: the dock's
+/// view, its panel, and the dock's transfer group, if it has one
+/// ([`DockState::transfer_group`]), which another dock of the group takes
+/// its drop in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DraggedDockTab {
     pub dock: EntityId,
     pub panel: PanelId,
+    pub group: Option<&'static str>,
 }
 
 /// The border before the `ix`th drawn group, as dragged.
@@ -130,7 +140,7 @@ impl DrawnGroup {
     }
 
     /// Where each tab was laid out, scrolled as it showed.
-    fn tab_layout(&self) -> Vec<Bounds<Pixels>> {
+    pub(super) fn tab_layout(&self) -> Vec<Bounds<Pixels>> {
         let scrolled = self.strip.offset();
         (0..self.tabs.len())
             .map_while(|ix| self.strip.bounds_for_item(ix))
@@ -142,7 +152,7 @@ impl DrawnGroup {
 impl DockState {
     /// The axis the groups are laid along: across at the bottom, down at a
     /// side.
-    fn group_axis(&self) -> Axis {
+    pub(super) fn group_axis(&self) -> Axis {
         match self.position {
             DockPosition::Bottom => Axis::Horizontal,
             DockPosition::Left | DockPosition::Right => Axis::Vertical,
@@ -150,7 +160,7 @@ impl DockState {
     }
 
     /// The least a group gets along the axis.
-    fn min_group(&self) -> Pixels {
+    pub(super) fn min_group(&self) -> Pixels {
         match self.group_axis() {
             Axis::Horizontal => MIN_DOCK_WIDTH,
             Axis::Vertical => MIN_DOCK_HEIGHT,
@@ -233,7 +243,7 @@ impl DockState {
 
     /// Makes `group` the focused one, its active panel the one it shows,
     /// so the dock's is.
-    fn move_focus(&mut self, group: usize) {
+    pub(super) fn move_focus(&mut self, group: usize) {
         if let Some(shown) = self.group_shown(group) {
             self.groups[group].active = Some(shown);
         }
@@ -242,7 +252,7 @@ impl DockState {
 
     /// The drawn group nearest `group` among `drawn`: the one before it,
     /// else the one after.
-    fn nearest(drawn: &[usize], group: usize) -> Option<usize> {
+    pub(super) fn nearest(drawn: &[usize], group: usize) -> Option<usize> {
         let before = drawn.iter().rev().find(|&&other| other < group);
         before
             .or(drawn.iter().find(|&&other| other > group))
@@ -570,7 +580,7 @@ impl DockState {
         dock: EntityId,
     ) -> Option<DockDrop> {
         if dragged.dock != dock {
-            return None;
+            return self.foreign_tab_target(dragged, at, dock);
         }
         let from = self.group_of(dragged.panel)?;
         let drawn = self.drawn.groups.borrow();
@@ -669,6 +679,7 @@ impl DockState {
                 };
                 MoveTo::Group { group, index }
             }
+            DockDrop::Into | DockDrop::Foot => return false,
         };
         self.move_panel(panel, to)
     }
@@ -692,9 +703,14 @@ impl DockState {
     /// reach it before the panels' own mouse handlers: the last child but
     /// the indicator.
     pub(super) fn drop_layer<V: DockView>(&self, cx: &mut Context<V>) -> impl IntoElement + use<V> {
-        let dropped = cx.listener(|view: &mut V, dragged: &DraggedDockTab, window, cx| {
-            view.tab_dropped(*dragged, window, cx)
-        });
+        // Another dock's panel goes to the host ([`DockView::panel_dropped`]).
+        let dropped =
+            cx.listener(|view: &mut V, dragged: &DraggedDockTab, window, cx| {
+                match dragged.dock == cx.entity_id() {
+                    true => view.tab_dropped(*dragged, window, cx),
+                    false => super::transfer::drop_foreign(view, *dragged, window, cx),
+                }
+            });
         div()
             .absolute()
             .top_0()
@@ -722,6 +738,8 @@ impl DockState {
             | DockDrop::SplitAfter(group)
             | DockDrop::Join(group)
             | DockDrop::Insert { group, .. } => group,
+            // A side dock's, drawn by it ([`super::transfer`]).
+            DockDrop::Into | DockDrop::Foot => return None,
         };
         let drawn = self.drawn.groups.borrow();
         let drawn = drawn.iter().find(|drawn| drawn.group == group)?;
@@ -733,6 +751,7 @@ impl DockState {
                 (marker(&drawn.tab_layout(), index, strip), ui.drop_target)
             }
             DockDrop::Join(_) => (content, ui.drop_target.opacity(0.2)),
+            DockDrop::Into | DockDrop::Foot => return None,
             DockDrop::SplitBefore(_) | DockDrop::SplitAfter(_) => {
                 let before = matches!(hover, DockDrop::SplitBefore(_));
                 let zone = match (horizontal, before) {
@@ -766,6 +785,7 @@ impl DockState {
         let dragged = DraggedDockTab {
             dock: cx.entity_id(),
             panel,
+            group: self.transfer_group,
         };
         (dragged, title)
     }

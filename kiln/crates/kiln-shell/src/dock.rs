@@ -76,9 +76,11 @@ use kiln_ui::{
 use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
 
 mod groups;
+mod transfer;
 
 use groups::{DividerPress, DrawnGroup, Group};
 pub use groups::{DockDrop, DraggedDockTab, MoveTo};
+pub use transfer::DockedPanel;
 
 /// The narrowest a side dock's panel gets by dragging its edge.
 pub const MIN_DOCK_WIDTH: Pixels = px(160.);
@@ -740,6 +742,11 @@ pub struct DockState {
     hide_command: Option<&'static str>,
     /// Where a dock tab dragged over the column would drop.
     hover: Cell<Option<DockDrop>>,
+    /// The docks whose drags it takes, and whose its rail buttons' drags
+    /// are ([`transfer`]).
+    transfer_group: Option<&'static str>,
+    /// Where a side dock's drop indicator is drawn, for `hover`.
+    side_hint: Cell<Option<Bounds<Pixels>>>,
     /// Where the drag of a border between groups started.
     divider_press: Option<DividerPress>,
     /// The panel focus was last seen in ([`DockState::follow_focus`]).
@@ -778,6 +785,8 @@ impl DockState {
             opened: HashSet::new(),
             hide_command: None,
             hover: Cell::new(None),
+            transfer_group: None,
+            side_hint: Cell::new(None),
             divider_press: None,
             followed: None,
             drawn: DrawnDock::default(),
@@ -1821,12 +1830,19 @@ impl DockState {
         let last_tooltip = self.drawn.tooltip.clone();
         let shortcut =
             command.and_then(|command| Self::shortcut(&self.shortcut_contexts, command, cx));
+        // In a transfer group, it drags to another dock, or to its foot.
+        let drag = self.rail_drag(id, cx);
         RailButton::new(("dock-rail", ix), icon, &ui_theme(cx))
             .name(title.clone())
             .when_some(shortcut, RailButton::shortcut)
             .highlighted(self.rail_highlighted() == Some(id))
             .when_some(badge, RailButton::badge)
             .on_click(cx.listener(move |view, _, window, cx| view.rail_clicked(id, window, cx)))
+            .when_some(drag, |button, (dragged, ghost)| {
+                button.on_drag(dragged, move |_, _, _, cx| {
+                    Self::tab_ghost(ghost.clone(), cx)
+                })
+            })
             .tooltip(move |_, cx| {
                 let shortcut = command.and_then(|command| Self::shortcut(&contexts, command, cx));
                 let tooltip = Tooltip::new(title.clone(), shortcut, &ui_theme(cx));
@@ -2030,6 +2046,24 @@ impl DockState {
             .children(buttons)
             .footer(actions)
             .track(&self.drawn.rail);
+        // In a transfer group, without tabs, it takes another dock's panels
+        // on its column and its rail, and its own rail's buttons on its
+        // foot, in layers over them, its indicator over the window.
+        let transfers = self.transfer_group.is_some() && !self.tabs;
+        let side_drag = transfers.then(|| self.on_side_drag_move(cx));
+        let side_indicator = transfers.then(|| self.side_drop_indicator(cx)).flatten();
+        let column_layer = transfers.then(|| self.side_drop_layer(cx));
+        let rail = match transfers {
+            true => div()
+                .relative()
+                .flex_none()
+                .h_full()
+                .child(rail)
+                .child(self.side_drop_layer(cx))
+                .children(side_indicator)
+                .into_any_element(),
+            false => rail.into_any_element(),
+        };
         let column = || {
             div()
                 .id("dock-column")
@@ -2070,6 +2104,7 @@ impl DockState {
             element: column
                 .child(self.edge_handle(cx))
                 .children(drop_layer)
+                .children(column_layer)
                 .children(indicator),
             role: Role::Complementary,
             label,
@@ -2079,6 +2114,7 @@ impl DockState {
         div()
             .id(id)
             .on_drag_move(self.on_edge_drag(cx))
+            .when_some(side_drag, |dock, listener| dock.on_drag_move(listener))
             .h_full()
             .map(|dock| match shown {
                 true => dock
@@ -2216,6 +2252,22 @@ pub trait DockView: Render + Sized {
         cx.notify();
     }
 
+    /// `panel`, of the dock view `from`, was dropped on this dock at
+    /// `target` ([`transfer`]): another dock's tab or rail button, or this
+    /// side dock's rail button on its foot. Moving it changes two docks, so
+    /// the host does it ([`DockState::take_panel`],
+    /// [`DockState::insert_panel`]): by default, the drop is ignored.
+    fn panel_dropped(
+        &mut self,
+        panel: PanelId,
+        from: EntityId,
+        target: DockDrop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let _ = (panel, from, target, window, cx);
+    }
+
     /// `panel`'s tab's close button was clicked: by default, closes it, as
     /// [`DockState::close_tab`] does.
     fn tab_closed(&mut self, panel: PanelId, _: &mut Window, cx: &mut Context<Self>) {
@@ -2243,6 +2295,13 @@ pub enum DockEvent {
     /// A rail or tab click, a tab's close or a tab's drop hid the panel
     /// that had focus: the host focuses something shown.
     HidFocus,
+    /// `panel`, of the dock view `from`, was dropped on it at `target`
+    /// ([`DockView::panel_dropped`]): the host moves it.
+    PanelDropped {
+        panel: PanelId,
+        from: EntityId,
+        target: DockDrop,
+    },
 }
 
 /// A registered panel the dock hears.
@@ -2417,6 +2476,22 @@ impl DockView for Dock {
             cx.emit(DockEvent::HidFocus);
         }
         cx.notify();
+    }
+
+    /// Tells the host, which moves it.
+    fn panel_dropped(
+        &mut self,
+        panel: PanelId,
+        from: EntityId,
+        target: DockDrop,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(DockEvent::PanelDropped {
+            panel,
+            from,
+            target,
+        });
     }
 
     /// Closes the tab, then tells the host if the panel it hid had focus.

@@ -58,7 +58,7 @@ use crate::{
 };
 use kiln::ViewCommands as _;
 use kiln_shell::{
-    DockPosition, DockState, DockView as _, ModalEvent, ModalLayer, PaneView as _, Shell,
+    DockPosition, DockState, DockView as _, ModalEvent, ModalLayer, PaneView as _, PanelId, Shell,
     Workspace, layout::LayoutStore,
 };
 
@@ -135,8 +135,6 @@ pub struct RootChanged(pub PathBuf);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootClosed;
 
-pub(crate) use crate::dock::TERMINAL_BUTTON;
-
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
     dock: Entity<Dock>,
@@ -155,6 +153,9 @@ pub struct Workbench {
     /// of them, which the subscriptions hear.
     pub(crate) bottom_from_sidebar: bool,
     _bottom_tools: [Subscription; 5],
+    /// To focus leaving a sidebar panel moved to the bottom panel that a
+    /// window key brought focus to, which ends `bottom_from_sidebar` too.
+    pub(crate) bottom_watch: Option<Subscription>,
     /// Reads the recent list again for a shown Start page when it changes.
     _recents: Subscription,
     /// The window's shell around the panes, which it keeps in step: their
@@ -500,6 +501,7 @@ impl Workbench {
             let state = DockState::new(DockPosition::Bottom)
                 .without_rail()
                 .with_tabs()
+                .transfer_group(crate::dock::TOOL_WINDOWS)
                 .size(crate::dock::BOTTOM_PANEL_HEIGHT)
                 .shortcut_contexts([KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
             let mut dock = kiln_shell::Dock::with_state(state);
@@ -513,15 +515,19 @@ impl Workbench {
         });
         let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
         let bottom_tools = [
-            problems.focus_handle(cx),
-            runs_panel.focus_handle(cx),
-            debug_panel.focus_handle(cx),
-            terminal.focus_handle(cx),
-            git_log.focus_handle(cx),
+            (crate::dock::PROBLEMS_BUTTON, problems.focus_handle(cx)),
+            (crate::dock::RUNS_BUTTON, runs_panel.focus_handle(cx)),
+            (crate::dock::DEBUG_BUTTON, debug_panel.focus_handle(cx)),
+            (crate::dock::TERMINAL_BUTTON, terminal.focus_handle(cx)),
+            (crate::dock::GIT_LOG_BUTTON, git_log.focus_handle(cx)),
         ];
-        let bottom_tools = bottom_tools.map(|focus| {
-            cx.on_focus_out(&focus, window, |workbench, _, _, _| {
-                workbench.bottom_from_sidebar = false;
+        // Moved to the sidebar, a tool window's focus isn't the bottom
+        // panel's.
+        let bottom_tools = bottom_tools.map(|(id, focus)| {
+            cx.on_focus_out(&focus, window, move |workbench, _, _, cx| {
+                if workbench.place_of(PanelId(id), cx) == crate::dock::Place::Bottom {
+                    workbench.bottom_from_sidebar = false;
+                }
             })
         });
         let panel =
@@ -575,13 +581,8 @@ impl Workbench {
                 cx,
             )
         });
-        // The bottom panel's tool windows, whose buttons follow the bottom
-        // dock (`follow_terminal`), at the rail's foot.
-        dock.update(cx, |dock, cx| {
-            for action in crate::dock::rail_actions() {
-                dock.add_action(action, cx);
-            }
-        });
+        // The bottom panel's tool windows are at the rail's foot, their
+        // buttons following the bottom dock (`follow_terminal`).
         let git = Self::new_git(root.clone(), &changes, cx);
         let quick_open = Self::new_quick_open(root, pane.downgrade(), cx);
         // A rail click runs the op its panel's key would, or hides the dock;
@@ -597,6 +598,9 @@ impl Workbench {
                 }
                 DockEvent::Action(id, command) => {
                     workbench.bottom_button_clicked(id, command, window, cx)
+                }
+                DockEvent::Dropped(panel, from, target) => {
+                    workbench.tool_window_dropped(panel, from, target, window, cx)
                 }
             },
         );
@@ -729,8 +733,13 @@ impl Workbench {
             };
             cx.notify();
         });
+        // A panel made since a layout placed it in the bottom panel, as
+        // History is on first use, goes there.
         let docks = [
-            cx.observe(&dock, |workbench, _, cx| workbench.layout_keys_changed(cx)),
+            cx.observe(&dock, |workbench, _, cx| {
+                workbench.settle_placements(cx);
+                workbench.layout_keys_changed(cx)
+            }),
             cx.observe(&terminal_dock, |workbench, _, cx| {
                 workbench.layout_keys_changed(cx)
             }),
@@ -762,6 +771,7 @@ impl Workbench {
             _terminal: terminal_subscriptions,
             bottom_from_sidebar: false,
             _bottom_tools: bottom_tools,
+            bottom_watch: None,
             _recents: cx.observe_global::<recent_picker::Changes>(|workbench, cx| {
                 if workbench.start_page_shown {
                     workbench.start_page.update(cx, |page, cx| page.reload(cx));

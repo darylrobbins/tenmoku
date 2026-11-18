@@ -16,7 +16,7 @@ use kiln_shell::{DockPosition, PaneView as _};
 use crate::{
     Axis, Direction, Pane, ReferencesPanel, Workbench,
     ai_changes_panel::{self, AiChangesOp},
-    dock::{DockOp, ProblemsOp, problems_panel},
+    dock::{DockOp, Place, ProblemsOp, problems_panel},
     dock_layout,
     encoding_picker::EncodingAction,
     extensions_picker::{self, Purpose},
@@ -856,6 +856,20 @@ impl Workbench {
     fn focus_next_panel_group_command(&mut self, cx: &mut Cx<Self>) {
         self.ran(cx);
         self.focus_next_panel_group(cx.window, cx.cx);
+    }
+
+    /// Move Tool Window to Sidebar
+    #[command(id = "dock.move_tool_window_to_sidebar")]
+    fn move_tool_window_to_sidebar(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.move_tool_window_to(Place::Sidebar, cx.window, cx.cx);
+    }
+
+    /// Move Tool Window to Bottom Panel
+    #[command(id = "dock.move_tool_window_to_bottom_panel")]
+    fn move_tool_window_to_bottom_panel(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.move_tool_window_to(Place::Bottom, cx.window, cx.cx);
     }
 
     /// Move Terminal to Bottom

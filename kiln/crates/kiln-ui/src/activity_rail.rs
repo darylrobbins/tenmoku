@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use gpui::{
-    AnyView, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
-    Pixels, RenderOnce, Role, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, div, prelude::FluentBuilder as _, px, svg,
+    AnyView, App, ClickEvent, Div, ElementId, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, Point, Render, RenderOnce, Role, ScrollHandle, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px, svg,
 };
 use kiln_l10n::tr;
 
@@ -31,6 +32,9 @@ const RAIL_PADDING: Pixels = px(4.);
 const BADGE_RIGHT: Pixels = px(3.);
 
 type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView>;
+
+/// Makes a button's element draggable ([`RailButton::on_drag`]).
+type DragSetter = Box<dyn FnOnce(Stateful<Div>) -> Stateful<Div>>;
 
 /// A full-height vertical strip of [`RailButton`]s, a top group and a
 /// bottom one, on the window's chrome, with a 1 px line on the edge facing
@@ -162,6 +166,7 @@ pub struct RailButton {
     badge: Option<Badge>,
     on_click: Option<ClickHandler>,
     tooltip: Option<TooltipBuilder>,
+    drag: Option<DragSetter>,
 }
 
 impl RailButton {
@@ -181,6 +186,7 @@ impl RailButton {
             badge: None,
             on_click: None,
             tooltip: None,
+            drag: None,
         }
     }
 
@@ -228,6 +234,17 @@ impl RailButton {
     /// Shown on hover, built when it shows: see [`crate::Tooltip`].
     pub fn tooltip(mut self, build: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(build));
+        self
+    }
+
+    /// Drags `value` from it, with what `ghost` makes at the pointer, as a
+    /// tab drags: a press that doesn't move is still a click.
+    pub fn on_drag<T: 'static, W: Render>(
+        mut self,
+        value: T,
+        ghost: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+    ) -> Self {
+        self.drag = Some(Box::new(move |button| button.on_drag(value, ghost)));
         self
     }
 }
@@ -320,6 +337,7 @@ impl RenderOnce for RailButton {
             .children(bar)
             .children(badge)
             .when_some(self.on_click, |button, on_click| button.on_click(on_click))
+            .when_some(self.drag, |button, drag| drag(button))
             .when_some(self.tooltip, |button, tooltip| {
                 button.tooltip(move |window, cx| tooltip(window, cx))
             });

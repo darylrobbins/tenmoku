@@ -40,7 +40,7 @@ use gpui::{
     uniform_list,
 };
 use kiln_l10n::{text, tr, verbatim};
-use kiln_shell::{DockView as _, PanelId};
+use kiln_shell::PanelId;
 
 use super::{
     DebugPanel, NodePath, PANEL, Part, Tab, ValueRow,
@@ -914,11 +914,8 @@ impl Workbench {
     /// editor if it was in it.
     pub(crate) fn toggle_debug_console(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let panel = self.debug_panel.clone();
-        let shown = self
-            .terminal_dock()
-            .read(cx)
-            .dock()
-            .is_shown(PanelId(PANEL));
+        // In whichever dock holds it.
+        let shown = self.tool_shown(PanelId(PANEL), cx);
         if shown && panel.read(cx).tab == Tab::Console {
             return self.toggle_debug_panel(window, cx);
         }

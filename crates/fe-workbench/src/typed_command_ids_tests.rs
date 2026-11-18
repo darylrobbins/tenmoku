@@ -134,6 +134,16 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     (
+        "dock.move_tool_window_to_sidebar",
+        "Move Tool Window to Sidebar",
+        "workbench",
+    ),
+    (
+        "dock.move_tool_window_to_bottom_panel",
+        "Move Tool Window to Bottom Panel",
+        "workbench",
+    ),
+    (
         "terminal.move_to_bottom",
         "Move Terminal to Bottom",
         "workbench",

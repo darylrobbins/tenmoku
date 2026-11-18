@@ -270,6 +270,8 @@ const LISTED_ANYWHERE: &[&str] = &[
     "dock.move_panel_to_previous_group",
     "dock.move_sidebar_left",
     "dock.move_sidebar_right",
+    "dock.move_tool_window_to_bottom_panel",
+    "dock.move_tool_window_to_sidebar",
     "dock.show_project",
     "dock.shrink",
     "dock.split_panel_right",

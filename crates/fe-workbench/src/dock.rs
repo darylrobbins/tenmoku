@@ -40,10 +40,12 @@
 //! [`DockOp`], as a rail click does; the search panel's own are in its
 //! registry ([`search_panel::registry`]).
 
+use std::collections::HashMap;
+
 use fe_config::settings::RailSide;
 use fe_ui::{BadgeTone, Icon};
 use gpui::{
-    AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    AnyView, App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, SharedString,
     Styled as _, Subscription, Window, div, px,
 };
@@ -51,7 +53,8 @@ use kiln_l10n::tr;
 use kiln_platform::locale::ActiveLocale;
 use kiln_shell::{
     DockItem, DockMenuItem, DockPosition, DockState, DockView, PanelId, RailAction, ViewContainer,
-    ViewSpec, dock::RailBadge,
+    ViewSpec,
+    dock::{DockDrop, DockedPanel, RailBadge},
 };
 
 use crate::{
@@ -131,7 +134,7 @@ impl DockPanel {
     }
 
     /// The panel registered as `id`.
-    fn of(id: PanelId) -> Option<Self> {
+    pub(crate) fn of(id: PanelId) -> Option<Self> {
         PANELS
             .iter()
             .map(|sidebar| sidebar.panel)
@@ -265,6 +268,98 @@ pub(crate) fn debug_rail_action() -> RailAction {
 /// the id it had on the sidebar before it was Source Control's Graph, which
 /// layouts saved then name.
 pub(crate) const GIT_LOG_BUTTON: &str = crate::workbench::git_commands::git_log::OLD_PANEL;
+
+/// The bottom panel's tool windows, in the order the design names them,
+/// which their foot buttons follow: the panels placed in the bottom panel
+/// unless moved ([`Place`]).
+pub(crate) const BOTTOM_TOOLS: [&str; 5] = [
+    PROBLEMS_BUTTON,
+    RUNS_BUTTON,
+    DEBUG_BUTTON,
+    GIT_LOG_BUTTON,
+    TERMINAL_BUTTON,
+];
+
+/// The bottom panel's tool windows in the order it registers them, its
+/// tabs': where one moved back goes among them.
+pub(crate) const BOTTOM_TABS: [&str; 5] = [
+    PROBLEMS_BUTTON,
+    RUNS_BUTTON,
+    DEBUG_BUTTON,
+    TERMINAL_BUTTON,
+    GIT_LOG_BUTTON,
+];
+
+/// The transfer group of the sidebar and the bottom panel, which take
+/// each other's tool windows by drag ([`kiln_shell::dock::DockedPanel`]).
+pub(crate) const TOOL_WINDOWS: &str = "tool-windows";
+
+/// Which dock holds a tool window: the sidebar or the bottom panel. Each
+/// has its place by default, the bottom panel's tool windows
+/// ([`BOTTOM_TOOLS`]) the bottom panel and the sidebar's panels the
+/// sidebar, until it's moved ([`Dock::set_place`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Place {
+    Sidebar,
+    Bottom,
+}
+
+impl Place {
+    /// Its name in the saved layout's `"placements"`.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Place::Sidebar => "sidebar",
+            Place::Bottom => "bottom",
+        }
+    }
+
+    /// The place [`Place::name`] names `name`.
+    pub(crate) fn named(name: &str) -> Option<Self> {
+        match name {
+            "sidebar" => Some(Place::Sidebar),
+            "bottom" => Some(Place::Bottom),
+            _ => None,
+        }
+    }
+
+    /// Where `panel` is by default.
+    pub(crate) fn default_of(panel: PanelId) -> Self {
+        match BOTTOM_TOOLS.contains(&panel.0) {
+            true => Place::Bottom,
+            false => Place::Sidebar,
+        }
+    }
+}
+
+/// The tool window of the id `id`, if there's one that moves: every bottom
+/// tool window and every sidebar panel but the Explorer, whose reveal and
+/// focus (the tree and Structure) are the sidebar's.
+pub(crate) fn movable(id: &str) -> Option<PanelId> {
+    let bottom = BOTTOM_TOOLS
+        .iter()
+        .find(|tool| **tool == id)
+        .map(|id| PanelId(id));
+    let sidebar = (PANELS.iter())
+        .map(|sidebar| sidebar.panel.id())
+        .find(|panel| panel.0 == id && *panel != DockPanel::Explorer.id());
+    bottom.or(sidebar)
+}
+
+/// The sidebar panel a dock op shows, if it shows one.
+pub(crate) fn shown_by(op: DockOp) -> Option<PanelId> {
+    let shown = match op {
+        DockOp::ShowOutline => DockPanel::Explorer,
+        DockOp::ShowReplace => DockPanel::Search,
+        _ => PANELS.iter().find(|sidebar| sidebar.show_op == op)?.panel,
+    };
+    Some(shown.id())
+}
+
+/// The rail action of the bottom tool window `id`, which shows it.
+pub(crate) fn tool_action(id: &str) -> Option<RailAction> {
+    let mut actions = rail_actions().into_iter().chain([debug_rail_action()]);
+    actions.find(|action| action.id == id)
+}
 
 /// The rail's actions, at its foot: the bottom panel's tool windows in
 /// the order the design names them, each showing its tool window in the
@@ -516,13 +611,17 @@ dock_item!(
 dock_item!(QuickfixPanel, quickfix_panel::SIDEBAR, QuickfixPanel::title);
 
 /// A rail button was clicked: a panel's, for which the workbench runs
-/// [`Dock::rail_op`], or a bottom tool window's action, by its id and
-/// command, which the workbench runs or, if the bottom dock shows that tool
-/// window, hides it.
+/// [`Dock::rail_op`], or a bottom tool window's action, or a bottom tool
+/// window's button moved into the sidebar, by its id and command, which
+/// the workbench runs or, if the dock holding that tool window shows it,
+/// hides it. Or a tool window was dropped on the sidebar or its rail's
+/// foot, from the dock view of that id ([`DockView::panel_dropped`]), for
+/// the workbench to move.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DockEvent {
     Rail(DockPanel),
     Action(&'static str, &'static str),
+    Dropped(PanelId, EntityId, DockDrop),
 }
 
 /// The right dock: kiln-shell's [`DockState`] over fastedit's seven panels,
@@ -569,6 +668,12 @@ pub struct Dock {
     /// session is stopped, which its dot says.
     debug_joined: bool,
     debug_stopped: bool,
+    /// The tool windows moved from their default dock ([`Place`]).
+    placements: HashMap<PanelId, Place>,
+    /// The rail foot's actions, as last put there ([`Dock::sync_foot`]),
+    /// and the bottom panel's tool windows shown, which light theirs.
+    foot: Vec<&'static str>,
+    bottom_shown: Vec<PanelId>,
     #[cfg(test)]
     ops: Vec<DockOp>,
     /// The explorer's views' collapse and weights are the dock's state,
@@ -682,7 +787,8 @@ impl Dock {
         let mut state = DockState::new(position)
             .size(PANEL_WIDTH)
             .shortcut_contexts([crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT])
-            .hide_command(HIDE_COMMAND);
+            .hide_command(HIDE_COMMAND)
+            .transfer_group(TOOL_WINDOWS);
         state.set_menu(dock_menu(position));
         let caret_symbol = cx.new(|cx| CaretSymbol::new(&outline, cx));
         let explorer = explorer(&project, &outline, &caret_symbol, cx);
@@ -698,7 +804,7 @@ impl Dock {
         // lists the panels in the order they were added.
         state.add_panel(chat.clone(), cx);
         state.add_panel(references.clone(), cx);
-        Self {
+        let mut dock = Self {
             state,
             explorer,
             project,
@@ -721,24 +827,27 @@ impl Dock {
             errors: 0,
             debug_joined: false,
             debug_stopped: false,
+            placements: HashMap::new(),
+            foot: Vec::new(),
+            bottom_shown: Vec::new(),
             #[cfg(test)]
             ops: Vec::new(),
             _explorer_changed: explorer_changed,
             _source_control_changed: source_control_changed,
             _agents_changed: agents_changed,
             _locale: cx.observe_global::<ActiveLocale>(Self::follow_locale),
-        }
+        };
+        // The bottom panel's tool windows, at the rail's foot.
+        dock.sync_foot(cx);
+        dock
     }
 
     /// Puts its text in the language just chosen: the rail actions'
     /// titles, the Explorer's views' and the badges' names. The views keep
     /// their collapse, as [`Dock::set_project`]'s do.
     fn follow_locale(&mut self, cx: &mut Context<Self>) {
-        for action in rail_actions() {
-            self.state.add_action(action);
-        }
+        self.sync_foot(cx);
         if self.debug_joined {
-            self.state.add_action(debug_rail_action());
             self.show_debug_badge();
         }
         self.state.set_menu(dock_menu(self.menu_side));
@@ -869,10 +978,132 @@ impl Dock {
             return;
         }
         self.debug_joined = true;
-        self.state
-            .add_action_after(RUNS_BUTTON, debug_rail_action());
+        // Placed in the sidebar, it's on the rail's top group already.
+        self.sync_foot(cx);
         self.show_debug_badge();
         cx.notify();
+    }
+
+    /// Where the tool window `panel` is: its default place unless moved.
+    pub(crate) fn place_of(&self, panel: PanelId) -> Place {
+        (self.placements.get(&panel).copied()).unwrap_or(Place::default_of(panel))
+    }
+
+    /// The tool windows moved from their default dock, and where to, in
+    /// id order.
+    pub(crate) fn placements(&self) -> Vec<(PanelId, Place)> {
+        let mut moved: Vec<_> = self.placements.iter().map(|(id, at)| (*id, *at)).collect();
+        moved.sort_by_key(|(id, _)| id.0);
+        moved
+    }
+
+    /// Notes that the tool window `panel` is placed `at`, its foot button
+    /// following: the workbench moves it ([`Dock::take`], [`Dock::insert`]).
+    pub(crate) fn set_place(&mut self, panel: PanelId, at: Place, cx: &mut Context<Self>) {
+        match at == Place::default_of(panel) {
+            true => self.placements.remove(&panel),
+            false => self.placements.insert(panel, at),
+        };
+        self.sync_foot(cx);
+        cx.notify();
+    }
+
+    /// Takes the tool window `panel` out of the sidebar, for the bottom
+    /// panel: none if it isn't the sidebar's or doesn't move.
+    pub(crate) fn take(&mut self, panel: PanelId, cx: &mut Context<Self>) -> Option<DockedPanel> {
+        movable(panel.0)?;
+        let taken = self.state.take_panel(panel);
+        cx.notify();
+        taken
+    }
+
+    /// Puts the tool window `panel`, taken from the bottom panel, in the
+    /// sidebar: a sidebar panel in its place on the rail, a bottom tool
+    /// window after the sidebar's panels, in the design's order.
+    pub(crate) fn insert(&mut self, panel: DockedPanel, cx: &mut Context<Self>) {
+        let rank = |id: PanelId| {
+            let sidebar = PANELS.iter().position(|sidebar| sidebar.panel.id() == id);
+            let bottom = BOTTOM_TOOLS.iter().position(|tool| *tool == id.0);
+            sidebar.or(bottom.map(|ix| PANELS.len() + ix))
+        };
+        let own = rank(panel.id());
+        let at = (self.state.panel_ids().into_iter())
+            .position(|id| rank(id) > own)
+            .unwrap_or(usize::MAX);
+        self.state.insert_panel(panel, at);
+        cx.notify();
+    }
+
+    /// The rail's foot: the tool windows placed in the bottom panel, the
+    /// bottom ones in the design's order (Debug once joined), then the
+    /// sidebar's panels moved there, in the rail's, each a [`RailAction`]
+    /// with its panel's icon, title and show command; lit while the bottom
+    /// panel shows it.
+    fn sync_foot(&mut self, cx: &App) {
+        let bottom = (BOTTOM_TOOLS.into_iter())
+            .filter(|id| *id != DEBUG_BUTTON || self.debug_joined)
+            .filter(|id| self.place_of(PanelId(id)) == Place::Bottom)
+            .filter_map(tool_action);
+        let moved = (PANELS.iter())
+            .filter(|sidebar| self.place_of(sidebar.panel.id()) == Place::Bottom)
+            .filter_map(|sidebar| {
+                Some(RailAction {
+                    id: sidebar.panel.id().0,
+                    icon: sidebar.icon,
+                    title: self.panel_title(sidebar.panel, cx)?,
+                    command: sidebar.show_command,
+                })
+            });
+        let foot: Vec<RailAction> = bottom.chain(moved).collect();
+        let ids: Vec<&'static str> = foot.iter().map(|action| action.id).collect();
+        // The same buttons keep their places and light, retitled; others
+        // are put there anew, lit as the bottom panel shows.
+        let changed = ids != self.foot;
+        if changed {
+            for id in std::mem::take(&mut self.foot) {
+                self.state.remove_action(id);
+            }
+        }
+        for action in foot {
+            self.state.add_action(action);
+        }
+        self.foot = ids;
+        if changed {
+            self.light_foot_buttons();
+        }
+    }
+
+    /// Lights the foot buttons of the tool windows the bottom panel shows,
+    /// `shown`, in any of its groups.
+    pub(crate) fn light_foot(&mut self, shown: Vec<PanelId>, cx: &mut Context<Self>) {
+        self.bottom_shown = shown;
+        self.light_foot_buttons();
+        cx.notify();
+    }
+
+    fn light_foot_buttons(&mut self) {
+        for &id in &self.foot {
+            let lit = self.bottom_shown.contains(&PanelId(id));
+            self.state.set_action_highlighted(id, lit);
+        }
+    }
+
+    /// The title of the sidebar's panel `panel`, as its header has it, if
+    /// it has been made.
+    fn panel_title(&self, panel: DockPanel, cx: &App) -> Option<SharedString> {
+        Some(match panel {
+            DockPanel::Explorer => DockItem::title(self.explorer.read(cx), cx),
+            DockPanel::Search => DockItem::title(self.search.read(cx), cx),
+            DockPanel::SourceControl => DockItem::title(self.source_control.read(cx), cx),
+            DockPanel::Agents => DockItem::title(self.agents.read(cx), cx),
+            DockPanel::References => DockItem::title(self.references.read(cx), cx),
+            DockPanel::History => DockItem::title(self.history.as_ref()?.read(cx), cx),
+            DockPanel::Chat => DockItem::title(self.chat.as_ref()?.read(cx), cx),
+            DockPanel::CallHierarchy => DockItem::title(self.hierarchy.as_ref()?.read(cx), cx),
+            DockPanel::Quickfix => DockItem::title(self.quickfix.as_ref()?.read(cx), cx),
+            DockPanel::AiChanges => DockItem::title(self.ai_changes.as_ref()?.read(cx), cx),
+            _ => return None,
+        })
     }
 
     /// Dots the Debug action while a session is stopped: it needs you.
@@ -915,6 +1146,7 @@ impl Dock {
     pub(crate) fn set_history(&mut self, history: Entity<HistoryPanel>, cx: &mut Context<Self>) {
         self.state.add_panel(history.clone(), cx);
         self.history = Some(history);
+        self.sync_foot(cx);
         cx.notify();
     }
 
@@ -931,6 +1163,7 @@ impl Dock {
     ) {
         self.state.add_panel(hierarchy.clone(), cx);
         self.hierarchy = Some(hierarchy);
+        self.sync_foot(cx);
         cx.notify();
     }
 
@@ -943,6 +1176,7 @@ impl Dock {
     pub(crate) fn set_quickfix(&mut self, quickfix: Entity<QuickfixPanel>, cx: &mut Context<Self>) {
         self.state.add_panel(quickfix.clone(), cx);
         self.quickfix = Some(quickfix);
+        self.sync_foot(cx);
         cx.notify();
     }
 
@@ -958,6 +1192,7 @@ impl Dock {
     pub(crate) fn set_ai_changes(&mut self, panel: Entity<AiChangesPanel>, cx: &mut Context<Self>) {
         self.state.add_panel(panel.clone(), cx);
         self.ai_changes = Some(panel);
+        self.sync_foot(cx);
         cx.notify();
     }
 
@@ -1064,6 +1299,20 @@ impl Dock {
         cx.notify();
     }
 
+    /// Shows the dock with the tool window `panel`, a bottom one moved
+    /// here or a panel of its own, focused if it focuses on show. False if
+    /// it isn't here.
+    pub(crate) fn show_tool(
+        &mut self,
+        panel: PanelId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let shown = self.state.show(panel, window, cx);
+        cx.notify();
+        shown
+    }
+
     /// Puts back the state [`DockState::save`] saved: whether it shows, its
     /// active panel, whether References has joined the rail and the
     /// Explorer's and Source Control's views' collapse and weights. One
@@ -1074,6 +1323,8 @@ impl Dock {
     /// A panel saved active that is now the bottom dock's, Problems or the
     /// Git log, leaves the sidebar's active panel as it is: the id of the
     /// tool window the bottom dock is to show, if the sidebar showed it.
+    /// The terminal, moved here, comes back closed, with no session: the
+    /// sidebar hidden, its active panel as it is.
     pub(crate) fn restore(
         &mut self,
         saved: &fe_command::Value,
@@ -1081,10 +1332,19 @@ impl Dock {
     ) -> Option<PanelId> {
         let mut saved = saved.clone();
         let active = saved.get("active").and_then(fe_command::Value::as_str);
+        let here = self.state.panel_ids();
+        // Moved here, a bottom tool window is the sidebar's to show.
         let bottom = [PROBLEMS_BUTTON, GIT_LOG_BUTTON]
             .into_iter()
-            .find(|id| active == Some(*id))
+            .find(|id| active == Some(*id) && !here.contains(&PanelId(id)))
             .map(PanelId);
+        if active == Some(TERMINAL_BUTTON) {
+            if let Some(saved) = saved.as_object_mut() {
+                saved.remove("active");
+            }
+            saved["visible"] = false.into();
+        }
+        let active = saved.get("active").and_then(fe_command::Value::as_str);
         let container = match active {
             Some("outline") => Some(DockPanel::Explorer),
             Some("changes") => Some(DockPanel::SourceControl),
@@ -1099,14 +1359,9 @@ impl Dock {
         bottom.filter(|_| shown != Some(false))
     }
 
-    /// Adds a rail action, pinned to the rail's bottom.
-    pub(crate) fn add_action(&mut self, action: kiln_shell::RailAction, cx: &mut Context<Self>) {
-        self.state.add_action(action);
-        cx.notify();
-    }
-
     /// Draws the rail action `id` highlighted, or not, redrawing the rail
     /// if that changes.
+    #[cfg(test)]
     pub(crate) fn set_action_highlighted(
         &mut self,
         id: &str,
@@ -1139,7 +1394,22 @@ impl Dock {
         if !self.is_visible() {
             return None;
         }
-        let (container, views) = match self.active() {
+        let active = self.state.active()?;
+        match DockPanel::of(active) {
+            // Not lists vim's window keys go to.
+            Some(DockPanel::CallHierarchy | DockPanel::AiChanges) => None,
+            Some(panel) => self.panel_focus(panel, cx),
+            // A bottom tool window moved here.
+            None => self.state.panel_focus(active, cx),
+        }
+    }
+
+    /// What focusing the sidebar's panel `panel` focuses, wherever it is:
+    /// search's input, or the top expanded view of the Explorer or Source
+    /// Control. None if it hasn't been made, or its views are all
+    /// collapsed.
+    pub(crate) fn panel_focus(&self, panel: DockPanel, cx: &App) -> Option<FocusHandle> {
+        let (container, views) = match panel {
             DockPanel::Explorer => (
                 &self.explorer,
                 vec![
@@ -1159,6 +1429,12 @@ impl Dock {
             DockPanel::Quickfix => {
                 return self.quickfix.as_ref().map(|panel| panel.focus_handle(cx));
             }
+            DockPanel::CallHierarchy => {
+                return self.hierarchy.as_ref().map(|panel| panel.focus_handle(cx));
+            }
+            DockPanel::AiChanges => {
+                return self.ai_changes.as_ref().map(|panel| panel.focus_handle(cx));
+            }
             _ => return None,
         };
         let stack = container.read(cx).stack().read(cx);
@@ -1174,13 +1450,7 @@ impl Dock {
     /// The title row's text: the active item's [`DockItem::title`], as the
     /// header draws it.
     pub(crate) fn title(&self, cx: &App) -> SharedString {
-        match self.active() {
-            DockPanel::Search => DockItem::title(self.search().read(cx), cx),
-            DockPanel::References => DockItem::title(self.references().read(cx), cx),
-            DockPanel::Explorer => DockItem::title(self.explorer().read(cx), cx),
-            DockPanel::SourceControl => DockItem::title(self.source_control().read(cx), cx),
-            other => other.name().into(),
-        }
+        self.state.title(cx).unwrap_or_default()
     }
 
     /// Where the rail's button for `panel` was laid out in the last frame.
@@ -1229,11 +1499,26 @@ impl DockView for Dock {
         &mut self.state
     }
 
-    /// The workbench runs the op the panel's key would, or hides the dock.
+    /// The workbench runs the op the panel's key would, or hides the dock;
+    /// for a bottom tool window moved here, what its foot button does.
     fn rail_clicked(&mut self, panel: PanelId, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(panel) = DockPanel::of(panel) {
             cx.emit(DockEvent::Rail(panel));
+        } else if let Some(action) = tool_action(panel.0) {
+            cx.emit(DockEvent::Action(action.id, action.command));
         }
+    }
+
+    /// The workbench moves it.
+    fn panel_dropped(
+        &mut self,
+        panel: PanelId,
+        from: EntityId,
+        target: DockDrop,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(DockEvent::Dropped(panel, from, target));
     }
 
     /// The workbench runs the action's command, or hides the bottom dock

@@ -60,14 +60,19 @@ impl Workbench {
             }
             Some(Neighbour::Terminal) => {
                 self.focus_bottom_panel(window, cx);
-                // Kept until focus leaves the tool window, whichever it is.
+                // Kept until focus leaves the tool window, whichever it is:
+                // a sidebar panel moved there, watched from now.
                 self.bottom_from_sidebar = from == Focused::Sidebar;
+                self.watch_moved_bottom_tool(window, cx);
             }
             Some(Neighbour::Group(by)) => {
                 self.terminal_dock().clone().update(cx, |dock, cx| {
                     // Focus may have come to a group since the last draw.
                     dock.dock_mut().follow_focus(window, cx);
                     dock.dock_mut().focus_next_group(by, window, cx);
+                    // Its focused group changed: the foot buttons and the
+                    // saved layout follow.
+                    cx.notify();
                 });
             }
             Some(Neighbour::Back) => {
@@ -80,6 +85,21 @@ impl Workbench {
         }
     }
 
+    /// Watches focus leave the sidebar panel moved to the bottom panel that
+    /// it shows, if it does: that ends `bottom_from_sidebar`, as leaving a
+    /// bottom tool window does.
+    fn watch_moved_bottom_tool(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = self.terminal_dock().read(cx).dock().rail_highlighted();
+        let moved = shown.filter(|panel| !crate::dock::BOTTOM_TOOLS.contains(&panel.0));
+        self.bottom_watch = moved
+            .and_then(|panel| self.bottom_tool_focus(panel, cx))
+            .map(|focus| {
+                cx.on_focus_out(&focus, window, |workbench, _, _, _| {
+                    workbench.bottom_from_sidebar = false;
+                })
+            });
+    }
+
     /// `dock.focus_editor`: focuses the active pane's editor.
     pub(crate) fn focus_editor_from_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_handle(cx), cx);
@@ -90,13 +110,18 @@ impl Workbench {
         (self.dock().clone()).update(cx, |dock, cx| dock.focus_active(window, cx))
     }
 
-    /// The dock with focus, if one has.
+    /// The dock with focus, if one has: each tool window's, wherever it
+    /// was placed.
     fn focused_dock(&self, window: &Window, cx: &App) -> Option<Focused> {
         // The bottom panel's tool windows: the terminal's dock.
         if self.bottom_panel_focused(window, cx) {
             return Some(Focused::Terminal);
         }
         let sidebar = self.dock().read(cx);
+        // A bottom tool window moved to the sidebar.
+        let moved = (sidebar.state().panel_ids().into_iter())
+            .filter(|panel| crate::dock::BOTTOM_TOOLS.contains(&panel.0))
+            .filter_map(|panel| self.bottom_tool_focus(panel, cx));
         let mut views = [
             sidebar.project().focus_handle(cx),
             sidebar.outline().focus_handle(cx),
@@ -107,7 +132,8 @@ impl Workbench {
         .into_iter()
         .chain(sidebar.history().map(|panel| panel.focus_handle(cx)))
         .chain(sidebar.quickfix().map(|panel| panel.focus_handle(cx)))
-        .chain(sidebar.chat().map(|panel| panel.focus_handle(cx)));
+        .chain(sidebar.chat().map(|panel| panel.focus_handle(cx)))
+        .chain(moved);
         (views.any(|focus| focus.contains_focused(window, cx))).then_some(Focused::Sidebar)
     }
 
