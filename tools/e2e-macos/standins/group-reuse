@@ -1,0 +1,127 @@
+#!/bin/sh
+# Review r3 F4 (T1682), with real processes: runs the script's own cleanup_run (and its
+# scan, freeze and group_members, taken from the script) after forging a record of a
+# group whose id is now another group's, as if the id had been reused, and checks that
+# the other group's member, an unrelated process, is neither stopped nor killed. That
+# group is made here: a leader in a session of its own starts bystander (a link to
+# late-child) and exits, and is then either reaped or left a zombie (its parent doesn't
+# wait for it). A control case records the zombie leader's real start time, as for a
+# group that is still ours, and checks that bystander is killed then. Launches nothing
+# else and signals only what it made. Prints one line per case; exits 1 if any fails.
+# Usage: tools/e2e-macos/standins/group-reuse
+# shellcheck disable=SC2034 # the settings below are read by the sourced functions
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+script="$here/../../../scripts/e2e-macos.sh"
+work=$(mktemp -d "${TMPDIR:-/tmp}/e2e-group-reuse.XXXXXX")
+maker=""
+cleanup() {
+	if [ -n "$maker" ]; then kill "$maker" 2>/dev/null || true; fi
+	if [ -s "$work/pids" ]; then
+		# shellcheck disable=SC2046 # two pids
+		kill -KILL $(cat "$work/pids") 2>/dev/null || true
+	fi
+	rm -rf "$work"
+}
+trap cleanup EXIT
+code="$work/cleanup.sh"
+sed -n '/^scan_awk=/,/^}'"'"'$/p' "$script" >"$code"
+for f in scan freeze group_members cleanup_run; do
+	sed -n "/^$f() {\$/,/^}\$/p" "$script" >>"$code"
+	if ! grep -q "^$f() {" "$code"; then
+		echo "group-reuse: can't find $f() in $script" >&2
+		exit 1
+	fi
+done
+# shellcheck source=/dev/null
+. "$code"
+# Paths nothing matches, and no anchor: only a group record can make a process owned.
+derived=/nonexistent-e2e/DerivedData
+app=/nonexistent-e2e/bundle/Tenmoku.app
+owned="$work/owned"
+owned_groups="$work/groups"
+run_ack="$work/ack"
+run_status="$work/status"
+grace=1
+tracker="" waiter="" anchor_pid=""
+failures=0
+
+# make reap|zombie: starts the group; writes "leader bystander" to $work/pids once the
+# leader has exited (and, for reap, been reaped).
+make() {
+	rm -f "$work/pids"
+	python3 -I -c '
+import os, sys, time
+mode, child, out = sys.argv[1:4]
+r, w = os.pipe()
+leader = os.fork()
+if leader == 0:
+    os.setsid()
+    member = os.fork()
+    if member == 0:
+        os.execv(child, [child])
+    os.write(w, str(member).encode())
+    os._exit(0)
+member = os.read(r, 32).decode()
+if mode == "reap":
+    os.waitpid(leader, 0)
+else:
+    while os.popen("ps -o stat= -p %d" % leader).read()[:1] != "Z":
+        time.sleep(0.05)
+open(out + ".tmp", "w").write("%d %s\n" % (leader, member))
+os.rename(out + ".tmp", out)
+time.sleep(600)
+' "$1" "$here/bystander" "$work/pids" &
+	maker=$!
+	n=0
+	while [ ! -s "$work/pids" ]; do
+		n=$((n + 1))
+		if [ "$n" -gt 200 ]; then
+			echo "group-reuse: the group wasn't made" >&2
+			exit 1
+		fi
+		sleep 0.05
+	done
+	read -r leader member <"$work/pids"
+}
+stat_of() { ps -o stat= -p "$1" 2>/dev/null | tr -d ' '; }
+# run NAME RECORDED-START EXPECT(survives|killed)
+run() {
+	: >"$owned"
+	: >"$owned_groups.retired"
+	echo "$leader $2" >"$owned_groups"
+	before="leader $leader [$(stat_of "$leader")], bystander $member in group $(ps -o pgid= -p "$member" | tr -d ' ')"
+	cleanup_run >"$work/out" 2>&1
+	sleep 0.5
+	st=$(stat_of "$member")
+	case "$st" in
+	"" | Z*) got=killed ;;
+	T*) got=stopped ;;
+	*) got=survives ;;
+	esac
+	if [ "$got" = "$3" ]; then
+		echo "ok   $1: $before; recorded \"$leader $2\"; bystander $got"
+	else
+		echo "FAIL $1: $before; recorded \"$leader $2\"; bystander $got, expected $3"
+		failures=$((failures + 1))
+	fi
+	kill -KILL "$member" "$maker" 2>/dev/null || true
+	wait "$maker" 2>/dev/null || true
+	maker=""
+	rm -f "$work/pids"
+}
+old="Mon Jan 1 00:00:00 2024"
+
+make reap
+run "the id reused, the new leader reaped" "$old" survives
+make zombie
+run "the id reused, the new leader a zombie" "$old" survives
+make zombie
+started=$(ps -o lstart= -p "$leader" | tr -s ' ' | sed 's/^ //; s/ $//')
+run "control: the recorded leader a zombie, the group still ours" "$started" killed
+
+if [ "$failures" -ne 0 ]; then
+	echo "group-reuse: $failures failed"
+	exit 1
+fi
+echo "group-reuse: all passed"

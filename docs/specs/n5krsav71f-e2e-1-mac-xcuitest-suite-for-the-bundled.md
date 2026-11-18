@@ -146,3 +146,12 @@ Uses a human-run UI session: a UI run needs the user's go-ahead before it starts
   (no Split Down), and 19:04 `--no-build --iterations 3` passed 39 of 39 with the other
   lanes held. Two earlier final-code runs each lost one key to a 10 to 11 s XCTest event
   synthesis stall under load (recorded in the decision file).
+- Review rounds 2 and 3 (F4: group id reuse, F5: the literal audit path, F6: group
+  registration racing the command's exit) led to the rev 2 respec of C5. xcodebuild now
+  runs under an anchor. It records its pid and start time, and the script acknowledges
+  them before the command starts. It leads the command's group and lives until cleanup
+  ends. Other groups are owned only while their leader, alive or a zombie, keeps its
+  recorded start time. Cleanup sends TERM only to the anchored group and KILLs the rest
+  frozen. The new stand-ins are `quick-exit`, `group-reuse` (real processes, the script's
+  own `cleanup_run`) and `no-identity/ps`, and `scan-cases` gained the reaped and zombie
+  cases. The change is script-only; no UI run was needed.

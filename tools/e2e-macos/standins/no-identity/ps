@@ -1,0 +1,9 @@
+#!/bin/sh
+# A `ps` for review r3 F6 (T1682): put this folder first on PATH to make the script's read
+# of the run anchor's start time (`ps -o lstart= -p PID`) come back empty, as for a
+# process that has already gone; every other call is the real /bin/ps. The run must fail
+# without starting the stand-in xcodebuild.
+case " $* " in
+*" -o lstart= -p "*) exit 1 ;;
+esac
+exec /bin/ps "$@"

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Stand-in xcodebuild for review r3 F6 (T1682): a command that leaves a long-lived child
+# and exits at once, before a parent could read its identity. It starts quick-child (a
+# link to late-child: ignores TERM, runs until killed) in the run's process group, at no
+# path the scan matches, so only the anchored group makes it owned. MODE=exit: exits 0 at
+# once. MODE=hang: a sub-command does the same (starts quick-child and exits at once)
+# while this one waits until TERM (default action), for the --timeout path.
+M=$(cd "$(dirname "$0")" && pwd)
+if [ "$MODE" = exit ]; then
+	"$M/quick-child" &
+	echo "stand-in: quick-exit left quick-child pid $! and exits"
+	exit 0
+fi
+sh -c '"$1" & echo "stand-in: a sub-command left quick-child pid $! and exits"; exit 0' sh "$M/quick-child"
+while :; do sleep 1; done

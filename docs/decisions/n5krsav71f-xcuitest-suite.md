@@ -118,14 +118,59 @@ Fixed, in two rounds.
    below). The watchdog still signals xcodebuild's group by id, but only while
    xcodebuild is unreaped, when its id can't be reused.
 
-Cleanup: freeze, TERM and CONT; scans every 0.2 s for up to 10 s; then freeze and KILL
-what is left; then up to three more scans, each freezing and killing anything a killed
-process left.
+4. Review round 3 found two more gaps, and the card was respecced (C5, rev 2) to anchor
+   the groups:
+   - **F4:** round 2's check only rejected a reused id while the new leader was still
+     alive. If that leader had been reaped, or was a zombie (whose identity the scan
+     dropped), the unrelated group's members were adopted.
+   - **F6:** xcodebuild's group was registered by reading its start time after it
+     started. A command that leaves a child and exits before that read was never
+     registered, and the empty result was silently skipped.
 
-**What it still can't follow:** macOS has no subreaper. A process that, between two
-scans, starts a child in a new session of its own and then exits leaves that child
-neither its descendant nor in an owned group. No stand-in covers this, because the
-script can't catch it. Neither the runner, the app nor xcodebuild's helpers do it.
+   The script now runs xcodebuild under an **anchor**, a shell started in a group of its
+   own. Before xcodebuild starts:
+   - `run_watched` reads the anchor's pid and start time and checks that it leads its
+     group. An empty result is an error: the run fails with "can't read the identity of
+     the run's anchor" and xcodebuild never starts.
+   - `run_watched` records the anchor's group, then acknowledges it. The anchor polls for
+     the acknowledgement and only then runs the command in the foreground, in its own
+     group.
+
+   When the command ends, the anchor writes its exit status and `exec`s a `sleep`. That
+   keeps it the same process (pid and start time), holding the group's id until
+   `cleanup_run` kills it last.
+
+   Scans, cleanup and the watchdog now treat groups this way:
+   - **While the anchor lives**, every member of xcodebuild's group is owned, its parent
+     gone or not, because the group's id can't be reused.
+   - **Any other group** an owned process leads is owned only while a process with its
+     id, alive or a zombie, has the recorded start time. Zombies are never signalled,
+     but their identity counts, so a reused id is rejected whether the new leader is
+     alive, a zombie or reaped.
+   - **The anchor** is never in a scan's output. The watchdog signals the group's
+     members but not the anchor, and waits on the command's status rather than on the
+     group.
+
+   Unanchored groups (the runner's and the app's, started by testmanagerd and launchd)
+   have no such guarantee. A child made on TERM in one of them would be lost once its
+   leader was reaped, so cleanup sends TERM (with the 10 s grace) only to xcodebuild's
+   group. Every other owned process gets KILL while still frozen, and a frozen process
+   killed outright starts nothing. A recorded member of an unanchored group whose leader
+   is reaped stays owned by its own identity.
+
+Cleanup: freeze; KILL the owned processes outside xcodebuild's group; TERM and CONT its
+members; scan every 0.2 s for up to 10 s; then freeze and KILL what is left; then up to
+three more scans, each freezing and killing anything a killed process left; then KILL
+the anchor.
+
+**What it still can't follow:** macOS has no subreaper. Two cases are out of reach:
+- a process that, between two scans, starts a child in a new group or session of its
+  own and then exits, leaving that child neither its descendant nor in an owned group;
+- a child left in an unanchored group by a leader that exits and is reaped between two
+  scans. During cleanup this can't arise, because those processes are killed frozen.
+
+No stand-in covers these, because the script can't catch them. Neither the runner, the
+app nor xcodebuild's helpers do either.
 
 ### The stand-ins
 
@@ -162,17 +207,66 @@ e2e-macos: FAILED (timed out after 4s)
 exit 124; pgrep afterwards: 16727 /bin/sh …/tools/e2e-macos/standins/late-child
 ```
 
-**With the final script** (2026-11-17 19:50, after review round 2; KILL lists include the
-stand-ins' own `sleep` children). Every run ended with the expected status, and nothing
-was left on any of them: `pgrep -fl 'e2etest|standins/|helper-resist|helper-orphan'` found
-none each time.
+**With the final script** (2026-11-18 00:00, after review round 3: the anchor, and KILL
+outside xcodebuild's group). Every run ended with the expected status, and nothing was
+left on any of them: `pgrep -fl 'e2etest|standins/|helper-resist|helper-orphan'` found
+none each time. Four runs are quoted from a rerun:
+- two whose pgrep in the first pass also listed my own shell commands running alongside,
+  whose text contained `standins/`;
+- `late-orphan`'s SIGINT and SIGTERM runs, signalled at 10 s, because at load average
+  40 to 80 late-child hadn't started by 7 s.
+
+`term-spawner` no longer prints its TERM-time line: its runner is outside xcodebuild's
+group, so it gets KILL while frozen and never runs its TERM handler.
 
 | Stand-in | `--timeout` | `MODE=exit` | SIGINT | SIGTERM |
 |---|---|---|---|---|
-| `term-spawner` (child made on TERM, parent exits at once) | `spawn-on-term got TERM, started pid 54420 and exits`, 3 pids killed, `FAILED (timed out after 4s)`, **124** | `started pid 57680`, 3 killed, `FAILED (xcodebuild exited 0, but these could not be exported: …)`, **1** | `started pid 60055`, 3 killed, `FAILED (SIGINT)`, **130** | `started pid 62094`, 3 killed, `FAILED (SIGTERM)`, **143** |
-| `spawn-loop` (new-session children up to the KILL) | 53 pids killed, `FAILED (timed out after 4s)`, **124** | 57, `FAILED (xcodebuild exited 0, …)`, **1** | 41, `FAILED (SIGINT)`, **130** | at 8 s: `sending KILL to:` …, `FAILED (SIGTERM)`, **143** |
-| `late-orphan` (F1: orphan's late child) | `late-helper (pid 78943, parent gone) started late-child pid 79486`, 5 killed, **124** | `started late-child pid 83027`, 5 killed, **1** | `started late-child pid 86699`, 5 killed, **130** | `started late-child pid 91053`, 5 killed, **143** |
-| `family` (the spike record's four runs) | `--timeout 4`, 7 pids killed, **124** | 7, **1** | 7, **130** | 7, **143** |
+| `quick-exit` (r3 F6: leaves a child, exits at once) | `MODE=hang`: `a sub-command left quick-child pid 89262 and exits`, `sending KILL to: 89262 …`, `FAILED (timed out after 4s)`, **124** | `quick-exit left quick-child pid 93891 and exits`, KILL to it, `FAILED (xcodebuild exited 0, …)`, **1** | `MODE=exit`, at 3 s, during cleanup: pid 96434 killed, `FAILED (SIGINT)`, **130** | `MODE=exit`, at 3 s: pid 37275 killed, `FAILED (SIGTERM)`, **143** |
+| `late-orphan` (F1: orphan's late child) | `started late-child pid 1987`, **124** | `started late-child pid 40214`, **1** | at 10 s: `started late-child pid 42288`, `FAILED (SIGINT)`, **130** | at 10 s: `started late-child pid 44282`, `FAILED (SIGTERM)`, **143** |
+| `term-spawner` (a runner that spawns on TERM) | `FAILED (timed out after 4s)`, **124** | **1** | `FAILED (SIGINT)`, **130** | `FAILED (SIGTERM)`, **143** |
+| `spawn-loop` (new-session children up to the KILL) | **124** | **1** | **130** | **143** |
+| `family` (the spike record's four runs) | `--timeout 4`, **124** | **1** | **130** | **143** |
+
+The spike record's other stand-ins:
+- `hang-ignore-term`, `--timeout 3`: `FAILED (timed out after 3s)`, exit 124 after 20 s.
+- `exit-zero`: `FAILED (xcodebuild exited 0, but these could not be exported: …)`, exit 1.
+- `spawn-loop` signalled at 1 s: `FAILED (SIGTERM, before the run)`, exit 143, and
+  `FAILED (SIGINT, before the run)`, exit 130.
+
+**Review round 3, F4 with real processes.** `group-reuse` runs the script's own
+`cleanup_run` after forging a record of a group whose id now belongs to another group.
+With the round-2 script, both reuse cases killed the unrelated process:
+
+```
+FAIL the id reused, the new leader reaped: leader 99486 [], bystander 99487 in group 99486; recorded "99486 Mon Jan 1 00:00:00 2024"; bystander killed, expected survives
+FAIL the id reused, the new leader a zombie: leader 99891 [Z], bystander 99892 in group 99891; recorded "99891 Mon Jan 1 00:00:00 2024"; bystander killed, expected survives
+ok   control: the recorded leader a zombie, the group still ours: leader 400 [Z], bystander 402 in group 400; recorded "400 Tue Nov 17 23:58:57 2026"; bystander killed
+group-reuse: 2 failed
+```
+
+With the final script:
+
+```
+ok   the id reused, the new leader reaped: leader 97173 [], bystander 97175 in group 97173; recorded "97173 Mon Jan 1 00:00:00 2024"; bystander survives
+ok   the id reused, the new leader a zombie: leader 97344 [Z], bystander 97345 in group 97344; recorded "97344 Mon Jan 1 00:00:00 2024"; bystander survives
+ok   control: the recorded leader a zombie, the group still ours: leader 97527 [Z], bystander 97528 in group 97527; recorded "97527 Tue Nov 17 23:58:41 2026"; bystander killed
+group-reuse: all passed
+```
+
+**Review round 3, F6.** Codex reproduced the race with a synthetic snapshot. I couldn't
+reproduce it on demand from a shell stand-in: in both `quick-exit` runs against the
+round-2 script, the script read xcodebuild's start time before xcodebuild exited, and
+cleaned up. With the anchor the race can't occur, because the identity is read while the
+anchor waits for its acknowledgement. An unreadable identity is now an error. With
+`tools/e2e-macos/standins/no-identity` first on `PATH` (a `ps` that returns no start
+time), a `quick-exit` run printed the lines below. There was no `stand-in:` line, because
+the stand-in never started, and pgrep found nothing.
+
+```
+e2e-macos: can't read the identity of the run's anchor (pid 5540, start '', group '5540'); not starting xcodebuild
+e2e-macos: FAILED (xcodebuild test exited 1)
+exit 1
+```
 
 A signal that arrives before xcodebuild starts, during the build, bundle or xcodegen
 steps, has nothing to stop. One harness run sent SIGTERM at 3 s, while the loaded Mac was
@@ -181,25 +275,43 @@ script now traps INT and TERM from its first lines: `spawn-loop` signalled at 1 
 `FAILED (SIGTERM, before the run)` with exit 143, and `FAILED (SIGINT, before the run)`
 with exit 130. Nothing was left, and its temporary state and config folders were removed.
 
-`scan-cases`, the script's own scan on synthetic snapshots (review F4), all passed:
+`scan-cases`, the script's own scan on synthetic snapshots (review F4, rounds 2 and 3).
+With the round-2 script, the reaped and zombie reuse cases adopted the unrelated pid 601,
+and the anchor was listed:
 
 ```
 ok   a matched leader and its group: owned [500 501]
-ok   the leader gone, its group's members kept: owned [501 502]
-ok   the group empty: owned []
+     recorded groups: 500 Mon Nov 17 10:00:00 2026
+ok   the leader a zombie, its group kept: owned [501 502]
+FAIL the leader reaped, only recorded members kept: owned [501 503], expected [501]
+     retired: 
+FAIL the id reused, the new leader reaped: owned [601], expected []
+     retired: 
+FAIL the id reused, the new leader a zombie: owned [601], expected []
+ok   the id reused, the new leader alive: owned []
+FAIL the anchored group, a member's parent gone: owned [400 401 402], expected [401 402]
+ok   pid identity by start time: owned [701 702]
+ok   the app by its path, taken literally: owned [800]
+scan-cases: 4 failed
+```
+
+With the final script:
+
+```
+ok   a matched leader and its group: owned [500 501]
+     recorded groups: 500 Mon Nov 17 10:00:00 2026
+ok   the leader a zombie, its group kept: owned [501 502]
+ok   the leader reaped, only recorded members kept: owned [501]
      retired: 500 Mon Nov 17 10:00:00 2026
-ok   the id reused after the group emptied: owned []
-ok   the id held by a process of another start time: owned []
+ok   the id reused, the new leader reaped: owned []
+     retired: 600 Mon Nov 17 10:00:00 2026
+ok   the id reused, the new leader a zombie: owned []
+ok   the id reused, the new leader alive: owned []
+ok   the anchored group, a member's parent gone: owned [401 402]
 ok   pid identity by start time: owned [701 702]
 ok   the app by its path, taken literally: owned [800]
 scan-cases: all passed
 ```
-
-The spike record's other stand-ins gave the same results as before: `hang-ignore-term`
-`--timeout 3` ended `FAILED (timed out after 3s)` with exit 124 after 19 s, and
-`exit-zero` ended `FAILED (xcodebuild exited 0, but these could not be exported:
-attachments, tests.json, summary.json, named attachments)` with exit 1. The four-path runs
-took 13 to 22 s each.
 
 `short-run`, with `MOCK_XCRESULT` set to the C7 run's result bundle (13 tests, all
 passed): `test runs: 2 passed of 2 finished, 13 expected; summary: 13 passed of 13 tests`,

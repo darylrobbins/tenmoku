@@ -29,12 +29,26 @@ stand-in run that makes them, and are inert.
   (and, with `MODE=other`, one naming another executable) and exits 0. Run it with a
   `CARGO_TARGET_DIR` holding regex characters, such as `<tmp>/build[1]`: the audit must
   count 0 (or, with `MODE=other`, 1) other processes.
-- `scan-cases`: review F4 (T1682): not a stand-in xcodebuild. It runs the script's own
-  scan on synthetic `ps` snapshots: a group kept after its leader exits, retired once
-  empty, never adopted when its id is reused, pid identity by start time, and the app
-  path matched literally. Run it directly; it exits 1 if a case fails.
+- `quick-exit`: review r3 F6 (T1682): a command that leaves a TERM-resistant child
+  (`quick-child`) and exits at once. `MODE=exit`, or `MODE=hang` (a sub-command does it
+  while the stand-in waits, for `--timeout`).
+- `no-identity/ps`: review r3 F6 (T1682): a `ps` that can't read the run anchor's start
+  time. With its folder first on `PATH`, a run must fail ("can't read the identity of the
+  run's anchor") without starting the stand-in it names.
+- `scan-cases`: review F4 (T1682, rounds 2 and 3): not a stand-in xcodebuild. It runs the
+  script's own scan on synthetic `ps` snapshots: a group kept while its leader, alive or
+  a zombie, is the one recorded, retired once it's reaped, never adopted when its id is
+  reused (the new leader alive, a zombie or reaped), the anchored group, pid identity by
+  start time, and the app path matched literally. Run it directly; it exits 1 if a case
+  fails.
+- `group-reuse`: review r3 F4 (T1682): not a stand-in xcodebuild. It runs the script's
+  own `cleanup_run` against a real group whose id a forged record claims (the leader
+  reaped, or a zombie), and checks the group's member (`bystander`) survives; a control
+  with the zombie leader's real start time checks it is killed. Run it directly; it
+  exits 1 if a case fails.
 - `hang-ignore-term`, `exit-zero`, `short-run` (needs `MOCK_XCRESULT`, a real result
   bundle): the T1661 record's other stand-ins.
 - `resister`, `quitter`, `setsid`, `late-parent`, `late-helper`, `late-child`,
   `spawn-on-term`, `spawner`: their parts. `helper-resist` and `helper-orphan` are links
-  to `resister`, and `loop-child` to `late-child`, under names `pgrep` can find.
+  to `resister`, and `loop-child`, `quick-child` and `bystander` to `late-child`, under
+  names `pgrep` can find.

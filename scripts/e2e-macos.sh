@@ -212,36 +212,48 @@ run() {
 #   - every process found is recorded as "pid start-time", and a recorded process that is
 #     still the same process (pid and start time) stays owned, orphaned or not, so its
 #     later children are found too (F1);
-#   - a process group led by an owned process is owned: its members stay in it when the
-#     leader exits, so a child a process starts as it exits (on TERM, say) is still found;
-#   - before TERM, and before every KILL, the owned processes are frozen (SIGSTOP) and
-#     scanned again until a pass finds nothing new: a stopped process starts nothing and
-#     orphans nothing, so what is killed is the whole tree as it stands.
+#   - xcodebuild runs under an anchor (see anchor and run_watched): a process that leads
+#     xcodebuild's group, whose identity the script has recorded before xcodebuild starts,
+#     and that lives until cleanup ends. While it lives the group's id can't be reused, so
+#     every member of the group is owned, its leader gone or not: a child a member starts
+#     as it exits (on TERM, say) is still found;
+#   - any other group an owned process leads is owned only while its leader, alive or a
+#     zombie, is still the process recorded (pid and start time), so a group whose id was
+#     reused is never adopted, whether or not its new leader is still there;
+#   - before every signal the owned processes are frozen (SIGSTOP) and scanned again until
+#     a pass finds nothing new: a stopped process starts nothing and orphans nothing, so
+#     what is signalled is the whole tree as it stands. Only xcodebuild's group gets TERM
+#     (and a grace period); processes outside it, whose groups have no anchor, get KILL
+#     while still frozen, so none can start a child as it exits.
 # A scan is one `ps -A` snapshot, so it is cheap enough to repeat every 0.2 s while
 # cleanup waits. A tracker scans every second while the run lasts. Cleanup, which only the
-# main shell runs, signals only owned processes. What this can't follow, macOS having no
-# subreaper: a process that, between two scans, starts a child in a new session of its own
-# and exits, leaving the child neither its descendant nor in an owned group.
-run_pid=""
+# main shell runs, signals only owned processes, and never the anchor until the end. What
+# this can't follow, macOS having no subreaper: a process that, between two scans, starts
+# a child in a new group or session of its own and exits, leaving the child neither its
+# descendant nor in an owned group; and a child left in an unanchored group by a leader
+# that exits and is reaped between two scans.
+anchor_pid=""
+waiter=""
 watcher=""
 tail_pid=""
 tracker=""
 owned="$results/.owned-processes"
 owned_groups="$results/.owned-groups"
+run_ack="$results/.run-ack"
+run_status="$results/.run-status"
 
-# Prints the pids owned now, one per line, and records each new one in $owned, and each
-# group one leads in $owned_groups. A group is recorded as "pgid leader-start-time" and
-# stays owned while it has members and no live process holding its id started at another
-# time: so a child left in it after its leader exits is still found, and a group whose id
-# is reused after it emptied is never adopted. A group that fails either test is retired
-# for good ($owned_groups.retired). xcodebuild's own group is recorded the same way when it
-# starts (run_watched). Paths come through the environment, not argv, so the awk can't
-# match itself. E2E_SCAN_SNAPSHOT, for tools/e2e-macos/standins/scan-cases only, names a
-# file to read in place of `ps`.
+# Prints the pids owned now, one per line (never the anchor's), and records each new one
+# in $owned, and each group one leads in $owned_groups as "pgid leader-start-time". A
+# recorded group stays owned while a process with its id, zombie or not, started at the
+# recorded time (the anchor's group always does); a group that fails the test is retired
+# for good ($owned_groups.retired). Zombies are never owned, but their identities count.
+# Paths come through the environment, not argv, so the awk can't match itself.
+# E2E_SCAN_SNAPSHOT, for tools/e2e-macos/standins/scan-cases only, names a file to read
+# in place of `ps`.
 # shellcheck disable=SC2016 # an awk program, its $ fields not the shell's
 scan_awk='
 BEGIN {
-	me = ENVIRON["E2E_SCAN_UID"]
+	me = ENVIRON["E2E_SCAN_UID"]; anchor = ENVIRON["E2E_SCAN_ANCHOR"]
 	products = ENVIRON["E2E_SCAN_PRODUCTS"]; exe = ENVIRON["E2E_SCAN_EXE"]
 	rf = ENVIRON["E2E_SCAN_OWNED"]; gf = ENVIRON["E2E_SCAN_GROUPS"]; xf = gf ".retired"
 	while ((getline line < rf) > 0) rec[line] = 1
@@ -251,18 +263,19 @@ BEGIN {
 	while ((getline line < gf) > 0) if (!(line in retired)) grp[line] = 1
 	close(gf)
 }
+{
+	seen[$1] = $6 " " $7 " " $8 " " $9 " " $10
+}
 $5 !~ /^Z/ {
-	pid = $1; ppid[pid] = $2; pgid[pid] = $3; uid[pid] = $4
-	start[pid] = $6 " " $7 " " $8 " " $9 " " $10
+	pid = $1; ppid[pid] = $2; pgid[pid] = $3; uid[pid] = $4; start[pid] = seen[pid]
 	n++; order[n] = pid
-	members[$3]++
 	if (((pid " " start[pid]) in rec) || ($4 == me && (index($0, products) || index($0, exe))))
 		own[pid] = 1
 }
 END {
 	for (k in grp) {
 		g = k; sub(/ .*/, "", g); since = k; sub(/^[^ ]* /, "", since)
-		if (!(g in members) || ((g in start) && start[g] != since)) {
+		if (!(g in seen) || seen[g] != since) {
 			print k >> xf
 			continue
 		}
@@ -283,7 +296,7 @@ END {
 		if (!((p " " start[p]) in rec)) print p " " start[p] >> rf
 		if (pgid[p] == p && !((p " " start[p]) in grp) && !((p " " start[p]) in retired))
 			print p " " start[p] >> gf
-		print p
+		if (p != anchor) print p
 	}
 }'
 
@@ -292,7 +305,7 @@ scan() {
 		cat "$E2E_SCAN_SNAPSHOT"
 	else
 		ps -A -o pid= -o ppid= -o pgid= -o uid= -o stat= -o lstart= -o command= 2>/dev/null
-	fi | E2E_SCAN_UID=$(id -u) \
+	fi | E2E_SCAN_UID=$(id -u) E2E_SCAN_ANCHOR="$anchor_pid" \
 		E2E_SCAN_PRODUCTS="$derived/Build/Products/" E2E_SCAN_EXE="$app/Contents/MacOS/tenmoku" \
 		E2E_SCAN_OWNED="$owned" E2E_SCAN_GROUPS="$owned_groups" awk "$scan_awk" | sort -n
 }
@@ -313,10 +326,14 @@ freeze() {
 	printf '%s\n' "$frozen"
 }
 
-# Freezes the owned processes, sends them TERM and lets them go on; KILL, after another
-# freeze, to any left $grace seconds later; then KILL again, frozen first, to anything a
-# killed process left. Runs only in the main shell, to the end, whatever xcodebuild does
-# meanwhile.
+# The members of the anchor's group, but the anchor.
+group_members() {
+	ps -A -o pid= -o pgid= 2>/dev/null | awk -v g="$anchor_pid" '$2 == g && $1 != g { print $1 }'
+}
+# Freezes the owned processes; sends xcodebuild's group TERM and lets it go on, and KILLs
+# the rest where they stand; KILL, after another freeze, to any left $grace seconds later;
+# then KILL again, frozen first, to anything a killed process left; and last the anchor.
+# Runs only in the main shell, to the end, whatever xcodebuild does meanwhile.
 cleanup_run() {
 	if [ -n "$tracker" ]; then
 		kill "$tracker" 2>/dev/null || true
@@ -325,10 +342,28 @@ cleanup_run() {
 	fi
 	pids=$(freeze)
 	if [ -n "$pids" ]; then
-		# shellcheck disable=SC2086 # a list of pids
-		kill -TERM $pids 2>/dev/null || true
-		# shellcheck disable=SC2086
-		kill -CONT $pids 2>/dev/null || true
+		members=""
+		if [ -n "$anchor_pid" ]; then members=$(group_members); fi
+		termed=""
+		others=""
+		for p in $pids; do
+			case "
+$members
+" in
+			*"
+$p
+"*) termed="$termed $p" ;;
+			*) others="$others $p" ;;
+			esac
+		done
+		# shellcheck disable=SC2086 # lists of pids
+		if [ -n "$others" ]; then kill -KILL $others 2>/dev/null || true; fi
+		if [ -n "$termed" ]; then
+			# shellcheck disable=SC2086
+			kill -TERM $termed 2>/dev/null || true
+			# shellcheck disable=SC2086
+			kill -CONT $termed 2>/dev/null || true
+		fi
 	fi
 	# By the clock, not by passes: on a loaded Mac a scan can take seconds.
 	deadline=$(($(date +%s) + grace))
@@ -355,7 +390,17 @@ cleanup_run() {
 		# shellcheck disable=SC2086
 		kill -KILL $pids 2>/dev/null || true
 	done
-	rm -f "$owned" "$owned_groups" "$owned_groups.retired"
+	if [ -n "$waiter" ]; then
+		kill "$waiter" 2>/dev/null || true
+		wait "$waiter" 2>/dev/null || true
+		waiter=""
+	fi
+	if [ -n "$anchor_pid" ]; then
+		kill -KILL "$anchor_pid" 2>/dev/null || true
+		wait "$anchor_pid" 2>/dev/null || true
+		anchor_pid=""
+	fi
+	rm -f "$owned" "$owned_groups" "$owned_groups.retired" "$run_ack" "$run_status" "$run_status.tmp"
 }
 
 on_signal() { # on_signal NAME STATUS
@@ -368,22 +413,69 @@ on_signal() { # on_signal NAME STATUS
 	exit "$2"
 }
 
-# Runs a command in a process group of its own, its output in $xcodebuild_log and shown
-# as it comes, then cleans up after it (cleanup_run). After $timeout seconds a watchdog
-# sends TERM, and KILL $grace seconds later (after a freeze), to the command's group, so
-# the wait below returns, and the status is 124. Everything else is cleanup_run's.
+# anchor COMMAND...: the first process of the run's group (run_watched starts it in a
+# group of its own). It waits for run_watched to record its identity ($run_ack), runs the
+# command in the foreground, in its group, writes the command's exit status to
+# $run_status, and then becomes a sleep, the same process (pid and start time), holding
+# the group's id until cleanup_run kills it. Until the ack it only polls for it (30 s
+# at most, then it exits 1 and the run fails).
+anchor() {
+	set +m
+	trap : INT TERM HUP
+	waited=0
+	while [ ! -e "$run_ack" ]; do
+		waited=$((waited + 1))
+		if [ "$waited" -gt 600 ]; then exit 1; fi
+		sleep 0.05
+	done
+	s=0
+	"$@" || s=$?
+	printf '%s\n' "$s" >"$run_status.tmp"
+	mv "$run_status.tmp" "$run_status"
+	exec sleep 2592000
+}
+
+# Runs a command under an anchor (see anchor), in a process group of its own, its output
+# in $xcodebuild_log and shown as it comes, then cleans up after it (cleanup_run). The
+# anchor's pid and start time are recorded, and checked to lead its group, before the
+# command starts; if they can't be read the run fails. After $timeout seconds a watchdog
+# sends TERM to the group's members, and KILL $grace seconds later (after a freeze), so
+# the command ends, and the status is 124. Everything else is cleanup_run's.
 run_watched() {
 	: >"$xcodebuild_log"
 	: >"$owned"
 	: >"$owned_groups"
 	: >"$owned_groups.retired"
+	rm -f "$run_ack" "$run_status" "$run_status.tmp"
 	set -m
-	"$@" >"$xcodebuild_log" 2>&1 &
-	run_pid=$!
+	anchor "$@" >"$xcodebuild_log" 2>&1 &
+	anchor_pid=$!
 	set +m
-	# Its group, owned with its leader's start time (see scan).
-	run_started=$(ps -o lstart= -p "$run_pid" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
-	if [ -n "$run_started" ]; then echo "$run_pid $run_started" >>"$owned_groups"; fi
+	anchor_started=$(ps -o lstart= -p "$anchor_pid" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
+	anchor_group=$(ps -o pgid= -p "$anchor_pid" 2>/dev/null | tr -d ' ')
+	if [ -z "$anchor_started" ] || [ "$anchor_group" != "$anchor_pid" ]; then
+		echo "e2e-macos: can't read the identity of the run's anchor (pid $anchor_pid," \
+			"start '$anchor_started', group '$anchor_group'); not starting xcodebuild" >&2
+		kill -KILL "$anchor_pid" 2>/dev/null || true
+		wait "$anchor_pid" 2>/dev/null || true
+		anchor_pid=""
+		return 1
+	fi
+	echo "$anchor_pid $anchor_started" >>"$owned_groups"
+	echo "$anchor_pid $anchor_started" >>"$owned"
+	: >"$run_ack"
+	(
+		while [ ! -e "$run_status" ]; do
+			# The anchor gone (or a zombie) without a status: it failed.
+			case $(ps -o stat= -p "$anchor_pid" 2>/dev/null) in
+			"" | Z*) exit 1 ;;
+			esac
+			sleep 0.2
+		done
+		read -r s <"$run_status"
+		exit "$s"
+	) &
+	waiter=$!
 	tail -f "$xcodebuild_log" &
 	tail_pid=$!
 	(
@@ -399,27 +491,30 @@ run_watched() {
 		waited=0
 		while [ "$waited" -lt "$timeout" ]; do
 			sleep 1
-			kill -0 "$run_pid" 2>/dev/null || exit 0
+			if [ -e "$run_status" ]; then exit 0; fi
 			waited=$((waited + 1))
 		done
 		: >"$timed_out"
 		echo "e2e-macos: timed out after ${timeout}s; stopping xcodebuild, the runner and the app" >&2
-		kill -TERM -- "-$run_pid" 2>/dev/null || true
+		# shellcheck disable=SC2046 # a list of pids
+		kill -TERM $(group_members) 2>/dev/null || true
 		waited=0
-		while kill -0 -- "-$run_pid" 2>/dev/null && [ "$waited" -lt "$grace" ]; do
+		while [ ! -e "$run_status" ] && [ "$waited" -lt "$grace" ]; do
 			sleep 1
 			waited=$((waited + 1))
 		done
 		# Frozen and recorded first, so a child the group's members started outside it
 		# stays owned once they're killed; cleanup_run deals with everything else.
-		if kill -0 -- "-$run_pid" 2>/dev/null; then
+		if [ ! -e "$run_status" ]; then
 			freeze >/dev/null
-			kill -KILL -- "-$run_pid" 2>/dev/null || true
+			# shellcheck disable=SC2046
+			kill -KILL $(group_members) 2>/dev/null || true
 		fi
 	) &
 	watcher=$!
 	status=0
-	wait "$run_pid" || status=$?
+	wait "$waiter" || status=$?
+	waiter=""
 	# The watcher only ever touches the group, which cleanup_run covers too.
 	kill "$watcher" 2>/dev/null || true
 	wait "$watcher" 2>/dev/null || true
@@ -579,8 +674,10 @@ trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
 
 expected_runs=$((tests * iterations))
-echo "# in a process group of its own, output also in $(quote "$xcodebuild_log"), with a ${timeout}s"
-echo "# watchdog that then sends TERM, and KILL ${grace}s later, to it, the runner and the app"
+echo "# under an anchor that leads its process group and is recorded before it starts, output also"
+echo "# in $(quote "$xcodebuild_log"), with a ${timeout}s"
+echo "# watchdog that then sends its group TERM, and KILL ${grace}s later; then the runner and the"
+echo "# app are killed, and the anchor last"
 # shellcheck disable=SC2086 # the two option lists split into words on purpose
 show env TEST_RUNNER_E2E_APP="$app" TEST_RUNNER_E2E_SCRATCH="$scratch" \
 	TEST_RUNNER_E2E_ITERATIONS="$iterations" TEST_RUNNER_E2E_FIXTURES="$fixtures" \

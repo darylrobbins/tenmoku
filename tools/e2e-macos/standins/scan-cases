@@ -1,8 +1,9 @@
 #!/bin/sh
-# Regression cases for scripts/e2e-macos.sh's process scan (T1682 review F4): feeds its
-# scan, taken from the script itself, synthetic `ps` snapshots (E2E_SCAN_SNAPSHOT) and
-# checks which pids it owns. Launches nothing. Prints one line per case; exits 1 if any
-# fails. Usage: tools/e2e-macos/standins/scan-cases
+# Regression cases for scripts/e2e-macos.sh's process scan (T1682 review F4, r2 and r3):
+# feeds its scan, taken from the script itself, synthetic `ps` snapshots
+# (E2E_SCAN_SNAPSHOT) and checks which pids it owns: reused group ids (the new leader
+# alive, a zombie or reaped), zombies, the anchor. Launches nothing. Prints one line per
+# case; exits 1 if any fails. Usage: tools/e2e-macos/standins/scan-cases
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 script="$here/../../../scripts/e2e-macos.sh"
@@ -26,6 +27,8 @@ T1="Mon Nov 17 10:00:00 2026"
 T2="Mon Nov 17 10:00:05 2026"
 T9="Mon Nov 17 11:00:00 2026"
 failures=0
+# shellcheck disable=SC2034 # read by the sourced scan()
+anchor_pid=""
 
 fresh() { : >"$owned"; : >"$owned_groups"; : >"$owned_groups.retired"; }
 # row PID PPID PGID START COMMAND...: one snapshot line, as ps prints it.
@@ -33,6 +36,10 @@ row() {
 	pid=$1 ppid=$2 pgid=$3 started=$4
 	shift 4
 	echo "$pid $ppid $pgid $me Ss $started $*"
+}
+# zrow PID PPID PGID START: a zombie's line.
+zrow() {
+	echo "$1 $2 $3 $me Z $4 <defunct>"
 }
 # check NAME EXPECTED: runs a scan of $work/snap and compares the owned pids.
 check() {
@@ -55,43 +62,73 @@ fresh
 check "a matched leader and its group" "500 501"
 echo "     recorded groups: $(cat "$owned_groups")"
 
-# 2. The leader exits; its child, reparented to launchd, stays in the group (a child
-#    made on TERM): still owned through the group.
+# 2. The leader exits but isn't reaped yet (a zombie, same start time): the group is
+#    still the one recorded, so a child it made as it exited is owned through it.
+{
+	zrow 500 1 500 "$T1"
+	row 501 1 500 "$T1" /bin/helper
+	row 502 1 500 "$T2" /bin/made-on-exit
+	row 900 1 900 "$T1" /usr/bin/unrelated
+} >"$work/snap"
+check "the leader a zombie, its group kept" "501 502"
+
+# 3. The leader is reaped: the group is retired, its continuity unverifiable. Members
+#    recorded earlier stay owned by their own identity; nothing else in the group is.
 {
 	row 501 1 500 "$T1" /bin/helper
-	row 502 1 500 "$T2" /bin/made-on-term
+	row 503 1 500 "$T2" /bin/unrecorded
 	row 900 1 900 "$T1" /usr/bin/unrelated
 } >"$work/snap"
-check "the leader gone, its group's members kept" "501 502"
-
-# 3. The group empties: retired.
-{
-	row 900 1 900 "$T1" /usr/bin/unrelated
-} >"$work/snap"
-check "the group empty" ""
+check "the leader reaped, only recorded members kept" "501"
 echo "     retired: $(cat "$owned_groups.retired")"
 
-# 4. Its id is reused later by an unrelated leader with a helper: never adopted.
+# 4. (codex r3 F4) A recorded group's id reused between scans by an unrelated leader that
+#    was reaped before the next scan, leaving its helper: never adopted.
+fresh
+echo "600 $T1" >"$owned_groups"
 {
-	row 500 1 500 "$T9" /usr/bin/someone-else
-	row 503 500 500 "$T9" /usr/bin/someone-elses-helper
+	row 601 1 600 "$T9" /usr/bin/someone-elses-helper
 	row 900 1 900 "$T1" /usr/bin/unrelated
 } >"$work/snap"
-check "the id reused after the group emptied" ""
+check "the id reused, the new leader reaped" ""
+echo "     retired: $(cat "$owned_groups.retired")"
 
-# 5. Reuse never seen empty: the recorded group's id is held by a live process that
-#    started at another time (its own new group). Its members aren't adopted, and the
-#    group is retired.
+# 5. (codex r3 F4) The same, the new leader a zombie: its start time still counts.
+fresh
+echo "600 $T1" >"$owned_groups"
+{
+	zrow 600 1 600 "$T9"
+	row 601 600 600 "$T9" /usr/bin/someone-elses-helper
+} >"$work/snap"
+check "the id reused, the new leader a zombie" ""
+
+# 6. The same, the new leader alive (another start time).
 fresh
 echo "600 $T1" >"$owned_groups"
 {
 	row 600 1 600 "$T9" /usr/bin/someone-else
 	row 601 600 600 "$T9" /usr/bin/someone-elses-helper
 } >"$work/snap"
-check "the id held by a process of another start time" ""
-echo "     retired: $(cat "$owned_groups.retired")"
+check "the id reused, the new leader alive" ""
 
-# 6. A recorded pid reused by another process (another start time) is not owned; the
+# 7. The anchored group (xcodebuild's): the anchor holds the id, so a member left in the
+#    group by a parent that exited, never recorded, is still owned. The anchor itself is
+#    never listed (cleanup signals it only at the end).
+fresh
+anchor_pid=400
+echo "400 $T1" >"$owned_groups"
+echo "400 $T1" >"$owned"
+{
+	row 400 1 400 "$T1" sleep 2592000
+	row 401 400 400 "$T1" /usr/bin/xcodebuild
+	row 402 1 400 "$T2" /bin/made-on-term
+	row 900 1 900 "$T1" /usr/bin/unrelated
+} >"$work/snap"
+check "the anchored group, a member's parent gone" "401 402"
+# shellcheck disable=SC2034
+anchor_pid=""
+
+# 8. A recorded pid reused by another process (another start time) is not owned; the
 #    recorded one, still there, is, and so is its new child.
 fresh
 echo "700 $T1" >"$owned"
@@ -103,7 +140,7 @@ echo "701 $T1" >>"$owned"
 } >"$work/snap"
 check "pid identity by start time" "701 702"
 
-# 7. The app under test, matched by its path (a literal match: the path holds [1]).
+# 9. The app under test, matched by its path (a literal match: the path holds [1]).
 fresh
 app='/e2e/build[1]/bundle/Tenmoku.app'
 {
