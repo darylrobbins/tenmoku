@@ -381,13 +381,56 @@ the B3 chrome included), and the release binary was rebuilt from it (17:40 to 17
   15 to 21, and `testSaveAllAndSaveAs` also ran slow in that iteration (34.5 s against
   24). The 48 launch records all name the e2e bundle.
 
+### C7: the clean run on the final code
+
+`scripts/e2e-macos.sh --no-build --iterations 3`, 2026-11-17 19:04:25 to 19:15:07, with
+the user at the Mac and the other lanes' finishes held (load average 8.0 at the start,
+13.3 at the end). The binary was the 17:55 release build of the branch rebased on main
+(v0.2.2). Only the Swift tests and these docs changed after it. The run ended:
+
+```
+test runs: 39 passed of 39 finished, 39 expected; summary: 13 passed of 13 tests
+launch records: 48, of which 0 name a dev.tenmoku.tenmoku.e2e process other than <worktree>/target/e2e-macos/bundle/Tenmoku.app, or none
+result bundle: <worktree>/target/e2e-macos/results/20261117-190425/TenmokuE2E.xcresult
+e2e-macos: passed
+```
+
+Every test passed in all three iterations, with no retries and no flakes. The suite took
+207.5, 208.7 and 208.0 s an iteration.
+
+| Test | Iteration 1 | 2 | 3 |
+|---|---|---|---|
+| testFirstRunWizardOnce | 16.0 s | 15.3 s | 15.3 s |
+| testMarkdownPreviewButtons | 16.2 s | 15.9 s | 16.0 s |
+| testOpenRecentAndRecentToml | 15.3 s | 15.6 s | 15.4 s |
+| testPaneToolbarEnabledState | 11.7 s | 12.0 s | 11.9 s |
+| testQuitByMenuHotExitAndRelaunch | 23.1 s | 24.5 s | 23.7 s |
+| testRunnerWritesOnlyItsScratch | 0.5 s | 0.6 s | 0.7 s |
+| testSaveAllAndSaveAs | 24.0 s | 23.9 s | 24.9 s |
+| testSaveEncodingsByteForByte | 22.2 s | 22.2 s | 22.1 s |
+| testSaveWithCmdSAndFileMenu | 18.9 s | 19.2 s | 19.1 s |
+| testTrustByMenu | 21.0 s | 21.1 s | 20.7 s |
+| testVimClipboardOff | 7.2 s | 7.2 s | 7.2 s |
+| testVimClipboardUnnamedplus | 7.4 s | 7.7 s | 7.3 s |
+| testWindowTitleDirtyAndActive | 23.8 s | 23.5 s | 23.7 s |
+
+**The user's Tenmoku and the installed copies were untouched.** All 48 launch records name
+only the e2e bundle's executable. That is 36 first launches plus the 12 second launches of
+the wizard, trust, Open Recent and hot-exit tests (`launched-<test>-<iteration>-2`), and the
+script's audit checked every one. None notes a `dev.tenmoku.tenmoku` process, so the user's
+Tenmoku wasn't running. `~/Applications/Tenmoku.app/Contents/Info.plist` is from Nov 9
+15:45, before the card. `/Applications/Tenmoku.app/Contents/Info.plist` is from Nov 16
+05:56, after the card started but outside every UI run (Nov 16 05:03 to 05:42 and 11:52 to
+12:05, Nov 17 17:55 to 19:15), so it is the user's own install, not the suite's. The script
+never names `/Applications`, and no test launches by bundle id.
+
 **The two flakes share one signature.** The 11:52 run on 2026-11-16 (a `typeText` after a
 cmd-Z) and this one (a cmd-S): an event synthesis stalls about 10 to 11 s, then the key is
 lost. That is two in 117 test runs on the final code, both under load averages of about
 15 to 30. No run at the 05:31 load stalled. The cause looks to be on XCTest's side, its
 event synthesis under load, not the app's. The suite doesn't hide it with retries.
 
-### C7: `scripts/e2e-macos.sh --no-build --iterations 3` (before review round 1)
+### The first 39 of 39: `--iterations 3` before review round 1 (2026-11-16)
 
 05:31:05 to 05:41:57, 10 min 52 s wall, ending:
 

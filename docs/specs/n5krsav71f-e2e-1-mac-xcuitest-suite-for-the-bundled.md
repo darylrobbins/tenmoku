@@ -140,3 +140,9 @@ Uses a human-run UI session: a UI run needs the user's go-ahead before it starts
   layout; the preview keeps the source tab's title; the Save As caret). Then
   `--no-build --iterations 3` passed 39 of 39. A possible app bug went to the record:
   focus after the trust alert on a restored window.
+- Review round 1 (F1 shutdown children, F2 record names, F3 XML escaping) was fixed in
+  8027a2895 and checked with the stand-ins. On 2026-11-17 the branch was rebased on main
+  (v0.2.2) and the app rebuilt from it. The toolbar test then followed the B3 tab strip
+  (no Split Down), and 19:04 `--no-build --iterations 3` passed 39 of 39 with the other
+  lanes held. Two earlier final-code runs each lost one key to a 10 to 11 s XCTest event
+  synthesis stall under load (recorded in the decision file).
