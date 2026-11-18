@@ -1612,6 +1612,7 @@ mod tests {
         // that can't be decoded; a file that can't be read.
         let broken = root.join("broken.png");
         fs::write(&broken, b"not a picture").unwrap();
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut failing = vec![root.join("missing.txt"), broken];
         #[cfg(unix)]
         {
