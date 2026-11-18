@@ -839,13 +839,11 @@ const DEFS: &[Def] = &[
         extensions: &["md", "markdown", "mdx"],
         file_names: &[],
         grammar: || tree_sitter_md::LANGUAGE.into(),
-        // The crate's query clears a fence's code with `@none`; we keep it
-        // `markup.raw`, so a fence in a language we lack still stands out.
-        // Later patterns win, so this overrides it.
+        // Later patterns win, so ours override the crate's.
         highlights: || {
             &[
                 tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
-                "\n(code_fence_content) @text.literal\n",
+                include_str!("../queries/markdown.scm"),
             ]
         },
         earlier_patterns_win: false,
@@ -858,18 +856,31 @@ const DEFS: &[Def] = &[
         extensions: &[],
         file_names: &[],
         grammar: || tree_sitter_md::INLINE_LANGUAGE.into(),
-        // The crate's query colours a URL autolink but not an email one.
         highlights: || {
             &[
                 tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
-                "\n(email_autolink) @text.uri\n",
+                include_str!("../queries/markdown-inline.scm"),
             ]
         },
         earlier_patterns_win: false,
         injections: Some(tree_sitter_md::INJECTION_QUERY_INLINE),
         hidden: true,
     },
-    // Inline Markdown in Rust doc comments: only code spans and link text are highlighted.
+    // Block Markdown on a Rust doc comment's quote or list-item line: the
+    // quote and the markers; its text is `rustdoc_inline`.
+    #[cfg(all(feature = "markdown", feature = "rust"))]
+    Def {
+        name: "rustdoc",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_md::LANGUAGE.into(),
+        highlights: || &[include_str!("../queries/rustdoc-highlights.scm")],
+        earlier_patterns_win: false,
+        injections: Some(include_str!("../queries/rustdoc-injections.scm")),
+        hidden: true,
+    },
+    // Inline Markdown in Rust doc comments: code spans, link text and
+    // emphasis are highlighted.
     #[cfg(all(feature = "markdown", feature = "rust"))]
     Def {
         name: "rustdoc_inline",

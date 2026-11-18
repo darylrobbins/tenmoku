@@ -13,6 +13,7 @@ fn bold_definitions() -> EditorPalette {
     let bold = FontStyle {
         italic: false,
         bold: true,
+        strikethrough: false,
     };
     palette.styles = vec![("function.definition".into(), bold)];
     palette

@@ -12,6 +12,11 @@ use kiln_core::theme::{ThemeData, ThemeFile};
 /// covers each, or the foreground does (`embedded`, `variable`).
 const UNCOLOURED: &[&str] = &[
     "comment.documentation",
+    "comment.documentation.italic",
+    "comment.documentation.list",
+    "comment.documentation.quote",
+    "comment.documentation.strikethrough",
+    "comment.documentation.strong",
     "constant.builtin",
     "embedded",
     "function.builtin",
@@ -46,9 +51,12 @@ fn theme(source: &str) -> (ThemeData, usize) {
 fn bundled_palettes() {
     let dark = EditorPalette::fastedit_dark();
     let light = EditorPalette::fastedit_light();
-    // Font styles are a theme's own, so a theme without the table has none.
+    // Font styles are a theme's own, so a theme without the table has the
+    // markup's alone, every theme's.
     let unstyled = |palette: &EditorPalette| EditorPalette {
-        styles: vec![],
+        styles: (fe_config::theme::MARKUP_STYLES.iter())
+            .map(|&(name, style)| (name.to_owned(), style))
+            .collect(),
         ..palette.clone()
     };
     assert_eq!(
@@ -154,7 +162,9 @@ keyword = "#d00000"
 
     let light = EditorPalette::fastedit_light();
     let mut expected = light.clone();
-    expected.styles.clear();
+    expected.styles = (fe_config::theme::MARKUP_STYLES.iter())
+        .map(|&(name, style)| (name.to_owned(), style))
+        .collect();
     expected.editor.background = color("#fafafa");
     let keyword = expected
         .syntax

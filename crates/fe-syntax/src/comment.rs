@@ -39,7 +39,9 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
         "sql" => tokens(Some("--"), Some(("/*", "*/"))),
         "css" => tokens(None, Some(("/*", "*/"))),
         "html" | "xml" | "markdown" => html,
-        "markdown_inline" | "rustdoc_inline" | "diff" | "csv" | "tsv" => tokens(None, None),
+        "markdown_inline" | "rustdoc" | "rustdoc_inline" | "diff" | "csv" | "tsv" => {
+            tokens(None, None)
+        }
         _ => return crate::runtime::comment_tokens(language),
     })
 }
@@ -50,7 +52,7 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
 /// (plain text) gets `()`, `[]`, `{}`, `""`.
 pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
     match language {
-        "markdown_inline" | "rustdoc_inline" => &[],
+        "markdown_inline" | "rustdoc" | "rustdoc_inline" => &[],
         "csv" | "tsv" => &[('"', '"')],
         "rust" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
         "javascript" | "typescript" | "tsx" | "go" | "bash" | "python" | "ruby" | "swift"

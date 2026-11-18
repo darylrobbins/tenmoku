@@ -25,11 +25,12 @@ use fe_vim::jump::JumpLabelState;
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Context, CursorStyle, DecorationRun, DispatchPhase,
     Element, ElementId, ElementInputHandler, Entity, Font, FontId, FontWeight, Global,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    LineLayout, Modifiers, ModifiersChangedEvent, MouseDownEvent, MouseEvent, MouseExitEvent,
-    MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point, ScrollWheelEvent,
-    ShapedRun, SharedString, Style, TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity,
-    Window, WindowId, WindowTextSystem, fill, outline, point, px, relative, rgb, size,
+    GlobalElementId, GlyphId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement,
+    LayoutId, LineLayout, Modifiers, ModifiersChangedEvent, MouseDownEvent, MouseEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point,
+    ScrollWheelEvent, ShapedRun, SharedString, StrikethroughStyle, Style, TextAlign, TextRun,
+    TextSystem, UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem, fill, outline,
+    point, px, relative, rgb, size,
 };
 
 use crate::{
@@ -592,7 +593,8 @@ fn decoration_runs(runs: &[StyleRun<Hsla>]) -> Vec<DecorationRun> {
     colour_runs(runs)
 }
 
-/// [`decoration_runs`] of runs in any style: their colours.
+/// [`decoration_runs`] of runs in any style: their colours, and a line
+/// through the struck ones in their colour.
 fn colour_runs<S: HighlightStyle>(runs: &[StyleRun<S>]) -> Vec<DecorationRun> {
     let mut out: Vec<DecorationRun> = Vec::with_capacity(runs.len());
     for run in runs {
@@ -600,27 +602,39 @@ fn colour_runs<S: HighlightStyle>(runs: &[StyleRun<S>]) -> Vec<DecorationRun> {
             continue;
         }
         let color = run.style.color();
+        let strikethrough = (run.style.strikethrough()).then_some(StrikethroughStyle {
+            thickness: px(STRIKETHROUGH_THICKNESS),
+            color: Some(color),
+        });
         match out.last_mut() {
-            Some(last) if last.color == color => last.len += run.len as u32,
+            Some(last) if last.color == color && last.strikethrough == strikethrough => {
+                last.len += run.len as u32
+            }
             _ => out.push(DecorationRun {
                 len: run.len as u32,
                 color,
                 background_color: None,
                 underline: None,
-                strikethrough: None,
+                strikethrough,
             }),
         }
     }
     out
 }
 
-/// How a span of the text area's text is drawn: its colour, and whether its
-/// face is italic or bold, as the theme's `[syntax_style]` gives a capture.
+/// How thick the line through struck text is, as deprecated diagnostics'.
+const STRIKETHROUGH_THICKNESS: f32 = 1.;
+
+/// How a span of the text area's text is drawn: its colour, whether its
+/// face is italic or bold, and whether a line is drawn through it, as the
+/// theme's `[syntax_style]` gives a capture. The line is a decoration, not a
+/// face: struck text is shaped as it would be without it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpanStyle {
     pub color: Hsla,
     pub italic: bool,
     pub bold: bool,
+    pub strikethrough: bool,
 }
 
 impl SpanStyle {
@@ -630,6 +644,7 @@ impl SpanStyle {
             color,
             italic: false,
             bold: false,
+            strikethrough: false,
         }
     }
 
@@ -640,6 +655,7 @@ impl SpanStyle {
             color,
             italic: style.italic,
             bold: style.bold,
+            strikethrough: style.strikethrough,
         }
     }
 
@@ -670,6 +686,12 @@ pub(crate) trait HighlightStyle: Copy + PartialEq {
     const FACES: bool;
     /// The same colour in the bold face.
     fn bold(self) -> Self;
+    /// The same, struck through where it draws strikes.
+    fn struck(self) -> Self;
+    /// The same with `face` added to its own, where it draws faces.
+    fn with_face(self, face: fe_config::FontStyle) -> Self;
+    /// Whether a line is drawn through it.
+    fn strikethrough(self) -> bool;
 }
 
 impl HighlightStyle for Hsla {
@@ -694,6 +716,18 @@ impl HighlightStyle for Hsla {
     fn bold(self) -> Self {
         self
     }
+
+    fn struck(self) -> Self {
+        self
+    }
+
+    fn with_face(self, _: fe_config::FontStyle) -> Self {
+        self
+    }
+
+    fn strikethrough(self) -> bool {
+        false
+    }
 }
 
 impl HighlightStyle for SpanStyle {
@@ -707,7 +741,7 @@ impl HighlightStyle for SpanStyle {
         text: Hsla,
     ) -> Option<Self> {
         let style = SpanStyle::new(color.unwrap_or(text), style);
-        (color.is_some() || style.changes_face()).then_some(style)
+        (color.is_some() || style.changes_face() || style.strikethrough).then_some(style)
     }
 
     fn color(self) -> Hsla {
@@ -722,6 +756,26 @@ impl HighlightStyle for SpanStyle {
 
     fn bold(self) -> Self {
         Self { bold: true, ..self }
+    }
+
+    fn struck(self) -> Self {
+        Self {
+            strikethrough: true,
+            ..self
+        }
+    }
+
+    fn with_face(self, face: fe_config::FontStyle) -> Self {
+        Self {
+            italic: self.italic || face.italic,
+            bold: self.bold || face.bold,
+            strikethrough: self.strikethrough || face.strikethrough,
+            ..self
+        }
+    }
+
+    fn strikethrough(self) -> bool {
+        self.strikethrough
     }
 }
 
@@ -782,6 +836,73 @@ impl Faces {
     fn index(style: &SpanStyle) -> usize {
         usize::from(style.italic) | (usize::from(style.bold) << 1)
     }
+    /// `runs` over `text` with each face change that falls inside a
+    /// ligature of `plain`, the text shaped in the plain face alone, moved to
+    /// the ligature's end, so it's drawn whole in the face of the run it
+    /// starts in, as a colour change inside it leaves it whole: a shaper
+    /// cuts a ligature where the font changes. A ligature is one glyph for
+    /// several characters, or (as in Fira Code's) characters each drawn in
+    /// another glyph than `isolated` gives it alone in the plain face.
+    pub fn keep_ligatures(
+        text: &str,
+        plain: &LineLayout,
+        isolated: impl Fn(char) -> Option<GlyphId>,
+        runs: &mut Vec<TextRun>,
+    ) {
+        let mut glyphs: Vec<(usize, GlyphId)> = (plain.runs.iter())
+            .flat_map(|run| run.glyphs.iter().map(|glyph| (glyph.index, glyph.id)))
+            .collect();
+        glyphs.sort_unstable_by_key(|&(index, _)| index);
+        let len: usize = runs.iter().map(|run| run.len).sum();
+        let char_at = |at: usize| text.get(at..).and_then(|rest| rest.chars().next());
+        // Whether the character at `at` is drawn in a glyph of its own that
+        // its neighbours chose.
+        let substituted = |at: usize| {
+            let Ok(ix) = glyphs.binary_search_by_key(&at, |&(index, _)| index) else {
+                return false;
+            };
+            char_at(at)
+                .and_then(&isolated)
+                .is_some_and(|own| own != glyphs[ix].1)
+        };
+        let before = |at: usize| text[..at].char_indices().next_back().map(|(ix, _)| ix);
+        let mut kept: Vec<TextRun> = Vec::with_capacity(runs.len());
+        let (mut start, mut end) = (0, 0);
+        for run in runs.drain(..) {
+            end += run.len;
+            let next = glyphs.partition_point(|&(index, _)| index < end);
+            let cut = if end >= len || !text.is_char_boundary(end) {
+                end
+            } else if next > 0 && glyphs.get(next).map(|&(index, _)| index) != Some(end) {
+                // Inside one glyph: to its end.
+                glyphs.get(next).map_or(len, |&(index, _)| index)
+            } else if before(end).is_some_and(substituted) && substituted(end) {
+                // Inside a run of substituted glyphs: to its end.
+                let mut at = end;
+                while at < len && substituted(at) {
+                    at += char_at(at).map_or(1, char::len_utf8);
+                }
+                at
+            } else {
+                end
+            };
+            let cut = cut.max(start).min(len);
+            if cut > start {
+                match kept.last_mut() {
+                    Some(last) if last.font == run.font => last.len += cut - start,
+                    _ => kept.push(TextRun {
+                        len: cut - start,
+                        ..run
+                    }),
+                }
+                start = cut;
+            }
+        }
+        if let Some(last) = kept.last_mut() {
+            last.len += len - start;
+        }
+        *runs = kept;
+    }
 }
 
 /// The text runs `text` is shaped in, over `runs`, into `out`: one in the
@@ -790,8 +911,9 @@ impl Faces {
 /// it. A run of spaces alone, which draws nothing and is as wide in every
 /// face, takes the face before it (the first, the face after it): an
 /// indented comment is one run, as each run costs the shaper about as much
-/// as a row. A face changes only between grapheme clusters: a cluster a run
-/// starts inside is drawn in the face of the run it starts in.
+/// as a row. A space a combining mark follows is no such run: its cluster
+/// draws the mark. A face changes only between grapheme clusters: a cluster
+/// a run starts inside is drawn in the face of the run it starts in.
 pub fn text_runs(text: &str, runs: &[StyleRun<SpanStyle>], faces: &Faces, out: &mut Vec<TextRun>) {
     let run = |len: usize, font: &Font| TextRun {
         len,
@@ -815,7 +937,10 @@ pub fn text_runs(text: &str, runs: &[StyleRun<SpanStyle>], faces: &Faces, out: &
     for run in runs.iter().filter(|run| run.len > 0) {
         let start = end;
         end += run.len;
-        let spaces = (text.get(start..end)).is_some_and(|run| run.bytes().all(|byte| byte == b' '));
+        // Whole clusters of spaces alone: a space a mark follows is a cluster
+        // with it, drawn in the face its run gives it.
+        let spaces = (text.get(start..end)).is_some_and(|run| run.bytes().all(|byte| byte == b' '))
+            && cluster_end(text, end) == end;
         let face = Faces::index(&run.style);
         match ends.last_mut() {
             Some((last, at)) if *last == face || spaces => *at = end,
@@ -902,8 +1027,47 @@ impl FaceShaping {
             }
         };
         text_runs(text, runs, faces, &mut self.runs);
+        if ligature_risk(text, &self.runs) {
+            let whole = [TextRun {
+                len: text.len(),
+                font: font.clone(),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }];
+            let plain = text_system.layout_line(text, font_size, &whole, None);
+            // A character's own glyph: it shaped alone, which the text
+            // system caches.
+            let isolated = |ch: char| {
+                let mut buf = [0; 4];
+                let one = ch.encode_utf8(&mut buf);
+                let run = [TextRun {
+                    len: one.len(),
+                    ..whole[0].clone()
+                }];
+                let line = text_system.layout_line(one, font_size, &run, None);
+                (line.runs.first()?.glyphs.first()).map(|glyph| glyph.id)
+            };
+            Faces::keep_ligatures(text, &plain, isolated, &mut self.runs);
+        }
         text_system.layout_line(text, font_size, &self.runs, None)
     }
+}
+
+/// Whether a face changes between two ASCII punctuation characters of
+/// `text`, where code fonts' ligatures (`->`, `!=`, `**`) form.
+fn ligature_risk(text: &str, runs: &[TextRun]) -> bool {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    runs.split_last().is_some_and(|(_, inner)| {
+        inner.iter().any(|run| {
+            at += run.len;
+            at > 0
+                && (bytes.get(at - 1)).is_some_and(u8::is_ascii_punctuation)
+                && (bytes.get(at)).is_some_and(u8::is_ascii_punctuation)
+        })
+    })
 }
 
 /// Shapes the text area's rows in their spans' faces ([`FaceShaping`]),
@@ -1523,10 +1687,31 @@ impl Element for EditorElement {
         let first_swatch = hints.len();
         hints.extend(crate::color_swatches::inlays(view).map(plain_inlay));
         let unnecessary = unnecessary_ranges(&model.diagnostics());
+        // Deprecated code is struck as a `Strikethrough` decoration's is:
+        // one line, however many say so.
+        let deprecated = deprecated_ranges(&model.diagnostics());
         let queried = decorations::Queried::default();
         // The colours of the frame's `Foreground` decorations, found once
         // the frame's rows are known.
         let foreground: std::cell::RefCell<Vec<StyledSpan<SpanStyle>>> = Default::default();
+        // And the text its `Strikethrough` decorations and deprecated
+        // diagnostics strike through.
+        let struck = std::cell::RefCell::new(deprecated.clone());
+        let spans = |range: Range<usize>| {
+            let spans = styled_highlights(
+                syntax,
+                theme,
+                &unnecessary,
+                &foreground.borrow(),
+                range.clone(),
+            );
+            strike_spans(
+                spans,
+                &struck.borrow(),
+                &range,
+                SpanStyle::plain(theme.foreground),
+            )
+        };
         let columns = gutter_columns(font_size.into());
         // The text in its spans' faces; the rest below is in the plain one.
         let mut styled = StyledShaper::new(shaper.clone());
@@ -1541,7 +1726,7 @@ impl Element for EditorElement {
                 &mut styled,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
+                spans,
                 |rows| fold_headers(syntax, server_folds.as_deref().map(Vec::as_slice), rows),
             ),
             false => layout::layout_frame_without_gutter_with_hints(
@@ -1552,7 +1737,7 @@ impl Element for EditorElement {
                 &mut styled,
                 &mut long_rows,
                 &mut glyph_widths,
-                |range| styled_highlights(syntax, theme, &unnecessary, &foreground.borrow(), range),
+                spans,
             ),
         };
         // A frame laid out, and again with the colours of the `Foreground`
@@ -1567,10 +1752,12 @@ impl Element for EditorElement {
                 };
                 let decorations = queried.get(view, first.start..last.end);
                 let found = styled_foreground_spans(&decorations, theme);
-                if found == *foreground.borrow() {
+                let found_struck = merged_ranges(struck_ranges(&decorations), &deprecated);
+                if found == *foreground.borrow() && found_struck == *struck.borrow() {
                     break;
                 }
                 *foreground.borrow_mut() = found;
+                *struck.borrow_mut() = found_struck;
                 frame = lay_out(input);
             }
             frame
@@ -2137,9 +2324,12 @@ impl Element for EditorElement {
         let matches = mem::take(&mut layout.matches);
         let current_match = mem::take(&mut layout.current_match);
         let brackets = mem::take(&mut layout.brackets);
-        let (squiggles, mut marks, strikes, inline_diagnostics) = {
+        // What's struck, for tests: drawn with the text, not here.
+        #[cfg(test)]
+        let strikes = struck_boxes(&layout);
+        let (squiggles, mut marks, inline_diagnostics) = {
             let diagnostics = view.model.diagnostics();
-            let (squiggles, marks, strikes) =
+            let (squiggles, marks) =
                 diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme);
             let inline = crate::inline_diagnostics::layout(
                 &mut layout,
@@ -2148,7 +2338,7 @@ impl Element for EditorElement {
                 &theme,
                 window,
             );
-            (squiggles, marks, strikes, inline)
+            (squiggles, marks, inline)
         };
         // The marks go in the gutter.
         if !view.gutter {
@@ -2437,9 +2627,6 @@ impl Element for EditorElement {
                     for (squiggle, style) in &squiggles {
                         window.paint_underline(squiggle.origin, squiggle.size.width, style);
                     }
-                    for &(strike, color) in &strikes {
-                        window.paint_quad(fill(strike, color));
-                    }
                     layout.decorations.paint(Layer::Underlines, window, cx);
                     layout.decorations.paint(Layer::AfterLine, window, cx);
                     for &(underline, color) in &underlines {
@@ -2700,7 +2887,7 @@ impl Element for EditorElement {
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;
-                view.painted_strikes = strikes.iter().map(|&(bounds, _)| bounds).collect();
+                view.painted_strikes = strikes;
                 view.painted_composition = composition_underline;
                 view.painted_glyph = glyph.map(|(row, bounds, _)| (row, bounds));
                 view.painted_marks = marks.iter().map(|&(row, _, color)| (row, color)).collect();
@@ -2934,7 +3121,7 @@ fn diagnostic_marks(
     text: &Text,
     diagnostics: &[fe_editor::diagnostics::DiagnosticEntry<'_>],
     theme: &EditorTheme,
-) -> (Vec<Squiggle>, Vec<Mark>, Vec<Strike>) {
+) -> (Vec<Squiggle>, Vec<Mark>) {
     let FrameLayout {
         frame,
         long_rows,
@@ -2942,11 +3129,10 @@ fn diagnostic_marks(
         ..
     } = layout;
     let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new());
     };
     let shown = first.start..last.end;
     let mut pieces = Vec::new();
-    let mut strikes = Vec::new();
     let mut rows: HashMap<u32, fe_editor::diagnostics::Severity> = HashMap::new();
     for entry in diagnostics {
         let range = entry.range.clone();
@@ -2999,20 +3185,6 @@ fn diagnostic_marks(
             if !(entry.severity == Severity::Hint && is_unnecessary(entry)) {
                 pieces.push((entry.severity, rect));
             }
-            if entry.tags.contains(&DiagnosticTag::Deprecated) && start < end {
-                let shown = row.shown();
-                let color = shown
-                    .contains(&start)
-                    .then(|| (row.line).color_at(row.expanded.to_display(start - shown.start)))
-                    .flatten()
-                    .unwrap_or(theme.foreground);
-                let middle = Rect {
-                    y: baseline - ascent / 2.,
-                    height: 1.,
-                    ..rect
-                };
-                strikes.push((middle, color));
-            }
         }
     }
     pieces.sort_by_key(|(severity, _)| *severity);
@@ -3045,15 +3217,48 @@ fn diagnostic_marks(
     let marks = (marks.into_iter())
         .map(|(row, rect, color)| (row, layout.bounds(rect), color))
         .collect();
-    let strikes = (strikes.into_iter())
-        .map(|(rect, color)| (layout.bounds(rect), color))
-        .collect();
-    (squiggles, marks, strikes)
+    (squiggles, marks)
 }
 
-/// A strike through deprecated text: its box in window coordinates and the
-/// text's colour.
-type Strike = (Bounds<Pixels>, Hsla);
+/// The lines through the frame's struck text, a box each in window
+/// coordinates: a run of struck glyphs on a row, whatever struck it, as
+/// GPUI draws them with the row's text. For tests of what's struck once.
+fn struck_boxes(layout: &FrameLayout) -> Vec<Bounds<Pixels>> {
+    let frame = &layout.frame;
+    let mut boxes = Vec::new();
+    for row in &frame.rows {
+        let line = &row.line;
+        let (ascent, descent): (f32, f32) = (line.layout.ascent.into(), line.layout.descent.into());
+        let baseline =
+            frame.row_top(row.row) + (frame.line_height - ascent - descent) / 2. + ascent;
+        let mut end = 0;
+        let mut open: Option<usize> = None;
+        for run in line.decorations.iter().chain([&DecorationRun {
+            len: 0,
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }]) {
+            match (open, run.strikethrough.is_some() && run.len > 0) {
+                (None, true) => open = Some(end),
+                (Some(start), false) => {
+                    let (left, right) = (line.x_for_index(start), line.x_for_index(end));
+                    boxes.push(layout.bounds(Rect {
+                        x: frame.view_x(row.start_x() + f64::from(left)),
+                        y: baseline - ascent / 2.,
+                        width: right - left,
+                        height: STRIKETHROUGH_THICKNESS,
+                    }));
+                    open = None;
+                }
+                _ => {}
+            }
+            end += run.len as usize;
+        }
+    }
+    boxes
+}
 
 /// How much of its alpha text covered by an Unnecessary diagnostic keeps,
 /// as in VS Code's `editorUnnecessaryCode.opacity`.
@@ -3061,6 +3266,36 @@ const UNNECESSARY_OPACITY: f32 = 0.67;
 
 fn is_unnecessary(entry: &fe_editor::diagnostics::DiagnosticEntry<'_>) -> bool {
     entry.tags.contains(&DiagnosticTag::Unnecessary)
+}
+
+/// The ranges Deprecated diagnostics cover, sorted and merged.
+pub(crate) fn deprecated_ranges(
+    diagnostics: &[fe_editor::diagnostics::DiagnosticEntry<'_>],
+) -> Vec<Range<usize>> {
+    let ranges = (diagnostics.iter())
+        .filter(|entry| entry.tags.contains(&DiagnosticTag::Deprecated))
+        .map(|entry| entry.range.clone())
+        .collect();
+    merged_ranges(ranges, &[])
+}
+
+/// `ranges` and `more`, without the empty ones, sorted and merged where
+/// they overlap or touch.
+pub(super) fn merged_ranges(
+    mut ranges: Vec<Range<usize>>,
+    more: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    ranges.extend(more.iter().cloned());
+    ranges.retain(|range| !range.is_empty());
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
 }
 
 /// The ranges Unnecessary diagnostics cover, sorted and merged so
@@ -3099,6 +3334,36 @@ fn fade_spans<S: HighlightStyle>(
             ..color
         })
     };
+    restyle_spans(spans, fade, range, text, faded)
+}
+
+/// `spans` with the parts inside `struck` (sorted, merged) struck through,
+/// and the parts of `struck` within `range` that they leave uncovered added
+/// in `text`, struck: a `Strikethrough` decoration's text keeps its colour
+/// and face.
+pub(super) fn strike_spans<S: HighlightStyle>(
+    spans: Vec<StyledSpan<S>>,
+    struck: &[Range<usize>],
+    range: &Range<usize>,
+    text: S,
+) -> Vec<StyledSpan<S>> {
+    if struck.is_empty() {
+        return spans;
+    }
+    restyle_spans(spans, struck, range, text, S::struck)
+}
+
+/// `spans` with the parts inside `inside` (sorted, merged) in the style
+/// `restyle` gives theirs, and the parts of `inside` within `range` that
+/// they leave uncovered added in `restyle(text)`.
+fn restyle_spans<S: HighlightStyle>(
+    spans: Vec<StyledSpan<S>>,
+    inside: &[Range<usize>],
+    range: &Range<usize>,
+    text: S,
+    restyle: impl Fn(S) -> S,
+) -> Vec<StyledSpan<S>> {
+    let (fade, faded) = (inside, restyle);
     let mut out = Vec::new();
     let mut covered = Vec::new();
     for span in spans {
@@ -4926,36 +5191,203 @@ fn styled_highlights<S: HighlightStyle>(
     foreground: &[StyledSpan<S>],
     range: Range<usize>,
 ) -> Vec<StyledSpan<S>> {
-    let spans: Vec<_> = syntax
-        .map(|syntax| syntax.highlights(range.clone()))
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|span| {
-            let (color, style) = theme.capture_style(span.highlight);
+    let (highlights, markup) = match syntax {
+        Some(syntax) => {
+            let highlights = syntax.checked_highlights(range.clone());
+            (highlights.spans, highlights.markup)
+        }
+        None => Default::default(),
+    };
+    let faces = nested_faces(highlights, &markup, theme);
+    // Markup's faces, which the colours laid over them below keep.
+    let marked: Vec<_> = match S::FACES {
+        true => (faces.iter())
+            .filter_map(|face| Some((face.range.clone(), face.face.filter(|_| face.markup)?)))
+            .collect(),
+        false => Vec::new(),
+    };
+    let spans: Vec<_> = (faces.into_iter())
+        .filter_map(|face| {
             Some(StyledSpan {
-                style: S::styled(color, style, theme.foreground)?,
-                range: span.range,
+                style: S::styled(face.color, face.face, theme.foreground)?,
+                range: face.range,
             })
         })
         .collect();
     let spans = bold_definitions(spans, syntax, theme, &range);
     let spans = match syntax {
         Some(syntax) if theme.bracket_pair_colors => {
-            let brackets = fe_syntax::bracket_depths(syntax, range.clone())
+            // In its depth's colour, keeping the face and line the theme
+            // gives the bracket's capture.
+            let brackets: Vec<_> = fe_syntax::bracket_depths(syntax, range.clone())
                 .into_iter()
-                .map(|bracket| StyledSpan {
-                    style: S::plain(theme.bracket_color(bracket.depth)),
-                    range: bracket.range,
-                });
+                .map(|bracket| {
+                    let color = theme.bracket_color(bracket.depth);
+                    let under = spans.partition_point(|span| span.range.end <= bracket.range.start);
+                    let style = match spans.get(under) {
+                        Some(span) if span.range.start <= bracket.range.start => {
+                            span.style.with_color(color)
+                        }
+                        _ => S::plain(color),
+                    };
+                    StyledSpan {
+                        style,
+                        range: bracket.range,
+                    }
+                })
+                .collect();
             over(spans, brackets)
         }
         _ => spans,
     };
     let spans = over(spans, clipped(foreground, &range));
+    // A `Foreground` decoration over markup colours it, in markup's face:
+    // a doc comment's semantic token, or a TODO in struck text.
+    let spans = with_faces(spans, &marked);
     if unnecessary.is_empty() {
         return spans;
     }
     fade_spans(spans, unnecessary, &range, S::plain(theme.foreground))
+}
+
+/// A piece of text's colour and face from its highlights.
+struct Face {
+    range: Range<usize>,
+    color: Option<Hsla>,
+    face: Option<fe_config::FontStyle>,
+    /// Whether it's text in markup, which takes markup's faces.
+    markup: bool,
+}
+
+/// Whether text highlighted `highlight` takes the faces of the markup
+/// around it: markup's own ([`fe_syntax::Highlight::is_markup`]), and an
+/// escaped character, which is text in it (`\!` in `~~a \! b~~`). Not its
+/// delimiters, which are punctuation, nor code.
+fn takes_markup_faces(highlight: fe_syntax::Highlight) -> bool {
+    highlight.is_markup() || highlight.name() == "escape"
+}
+
+/// Each of `spans` in its highlight's colour and face, and text in markup
+/// ([`takes_markup_faces`]) in the faces of the `markup` captures around it
+/// too: emphasis in strong text is bold and italic, in emphasis's colour,
+/// and strong text in a heading or a strikethrough is bold and that. A span
+/// that markup covers only part of is cut where it starts or ends.
+fn nested_faces(
+    spans: Vec<fe_syntax::HighlightSpan>,
+    markup: &[fe_syntax::HighlightSpan],
+    theme: &EditorTheme,
+) -> Vec<Face> {
+    let mut faces: Vec<Face> = Vec::with_capacity(spans.len());
+    // The markup starting before the span, less what ended before it: the
+    // spans are sorted, so what ends before one ends before the rest.
+    let mut next = 0;
+    let mut open: Vec<(Range<usize>, fe_config::FontStyle)> = Vec::new();
+    for span in spans {
+        let (color, own) = theme.capture_style(span.highlight);
+        let in_markup = takes_markup_faces(span.highlight);
+        if !in_markup || markup.is_empty() {
+            faces.push(Face {
+                range: span.range,
+                color,
+                face: own,
+                markup: in_markup,
+            });
+            continue;
+        }
+        while let Some(capture) = markup.get(next)
+            && capture.range.start < span.range.end
+        {
+            if let (_, Some(style)) = theme.capture_style(capture.highlight) {
+                open.push((capture.range.clone(), style));
+            }
+            next += 1;
+        }
+        open.retain(|(range, _)| range.end > span.range.start);
+        let around = |piece: &Range<usize>| {
+            (open.iter())
+                .filter(|(range, _)| range.start <= piece.start && piece.end <= range.end)
+                .fold(own, |face, (_, style)| {
+                    Some(face.map_or(*style, |face| face.union(*style)))
+                })
+        };
+        // Cut where markup starts or ends inside the span: a host's capture
+        // over part of a layer's.
+        let mut cuts: Vec<usize> = (open.iter())
+            .flat_map(|(range, _)| [range.start, range.end])
+            .filter(|at| span.range.start < *at && *at < span.range.end)
+            .collect();
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut start = span.range.start;
+        for end in cuts.into_iter().chain([span.range.end]) {
+            let piece = start..end;
+            let face = around(&piece);
+            match faces.last_mut() {
+                Some(last)
+                    if last.range.end == piece.start
+                        && last.markup
+                        && last.color == color
+                        && last.face == face =>
+                {
+                    last.range.end = piece.end;
+                }
+                _ => faces.push(Face {
+                    range: piece,
+                    color,
+                    face,
+                    markup: true,
+                }),
+            }
+            start = end;
+        }
+    }
+    faces
+}
+
+/// `spans` with each part inside one of `faces`' ranges (sorted, apart) in
+/// that face as well as its own, keeping its colour.
+fn with_faces<S: HighlightStyle>(
+    spans: Vec<StyledSpan<S>>,
+    faces: &[(Range<usize>, fe_config::FontStyle)],
+) -> Vec<StyledSpan<S>> {
+    if faces.is_empty() {
+        return spans;
+    }
+    let mut out = Vec::with_capacity(spans.len());
+    let mut first = 0;
+    for span in spans {
+        while faces
+            .get(first)
+            .is_some_and(|(range, _)| range.end <= span.range.start)
+        {
+            first += 1;
+        }
+        let mut start = span.range.start;
+        for (range, face) in faces[first..]
+            .iter()
+            .take_while(|(range, _)| range.start < span.range.end)
+        {
+            let (from, to) = (range.start.max(start), range.end.min(span.range.end));
+            if start < from {
+                out.push(StyledSpan {
+                    range: start..from,
+                    style: span.style,
+                });
+            }
+            out.push(StyledSpan {
+                range: from..to,
+                style: span.style.with_face(*face),
+            });
+            start = to;
+        }
+        if start < span.range.end {
+            out.push(StyledSpan {
+                range: start..span.range.end,
+                style: span.style,
+            });
+        }
+    }
+    out
 }
 
 thread_local! {
@@ -5111,6 +5543,28 @@ fn styled_foreground_spans<S: HighlightStyle>(
     out
 }
 
+/// The ranges the `Strikethrough` decorations among `decorations` cover,
+/// sorted and merged.
+pub(super) fn struck_ranges(
+    decorations: &[fe_editor::decorations::Decoration],
+) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = (decorations.iter())
+        .filter(|decoration| {
+            decoration.kind == DecorationKind::Strikethrough && !decoration.range.is_empty()
+        })
+        .map(|decoration| decoration.range.clone())
+        .collect();
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
 /// The part of the sorted, non-overlapping `spans` within `range`.
 fn clipped<S: Copy>(spans: &[StyledSpan<S>], range: &Range<usize>) -> Vec<StyledSpan<S>> {
     let first = spans.partition_point(|span| span.range.end <= range.start);
@@ -5171,6 +5625,25 @@ impl EditorView {
             .collect()
     }
 
+    /// [`Self::styled_spans`] with the decorations over `range` laid on them
+    /// as a frame lays them: `Foreground` colours, and strikes for
+    /// `Strikethrough` decorations and deprecated code. Not faded.
+    #[doc(hidden)]
+    pub fn decorated_spans(&self, range: Range<usize>) -> Vec<(Range<usize>, SpanStyle)> {
+        let syntax = self.syntax().filter(|syntax| !syntax.failed());
+        let decorations = self.model.decorations(range.clone());
+        let foreground = styled_foreground_spans(&decorations, &self.theme);
+        let spans =
+            styled_highlights::<SpanStyle>(syntax, &self.theme, &[], &foreground, range.clone());
+        let deprecated = deprecated_ranges(&self.model.diagnostics());
+        let struck = merged_ranges(struck_ranges(&decorations), &deprecated);
+        let text = SpanStyle::plain(self.theme.foreground);
+        strike_spans(spans, &struck, &range, text)
+            .into_iter()
+            .map(|span| (span.range, span.style))
+            .collect()
+    }
+
     /// How many times the outline was asked for definition names on this
     /// thread, and over which bytes last.
     #[doc(hidden)]
@@ -5204,6 +5677,30 @@ impl EditorView {
         (row.line.layout.runs.iter())
             .find(|run| run.glyphs.iter().any(|glyph| glyph.index == index))
             .map(|run| run.font_id)
+    }
+
+    /// The lines the last frame drew through struck text, a box each in
+    /// window coordinates: one per run of struck glyphs on a row, whatever
+    /// struck them.
+    #[doc(hidden)]
+    pub fn drawn_strikes(&self) -> Vec<Bounds<Pixels>> {
+        self.layout.as_ref().map(struck_boxes).unwrap_or_default()
+    }
+
+    /// The last frame's drawing of the text at buffer `offset`: the x, from
+    /// its row's start, of its glyph, and whether a line was drawn through
+    /// it. None when `offset` wasn't drawn.
+    #[doc(hidden)]
+    pub fn drawn_strike(&self, offset: usize) -> Option<(f32, bool)> {
+        let frame = &self.layout.as_ref()?.frame;
+        let row = (frame.rows.iter()).find(|row| row.shown().contains(&offset))?;
+        let index = row.expanded.to_display(offset - row.shown().start);
+        let mut end = 0;
+        let struck = row.line.decorations.iter().find_map(|run| {
+            end += run.len as usize;
+            (index < end).then_some(run.strikethrough.is_some())
+        })?;
+        Some((row.line.x_for_index(index), struck))
     }
 }
 

@@ -99,6 +99,10 @@ pub enum DecorationKind {
     ///
     /// [`Foreground`]: DecorationKind::Foreground
     SyntaxUnderline(Arc<str>),
+    /// A line through the range's text, in the colour the text is drawn
+    /// in, as a language server's `deprecated` symbols are. It changes no
+    /// colour or face, and the tint is unused.
+    Strikethrough,
 }
 
 /// A decoration over a byte range of the snapshot it was resolved in.

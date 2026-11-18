@@ -15,6 +15,7 @@ fn the_editor_theme_resolves_a_capture_to_colour_and_style(cx: &mut TestAppConte
             FontStyle {
                 italic: true,
                 bold: false,
+                strikethrough: false,
             },
         ),
         (
@@ -22,6 +23,7 @@ fn the_editor_theme_resolves_a_capture_to_colour_and_style(cx: &mut TestAppConte
             FontStyle {
                 italic: false,
                 bold: true,
+                strikethrough: false,
             },
         ),
     ];
@@ -34,7 +36,8 @@ fn the_editor_theme_resolves_a_capture_to_colour_and_style(cx: &mut TestAppConte
         style,
         Some(FontStyle {
             italic: true,
-            bold: false
+            bold: false,
+            strikethrough: false,
         })
     );
 
@@ -45,7 +48,8 @@ fn the_editor_theme_resolves_a_capture_to_colour_and_style(cx: &mut TestAppConte
         style,
         Some(FontStyle {
             italic: false,
-            bold: true
+            bold: true,
+            strikethrough: false,
         })
     );
 

@@ -19,6 +19,9 @@
 //! the same in both: a colour that bypasses the theme. It writes
 //! `target/screenshots/workbench_tokens.diff.png`, those pixels in magenta.
 //!
+//! Then a Markdown file in the editor, dark and light (`markdown_scene`):
+//! its markup in the theme's styles.
+//!
 //! Then the setup wizard's sheet over the same workbench, dark and light
 //! (`setup_scene`), against goldens of their own. They load settings, so
 //! they draw the default `workbench.icon_theme`'s coloured icons; the two
@@ -43,6 +46,8 @@
 mod audit_scenes;
 #[cfg(target_os = "macos")]
 mod icons_scene;
+#[cfg(target_os = "macos")]
+mod markdown_scene;
 #[cfg(target_os = "macos")]
 mod scenes;
 #[cfg(target_os = "macos")]

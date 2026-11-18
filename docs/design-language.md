@@ -252,10 +252,17 @@ capture's dotted name to a colour. A capture takes its longest listed prefix, so
 (`crates/fe-gpui/src/lib.rs:EditorTheme::syntax`).
 
 `[syntax_style]` (`crates/fe-config/src/theme.rs:EditorPalette::styles`) maps a capture
-to a font style, `"italic"`, `"bold"` or `"bold italic"`, by the same longest-prefix rule
-(`crates/fe-gpui/src/lib.rs:EditorTheme::syntax_styles`). Yohen and Hakuji set
-`comment = "italic"` and `"function.definition" = "bold"`; every other bundled theme sets
-none. It is data only: nothing draws the styles yet.
+to a font style, any of `"italic"`, `"bold"` and `"strikethrough"` (`"bold italic"`), or
+`"normal"`, by the same longest-prefix rule
+(`crates/fe-gpui/src/lib.rs:EditorTheme::syntax_styles`). Italic and bold are drawn in the
+code family's faces, strikethrough as a line through the text. Every theme starts from
+markup's styles (`crates/fe-config/src/theme.rs:MARKUP_STYLES`): `markup.heading` and
+`markup.strong` bold, `markup.italic` italic, `markup.strikethrough` struck through, and a
+doc comment's emphasis in the comment's style with that face added; a theme's table sets
+any of them otherwise by its exact name. Markup nested in markup takes the faces of both,
+in the inner one's colour (`crates/fe-gpui/src/element.rs:nested_faces`): a heading's
+emphasis is bold italic. Yohen and Hakuji also set `comment = "italic"` and
+`"function.definition" = "bold"`; no other bundled theme sets more.
 
 ### How the two tables relate
 

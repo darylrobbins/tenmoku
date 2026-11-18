@@ -92,7 +92,7 @@ struct Cache {
     /// Recent results for the current tree, newest last, so frames that
     /// neither scroll nor edit don't query again, with whether each is
     /// complete: one that ran out of [`QUERY_BUDGET_MAX`] is kept all the same.
-    ranges: VecDeque<(Range<usize>, Vec<HighlightSpan>, bool)>,
+    ranges: VecDeque<(Range<usize>, Highlights)>,
     /// Recent ranges whose query ran out of time on the current tree, newest
     /// last, with how many times it did: the next query of one gets
     /// [`QUERY_BUDGET`] doubled that many times. A range that ran out of
@@ -453,6 +453,7 @@ impl Syntax {
     pub fn checked_highlights(&self, range: Range<usize>) -> Highlights {
         let incomplete = || Highlights {
             spans: Vec::new(),
+            markup: Vec::new(),
             complete: false,
         };
         if self.failed.get() {
@@ -475,15 +476,10 @@ impl Syntax {
         let whole_tree = self.tree.is_some();
         let mut cache = self.cache.borrow_mut();
         let cache = &mut *cache;
-        if let Some((_, spans, complete)) =
-            cache.ranges.iter().find(|(cached, ..)| *cached == range)
-        {
+        if let Some((_, highlights)) = cache.ranges.iter().find(|(cached, _)| *cached == range) {
             // Shown again, so its layers are as recent as a query's.
             cache.layers.visited(range);
-            return Highlights {
-                spans: spans.clone(),
-                complete: *complete,
-            };
+            return highlights.clone();
         }
 
         let parsed = parsed == Some(self.version());
@@ -496,7 +492,7 @@ impl Syntax {
             // `None` for a budget too long to be a time.
             let deadline = Instant::now().checked_add(budget);
             let language = self.language;
-            let (spans, finished) = highlight_query_finished(
+            let (spans, markup, finished) = highlight_query_finished(
                 language,
                 text,
                 tree,
@@ -510,11 +506,16 @@ impl Syntax {
                 tree,
                 parsed,
             };
-            let (spans, complete, skipped) =
-                injection::paint(host, range.clone(), deadline, layers, spans);
-            (spans, finished, complete, skipped)
+            let (spans, mut markup, complete, skipped) =
+                injection::paint(host, range.clone(), deadline, layers, spans, markup);
+            // The layers' after the host's: sorted again, by start alone so
+            // a layer's own order holds.
+            markup.sort_by_key(|span| span.range.start);
+            (spans, markup, finished, complete, skipped)
         };
-        let Ok((spans, finished, complete, skipped)) = catch_unwind(AssertUnwindSafe(query)) else {
+        let Ok((spans, markup, finished, complete, skipped)) =
+            catch_unwind(AssertUnwindSafe(query))
+        else {
             log::error!(
                 "{}: highlighting panicked; showing plain text",
                 self.language.name()
@@ -543,18 +544,20 @@ impl Syntax {
                 .cut_short
                 .push_back((range.clone(), attempts + u32::from(retry)));
         }
+        let highlights = Highlights {
+            spans,
+            markup,
+            complete: parsed_whole && finished && complete && !skipped,
+        };
+        // Kept only when every injection was highlighted, or may be, so it
+        // says it's complete when it is.
         if complete && !retry {
             if cache.ranges.len() == CACHED_RANGES {
                 cache.ranges.pop_front();
             }
-            cache
-                .ranges
-                .push_back((range, spans.clone(), parsed_whole && finished && !skipped));
+            cache.ranges.push_back((range, highlights.clone()));
         }
-        Highlights {
-            spans,
-            complete: parsed_whole && finished && complete && !skipped,
-        }
+        highlights
     }
 
     /// Whether the host language's grammar highlights exactly `range` as a
@@ -700,7 +703,8 @@ impl Syntax {
 /// Queries `tree`, of `language` and parsed from `text`, for the highlights
 /// in `range`, stopping at `deadline`, with the runs `@none` cleared. With `split`, nodes with many children
 /// are queried a child at a time; that's only correct when no pattern spans
-/// several siblings. Also returns whether the query ran to the end, rather
+/// several siblings. Also returns the markup captures in `range`
+/// ([`Highlights::markup`]), and whether the query ran to the end, rather
 /// than stopping at the deadline.
 pub(crate) fn highlight_query_finished(
     language: &Language,
@@ -709,9 +713,10 @@ pub(crate) fn highlight_query_finished(
     range: Range<usize>,
     split: bool,
     deadline: Option<Instant>,
-) -> (Vec<Painted>, bool) {
+) -> (Vec<Painted>, Vec<HighlightSpan>, bool) {
     let (captures, finished) = query_captures(language, text, tree, &range, split, deadline);
-    (flatten(captures, range), finished)
+    let (spans, markup) = flatten(captures, range);
+    (spans, markup, finished)
 }
 
 /// The captures of [`highlight_query_finished`], each with its node's whole

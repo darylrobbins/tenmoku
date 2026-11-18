@@ -71,7 +71,7 @@ config-theme-unknown-key = { $key }: unknown key
 config-theme-not-capture-name = syntax.{ $name }: not a capture name: expected dot-separated words of a-z, 0-9 and _
 # $found is the TOML type written, such as `integer`.
 config-theme-not-colour = expected a colour string, found { $found }
-config-theme-not-font-style = expected a font style (italic, bold), found { $found }
+config-theme-not-font-style = expected a font style (italic, bold, strikethrough), found { $found }
 
 ## The user's snippet files. $error is the JSON parser's or the system's.
 

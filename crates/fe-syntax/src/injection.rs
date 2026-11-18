@@ -14,15 +14,21 @@
 //! scanner skips between its pieces. `injection.doc-prefix "///"`, also
 //! ours, is for doc comments the host grammar makes one node per line, prefix
 //! included, as C#'s `///` lines are: it injects only a content node whose
-//! text starts with the prefix but not with the prefix and its last character
-//! again (`////` isn't a `///` line), leaves the prefix out of the layer, and
+//! text starts with the prefix, but not, for a prefix ending in a repeated
+//! character, with that character again (`////` isn't a `///` line, but
+//! `//!!` is a `//!` one), leaves the prefix out of the layer, and
 //! combines the node with the run of such siblings of its kind on the rows
 //! straight before and after it, so a `<summary>` over three lines is one
 //! layer. Another node between them, or a blank row, ends the run, so a
 //! plain `//` comment or the next member's doc comment never joins.
+//! `injection.line-prefix "*"`, ours too, leaves out a decorative prefix
+//! starting the lines of the content, as a `/** */` comment's ` * ` lines
+//! have, the blanks before it too: only when every line after the first has
+//! it, so Markdown's own stars in an undecorated comment stay.
 //! Layers can hold
 //! injections of their own, up to [`MAX_DEPTH`] deep: Markdown's blocks hold
-//! inline markup, which holds HTML.
+//! inline markup, which holds HTML, and a Markdown fence's Rust holds a doc
+//! comment's list item, which holds its inline markup.
 //!
 //! `injection.combined` parses a pattern's matches as one layer. We combine a
 //! content node with its siblings of the same kind, such as the pieces of one
@@ -65,7 +71,7 @@ use tree_sitter::{
 
 use crate::{
     Language,
-    highlight::{Painted, clip, overlay},
+    highlight::{HighlightSpan, Painted, clip, overlay},
     language::{Injected, injected_language},
     runtime::ThreadParser,
     syntax::{
@@ -74,7 +80,7 @@ use crate::{
 };
 
 /// How many layers deep injections nest.
-const MAX_DEPTH: usize = 3;
+const MAX_DEPTH: usize = 4;
 
 /// Captured language names longer than this aren't looked up.
 const MAX_NAME_LEN: usize = 32;
@@ -315,6 +321,8 @@ struct Pattern {
     include_children: bool,
     include_gaps: bool,
     trim_delimiters: bool,
+    /// `injection.line-prefix`: left out where it starts a line.
+    line_prefix: Option<Box<str>>,
     /// Kinds of sibling that join a combined injection besides the content's.
     also_kinds: Vec<Box<str>>,
 }
@@ -332,6 +340,10 @@ impl InjectionQuery {
                         "injection.include-children" => pattern.include_children = true,
                         "injection.include-gaps" => pattern.include_gaps = true,
                         "injection.trim-delimiters" => pattern.trim_delimiters = true,
+                        "injection.line-prefix" => {
+                            pattern.line_prefix =
+                                property.value.clone().filter(|prefix| !prefix.is_empty());
+                        }
                         "injection.combine-kinds" => {
                             pattern.also_kinds = (property.value.as_deref().unwrap_or_default())
                                 .split_whitespace()
@@ -381,7 +393,9 @@ pub(crate) struct Host<'a> {
 /// `layers` or parsed and added to it, and languages whose queries aren't
 /// compiled yet are added to its missing ones.
 ///
-/// Also returns whether every injection overlapping `range` was highlighted,
+/// Also returns `markup`, the host's markup captures, with the layers' after
+/// them ([`crate::Highlights::markup`]), and whether every injection
+/// overlapping `range` was highlighted,
 /// or may be next time: one isn't if finding or parsing it ran out of time
 /// before `deadline`, or its language is missing. And whether any was skipped
 /// for good, as another try wouldn't highlight it either, by a limit on how
@@ -392,13 +406,14 @@ pub(crate) fn paint(
     deadline: Option<Instant>,
     layers: &mut Layers,
     spans: Vec<Painted>,
-) -> (Vec<Painted>, bool, bool) {
+    markup: Vec<HighlightSpan>,
+) -> (Vec<Painted>, Vec<HighlightSpan>, bool, bool) {
     layers.pass += 1;
     if range.is_empty() {
         // Nothing to paint, but the layers edited at it are as unused as
         // if it weren't empty: those left when the whole text is deleted.
         layers.highlighted(range, true, host.parsed);
-        return (spans, true, false);
+        return (spans, markup, true, false);
     }
     let mut painter = Painter {
         text: host.text,
@@ -407,13 +422,14 @@ pub(crate) fn paint(
         host_parsed: host.parsed,
         layers,
         parser: None,
+        markup,
         complete: true,
         skipped: false,
     };
     let spans = painter.paint(host.language, host.tree, None, 1, spans);
-    let (complete, skipped) = (painter.complete, painter.skipped);
+    let (markup, complete, skipped) = (painter.markup, painter.complete, painter.skipped);
     layers.highlighted(range, complete, host.parsed);
-    (spans, complete, skipped)
+    (spans, markup, complete, skipped)
 }
 
 /// An injection found in a tree: the language of its content, and the
@@ -431,6 +447,8 @@ struct Painter<'a> {
     layers: &'a mut Layers,
     /// Shared by the layers parsed in one call.
     parser: Option<ThreadParser>,
+    /// The markup captures found so far, each layer's within its ranges.
+    markup: Vec<HighlightSpan>,
     complete: bool,
     /// Set when an injection was left out for good. Unlike `complete`, this
     /// doesn't keep the result from being cached: querying again each frame
@@ -475,14 +493,16 @@ impl Painter<'_> {
             let (own, finished) = if let Some(dialect) = dialect {
                 self.verbs(&injection.ranges, dialect)
             } else {
-                highlight_query_finished(
+                let (own, markup, finished) = highlight_query_finished(
                     injection.language,
                     self.text,
                     &layer,
                     self.range.clone(),
                     injection.language.local_patterns,
                     self.deadline,
-                )
+                );
+                self.markup.extend(clip(markup, &injection.ranges));
+                (own, finished)
             };
             self.complete &= finished;
             let own = self.paint(
@@ -649,6 +669,20 @@ impl Painter<'_> {
                 Collected::OutOfTime => {
                     self.complete = false;
                     break;
+                }
+            }
+            if let Some(prefix) = &pattern.line_prefix {
+                match strip_line_prefixes(text, &ranges, prefix.as_bytes(), deadline) {
+                    Ok(stripped) => ranges = stripped,
+                    Err(Collected::TooMany) => {
+                        too_many(language);
+                        self.skipped = true;
+                        continue;
+                    }
+                    Err(_) => {
+                        self.complete = false;
+                        break;
+                    }
                 }
             }
             if pattern.trim_delimiters {
@@ -876,13 +910,20 @@ struct DocRun<'a> {
 }
 
 impl DocRun<'_> {
-    /// Whether `node` is a doc line: its text starts with the prefix, not
-    /// followed by the prefix's last byte again.
+    /// Whether `node` is a doc line: its text starts with the prefix. A
+    /// prefix ending in a byte repeated, as `///` does, mustn't be followed
+    /// by that byte again: `////` is a plain comment. One that doesn't, as
+    /// `//!`, may: `//!!` is a doc line, its text starting `!`.
     fn is_line(&self, node: Node) -> bool {
         let start = node.start_byte();
         let end = node.end_byte().min(start + self.prefix.len() + 1);
         let head: Vec<u8> = chunks(self.text, start..end).flatten().copied().collect();
-        head.starts_with(self.prefix) && head.get(self.prefix.len()) != self.prefix.last()
+        let repeated = match self.prefix {
+            [.., before, last] => before == last,
+            _ => false,
+        };
+        head.starts_with(self.prefix)
+            && !(repeated && head.get(self.prefix.len()) == self.prefix.last())
     }
 
     /// [`DocRun::add`] for each of a match's `content` nodes.
@@ -928,7 +969,7 @@ impl DocRun<'_> {
                     }
                     let line = sibling.kind_id() == node.kind_id() && self.is_line(sibling);
                     let next_row = run.last().is_some_and(|last: &Node| {
-                        last.end_position().row + 1 == sibling.start_position().row
+                        last_row(*last) + 1 == sibling.start_position().row
                     });
                     if !(line && next_row) {
                         if found {
@@ -960,6 +1001,119 @@ impl DocRun<'_> {
             }
         }
         Collected::All
+    }
+}
+
+/// `ranges` without the decorative `prefix` starting their lines, when the
+/// content is decorated: every line after the first that isn't blank
+/// starts, past its blanks, with `prefix` and then a blank or its end, as a
+/// `/** */` comment's ` * ` lines do. Then those blanks and the prefix are
+/// left out, so ` * - item` is ` - item`. Otherwise the ranges are kept
+/// whole, and the stars of `**bold**`, `*slanted*` or a `* item` starting a
+/// line of an undecorated comment are its Markdown's.
+///
+/// The text is read a chunk at a time, the deadline checked at each, so a
+/// long comment costs no more between checks than a short one. Fails if the
+/// deadline passes first, or there'd be more than [`MAX_LAYER_RANGES`].
+fn strip_line_prefixes(
+    text: &Text,
+    ranges: &[Range<usize>],
+    prefix: &[u8],
+    deadline: Option<Instant>,
+) -> Result<Vec<Range<usize>>, Collected> {
+    /// Where the scan is in a line.
+    #[derive(Clone, Copy)]
+    enum At {
+        /// In a line's text, or the first line's: on to its break.
+        Text,
+        /// In the blanks starting the line at `line`.
+        Blanks { line: usize },
+        /// `matched` bytes into a prefix after the blanks.
+        Prefix { line: usize, matched: usize },
+        /// Past a whole prefix ending at `end`: decorative if a blank or the
+        /// line's end follows.
+        After { line: usize, end: usize },
+    }
+    let is_blank = |byte: u8| matches!(byte, b' ' | b'\t' | b'\r');
+    // The blanks and prefix of each decorated line, in order.
+    let mut cuts: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        let mut at = At::Text;
+        let mut pos = range.start;
+        for chunk in chunks(text, range.clone()) {
+            if out_of_time(deadline) {
+                return Err(Collected::OutOfTime);
+            }
+            for &byte in chunk {
+                at = match at {
+                    At::Text if byte == b'\n' => At::Blanks { line: pos + 1 },
+                    At::Text => At::Text,
+                    At::Blanks { .. } if byte == b'\n' => At::Blanks { line: pos + 1 },
+                    At::Blanks { line } if is_blank(byte) => At::Blanks { line },
+                    At::Blanks { line } if byte == prefix[0] => match prefix.len() {
+                        1 => At::After { line, end: pos + 1 },
+                        _ => At::Prefix { line, matched: 1 },
+                    },
+                    At::Prefix { line, matched } if byte == prefix[matched] => {
+                        match matched + 1 == prefix.len() {
+                            true => At::After { line, end: pos + 1 },
+                            false => At::Prefix {
+                                line,
+                                matched: matched + 1,
+                            },
+                        }
+                    }
+                    At::After { line, end } if is_blank(byte) || byte == b'\n' => {
+                        if cuts.len() == MAX_LAYER_RANGES {
+                            return Err(Collected::TooMany);
+                        }
+                        cuts.push(line..end);
+                        match byte {
+                            b'\n' => At::Blanks { line: pos + 1 },
+                            _ => At::Text,
+                        }
+                    }
+                    // A line of text, or a star of its Markdown's.
+                    At::Blanks { .. } | At::Prefix { .. } | At::After { .. } => {
+                        return Ok(ranges.to_vec());
+                    }
+                };
+                pos += 1;
+            }
+        }
+        match at {
+            At::After { line, end } => cuts.push(line..end),
+            At::Prefix { .. } => return Ok(ranges.to_vec()),
+            At::Text | At::Blanks { .. } => {}
+        }
+    }
+    // The ranges less the cuts, which are sorted and inside them.
+    let mut stripped = Vec::with_capacity(ranges.len() + cuts.len());
+    let mut cuts = cuts.into_iter().peekable();
+    for range in ranges {
+        let mut start = range.start;
+        while let Some(cut) = cuts.next_if(|cut| cut.start < range.end) {
+            if start < cut.start && !push(&mut stripped, start..cut.start) {
+                return Err(Collected::TooMany);
+            }
+            start = start.max(cut.end);
+        }
+        if start < range.end && !push(&mut stripped, start..range.end) {
+            return Err(Collected::TooMany);
+        }
+    }
+    Ok(stripped)
+}
+
+/// The row `node`'s text ends on: a node that takes its line break, as a
+/// Rust `///` comment does, ends at the start of the next row, but is on
+/// the row before.
+fn last_row(node: Node) -> usize {
+    let (start, end) = (node.start_position(), node.end_position());
+    if end.column == 0 && end.row > start.row {
+        end.row - 1
+    } else {
+        end.row
     }
 }
 

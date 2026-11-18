@@ -30,6 +30,7 @@ fn find(text: &str, deadline: Option<Instant>) -> (usize, bool, usize) {
         host_parsed: true,
         layers: &mut layers,
         parser: None,
+        markup: Vec::new(),
         complete: true,
     };
     QUERIED_ROOTS.set(0);

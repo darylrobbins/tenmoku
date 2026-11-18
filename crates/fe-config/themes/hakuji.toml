@@ -269,6 +269,9 @@ ansi_15 = "#5f6670"  # ink, one step lighter
 # constant's; labels and links the macro's; operators the punctuation's;
 # builtin variables, tags and special punctuation the keyword's. Markup
 # insertions and deletions are celadon and shinsha.
+# Markdown's strong and emphasised text is ink, in its bold and italic faces;
+# struck text the comment's; quotes the string's; list markers the
+# keyword's, as special punctuation; link labels the link's.
 [syntax]
 "attribute" = "#2457c5"
 "comment" = "#69727c"
@@ -292,9 +295,15 @@ ansi_15 = "#5f6670"  # ink, one step lighter
 "markup.deleted" = "#a1100e"
 "markup.heading" = "#925a00"
 "markup.inserted" = "#17773f"
+"markup.italic" = "#1f2328"
 "markup.link" = "#2457c5"
+"markup.link.label" = "#2457c5"
 "markup.link.url" = "#0d6e66"
+"markup.list" = "#7b36a8"
+"markup.quote" = "#2f6f1f"
 "markup.raw" = "#2f6f1f"
+"markup.strikethrough" = "#69727c"
+"markup.strong" = "#1f2328"
 "module" = "#0d6e66"
 "number" = "#a32f6b"
 "operator" = "#596069"
@@ -312,7 +321,8 @@ ansi_15 = "#5f6670"  # ink, one step lighter
 "variable.parameter" = "#1f2328"
 
 # Font styles for captures (docs/design/design-system.md#syntax): comments
-# italic, function definitions bold. Data only until the faces are drawn.
+# italic, function definitions bold. Markup's styles (strong bold, emphasis
+# italic, headings bold, struck text struck through) are every theme's.
 [syntax_style]
 "comment" = "italic"
 "function.definition" = "bold"

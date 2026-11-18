@@ -1,4 +1,6 @@
-use super::highlight_name;
+use fe_editor::decorations::{Decoration, DecorationKind, Tint};
+
+use super::{highlight_name, modifier_marks};
 
 const NONE: [&str; 0] = [];
 
@@ -61,4 +63,32 @@ fn token_types_map_to_highlight_names() {
 
     assert_eq!(highlight_name("lifetime", &NONE), None);
     assert_eq!(highlight_name("selfKeyword", &["defaultLibrary"]), None);
+}
+
+/// `deprecated` strikes the token through, whatever its type; `mutable`
+/// underlines it in its colour; other modifiers add nothing.
+#[test]
+fn deprecated_tokens_are_struck_through() {
+    let strike = Decoration::new(3..6, DecorationKind::Strikethrough, Tint::Muted);
+    assert_eq!(
+        modifier_marks(3..6, Some("function"), &["deprecated"]),
+        std::slice::from_ref(&strike)
+    );
+    assert_eq!(
+        modifier_marks(3..6, None, &["deprecated"]),
+        std::slice::from_ref(&strike)
+    );
+    let underline = Decoration::new(
+        3..6,
+        DecorationKind::SyntaxUnderline("variable".into()),
+        Tint::Muted,
+    );
+    assert_eq!(
+        modifier_marks(3..6, Some("variable"), &["mutable", "deprecated"]),
+        [underline, strike]
+    );
+    assert_eq!(
+        modifier_marks(3..6, Some("function"), &["static", "async"]),
+        []
+    );
 }

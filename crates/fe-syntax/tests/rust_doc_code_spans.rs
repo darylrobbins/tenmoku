@@ -55,7 +55,10 @@ fn a_backtick_span_in_a_doc_comment_is_not_the_prose_colour() {
     }
 
     let found = spans("rust", "/// - item `x`\nfn a() {}\n");
-    has(&found, "- item ", PROSE);
+    // The marker is the list's (T1924), in the comment's colour unless a
+    // theme says otherwise.
+    has(&found, " - ", "comment.documentation.list");
+    has(&found, "item ", PROSE);
     has(&found, "`x`", CODE);
 
     let found = spans("markdown", "Uses `Vec` here.\n");

@@ -371,9 +371,15 @@ mod tests {
             set_themes(cx, ThemeMode::Light, Theme::dark(), Theme::light());
         });
         let palette = cx.update(|cx| fe_gpui::editor_palette(cx));
-        // Font styles are a theme's own, so kiln's bases have none.
+        // Font styles are a theme's own, so kiln's bases have markup's alone,
+        // every theme's.
+        let markup = || {
+            (fe_config::theme::MARKUP_STYLES.iter())
+                .map(|&(name, style)| (name.to_owned(), style))
+                .collect::<Vec<_>>()
+        };
         let unstyled = |palette: &EditorPalette| EditorPalette {
-            styles: vec![],
+            styles: markup(),
             ..palette.clone()
         };
         assert_eq!(*palette, unstyled(&hakuji));
@@ -399,7 +405,7 @@ mod tests {
         assert_eq!(palette.editor.background.to_rgba_u32(), 0x000000ff);
         assert_ne!(palette.editor.background, dark.editor.background);
         let mut expected = dark.clone();
-        expected.styles.clear();
+        expected.styles = markup();
         expected.editor.background = palette.editor.background;
         // A theme with an `[editor]` table of its own: the debugger's
         // colours follow its cursor line, error and gutter, and the TODO

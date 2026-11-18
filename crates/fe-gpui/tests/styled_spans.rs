@@ -90,6 +90,7 @@ fn run(len: usize, color: Hsla, italic: bool, bold: bool) -> StyleRun<SpanStyle>
             color,
             italic,
             bold,
+            strikethrough: false,
         },
     }
 }
@@ -202,6 +203,7 @@ fn a_styled_row_has_one_run_per_style_change() {
                     color: RED,
                     italic,
                     bold,
+                    strikethrough: false,
                 };
                 text_system.resolve_font(faces.font(&style))
             };
@@ -235,6 +237,7 @@ fn every_face_has_the_same_advance() {
                         color: RED,
                         italic,
                         bold,
+                        strikethrough: false,
                     };
                     faces.font(&style).clone()
                 })
@@ -322,6 +325,37 @@ fn a_boundary_inside_a_grapheme_cluster_does_not_split_it() {
         // Runs that don't add up to the text still cover it.
         text_runs(text, &[run(1, RED, true, false)], &faces, &mut out);
         assert_eq!(out.iter().map(|run| run.len).sum::<usize>(), text.len());
+
+        // A space a combining mark follows is a cluster with it, not a run
+        // of spaces: leading or inside the row, it keeps its run's face.
+        let leading = " \u{301}x";
+        let runs = [
+            run(1, RED, false, false),
+            run(leading.len() - 1, RED, true, false),
+        ];
+        text_runs(leading, &runs, &faces, &mut out);
+        assert_eq!(
+            summary(&out),
+            [
+                (3, FontWeight::NORMAL, false),
+                (1, FontWeight::NORMAL, true)
+            ]
+        );
+        let inside = "a \u{301}b";
+        let runs = [
+            run(1, RED, true, false),
+            run(1, RED, false, false),
+            run(inside.len() - 2, RED, true, false),
+        ];
+        text_runs(inside, &runs, &faces, &mut out);
+        assert_eq!(
+            summary(&out),
+            [
+                (1, FontWeight::NORMAL, true),
+                (3, FontWeight::NORMAL, false),
+                (1, FontWeight::NORMAL, true),
+            ]
+        );
     });
 }
 
@@ -334,6 +368,7 @@ fn the_editor_draws_comments_in_the_italic_face() {
         let italic = FontStyle {
             italic: true,
             bold: false,
+            strikethrough: false,
         };
         palette.styles = vec![("comment".into(), italic)];
         let text = "let x = 1; // one\nlet y = 2;\n";
@@ -366,5 +401,168 @@ fn the_editor_draws_comments_in_the_italic_face() {
             assert_eq!(plain, Some(id(&font)));
             assert_eq!(comment, Some(id(&italic_font)));
         }
+    });
+}
+
+fn text_run(len: usize, font: &Font) -> TextRun {
+    TextRun {
+        len,
+        font: font.clone(),
+        color: RED,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    }
+}
+
+/// A line laid out as `glyphs`, each its byte index and glyph id.
+fn laid_out(len: usize, glyphs: &[(usize, u32)]) -> gpui::LineLayout {
+    gpui::LineLayout {
+        font_size: px(SIZE),
+        width: px(len as f32 * 8.),
+        ascent: px(10.),
+        descent: px(3.),
+        runs: vec![gpui::ShapedRun {
+            font_id: gpui::FontId(0),
+            glyphs: (glyphs.iter())
+                .map(|&(index, id)| gpui::ShapedGlyph {
+                    id: gpui::GlyphId(id),
+                    position: gpui::point(px(index as f32 * 8.), px(0.)),
+                    index,
+                    is_emoji: false,
+                })
+                .collect(),
+        }],
+        len,
+    }
+}
+
+/// Each text run's length and weight.
+fn weights(runs: &[TextRun]) -> Vec<(usize, FontWeight)> {
+    runs.iter().map(|run| (run.len, run.font.weight)).collect()
+}
+
+/// A face change inside a ligature moves to its end, so the ligature is
+/// drawn whole in the face it starts in: one glyph for two characters, or
+/// characters drawn in other glyphs than their own, as contextual
+/// alternates make them. Other changes stay where they are.
+#[test]
+fn a_face_change_inside_a_ligature_moves_to_its_end() {
+    let plain = code();
+    let bold = Font {
+        weight: FontWeight::SEMIBOLD,
+        ..code()
+    };
+    let split = || vec![text_run(2, &bold), text_run(2, &plain)];
+    // Each character's own glyph.
+    let own = |ch: char| Some(gpui::GlyphId(ch as u32));
+    let (a, b) = ('a' as u32, 'b' as u32);
+
+    // `fi` as one glyph.
+    let mut runs = split();
+    Faces::keep_ligatures(
+        "afib",
+        &laid_out(4, &[(0, a), (1, 900), (3, b)]),
+        own,
+        &mut runs,
+    );
+    assert_eq!(
+        weights(&runs),
+        [(3, FontWeight::SEMIBOLD), (1, FontWeight::NORMAL)]
+    );
+
+    // `->` and `>>` as alternates, a glyph each: to the end of the run of
+    // them.
+    let mut runs = vec![text_run(2, &bold), text_run(3, &plain)];
+    let calt = laid_out(5, &[(0, a), (1, 901), (2, 902), (3, 903), (4, b)]);
+    Faces::keep_ligatures("a->>b", &calt, own, &mut runs);
+    assert_eq!(
+        weights(&runs),
+        [(4, FontWeight::SEMIBOLD), (1, FontWeight::NORMAL)]
+    );
+
+    // Every glyph its character's own: nothing moves.
+    let mut runs = split();
+    let none = laid_out(4, &[(0, a), (1, '-' as u32), (2, '>' as u32), (3, b)]);
+    Faces::keep_ligatures("a->b", &none, own, &mut runs);
+    assert_eq!(runs, split());
+    // One substituted character beside the change isn't a ligature across it.
+    let mut runs = split();
+    let one = laid_out(4, &[(0, a), (1, 901), (2, '>' as u32), (3, b)]);
+    Faces::keep_ligatures("a->b", &one, own, &mut runs);
+    assert_eq!(runs, split());
+}
+
+/// Shaped by CoreText: a ligature a face change cuts is drawn whole once
+/// the change is moved, as many glyphs as in the plain face alone, as a
+/// colour change leaves it. Helvetica's `fi` is one glyph; Fira Code's `->`,
+/// where it's installed, a pair of contextual alternates.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_face_change_inside_a_ligature_keeps_it_whole() {
+    with_app("a_face_change_inside_a_ligature", |cx| {
+        cx.update(|cx| {
+            let text_system = cx.text_system().clone();
+            let shaper = gpui::WindowTextSystem::new(text_system.clone());
+            let shape =
+                |text: &str, runs: &[TextRun]| shaper.layout_line(text, px(SIZE), runs, None);
+            let ids = |line: &gpui::LineLayout| -> Vec<(usize, u32)> {
+                (line.runs.iter())
+                    .flat_map(|run| run.glyphs.iter().map(|glyph| (glyph.index, glyph.id.0)))
+                    .collect()
+            };
+            let isolated = |font: &Font| {
+                let font = font.clone();
+                let shape = &shape;
+                move |ch: char| {
+                    let one = ch.to_string();
+                    let line = shape(&one, &[text_run(one.len(), &font)]);
+                    (line.runs.first()?.glyphs.first()).map(|glyph| glyph.id)
+                }
+            };
+            let installed = |family: &str| {
+                let id = text_system.resolve_font(&gpui::font(family));
+                text_system
+                    .get_font_for_id(id)
+                    .is_some_and(|font| font.family == family)
+            };
+            let families = [("Helvetica", "afib"), ("Fira Code", "a->b")];
+            for (family, text) in families.into_iter().filter(|(family, _)| installed(family)) {
+                let plain = gpui::font(family);
+                let bold = Font {
+                    weight: FontWeight::BOLD,
+                    ..plain.clone()
+                };
+                let whole = shape(text, &[text_run(text.len(), &plain)]);
+                // A colour change inside it leaves it as the plain face
+                // shapes it.
+                assert_ne!(
+                    ids(&whole),
+                    text.char_indices()
+                        .map(|(ix, ch)| (ix, isolated(&plain)(ch).unwrap().0))
+                        .collect::<Vec<_>>(),
+                    "{family}: {text} is a ligature"
+                );
+                let split = [text_run(2, &bold), text_run(2, &plain)];
+                let cut = shape(text, &split);
+                let mut runs = split.to_vec();
+                Faces::keep_ligatures(text, &whole, isolated(&plain), &mut runs);
+                assert_eq!(
+                    weights(&runs),
+                    [(3, FontWeight::BOLD), (1, FontWeight::NORMAL)]
+                );
+                let kept = shape(text, &runs);
+                // The bold face's own shaping of the ligature's characters,
+                // not each alone.
+                let bold_alone = shape(&text[..3], &[text_run(3, &bold)]);
+                assert_eq!(
+                    ids(&kept)[..ids(&bold_alone).len()],
+                    ids(&bold_alone)[..],
+                    "{family}"
+                );
+                assert_ne!(ids(&kept), ids(&cut), "{family}: the cut one isn't");
+            }
+            assert!(installed("Helvetica"), "macOS has Helvetica");
+        });
     });
 }

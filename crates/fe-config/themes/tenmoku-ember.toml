@@ -153,6 +153,9 @@ minimap_gutter_deleted = "#c47a72"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".
+# Markdown's strong text is the constant's, emphasis the keyword's, struck
+# text the comment's, quotes the string's, list markers special
+# punctuation's and link labels the link's.
 [syntax]
 "attribute" = "#d4a15a"
 "comment" = "#665a4e"
@@ -175,9 +178,15 @@ minimap_gutter_deleted = "#c47a72"
 "markup.deleted" = "#e0705f"
 "markup.heading" = "#e0705f"
 "markup.inserted" = "#a3b56f"
+"markup.italic" = "#d9694a"
 "markup.link" = "#e5b45c"
+"markup.link.label" = "#e5b45c"
 "markup.link.url" = "#8fb5a8"
+"markup.list" = "#c9a98a"
+"markup.quote" = "#a3b56f"
 "markup.raw" = "#a3b56f"
+"markup.strikethrough" = "#665a4e"
+"markup.strong" = "#d9965a"
 "module" = "#e6c27a"
 "number" = "#d98a8a"
 "operator" = "#c9a98a"

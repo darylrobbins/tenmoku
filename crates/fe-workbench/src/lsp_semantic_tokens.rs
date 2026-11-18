@@ -5,7 +5,8 @@
 //! none and asks for none.
 //!
 //! Each buffer has one [`DecorationSet`] of `Foreground` decorations (and
-//! `Underline` ones for the `mutable` modifier), shared
+//! `SyntaxUnderline` ones for the `mutable` modifier, `Strikethrough` ones
+//! for `deprecated`), shared
 //! by its editors. An answer lands only for the buffer's current version; the
 //! decorations already shown follow edits until the next answer.
 
@@ -388,17 +389,35 @@ fn decorations(
                 Tint::Muted,
             ));
         }
-        // As VS Code underlines what rust-analyzer marks `mutable`.
-        if token.modifiers.iter().any(|m| m.as_ref() == "mutable") {
-            items.push(Decoration::new(
-                token.range.clone(),
-                // In the token's own colour; none maps to foreground.
-                DecorationKind::SyntaxUnderline(Arc::from(name.unwrap_or(""))),
-                Tint::Muted,
-            ));
-        }
+        items.extend(modifier_marks(token.range.clone(), name, &token.modifiers));
     }
     (items, checked)
+}
+
+/// The marks a token's `modifiers` add over its range, `name` being its
+/// highlight: as VS Code does, an underline under what rust-analyzer marks
+/// `mutable`, in the token's own colour (none maps to the foreground), and a
+/// line through what a server marks `deprecated`, in the colour the text is
+/// drawn in.
+pub(super) fn modifier_marks<M: AsRef<str>>(
+    range: std::ops::Range<usize>,
+    name: Option<&str>,
+    modifiers: &[M],
+) -> Vec<Decoration> {
+    let has = |name: &str| modifiers.iter().any(|m| m.as_ref() == name);
+    let mut marks = Vec::new();
+    if has("mutable") {
+        let kind = DecorationKind::SyntaxUnderline(Arc::from(name.unwrap_or("")));
+        marks.push(Decoration::new(range.clone(), kind, Tint::Muted));
+    }
+    if has("deprecated") {
+        marks.push(Decoration::new(
+            range,
+            DecorationKind::Strikethrough,
+            Tint::Muted,
+        ));
+    }
+    marks
 }
 
 #[cfg(test)]

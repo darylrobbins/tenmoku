@@ -485,7 +485,10 @@ fn the_current_mark_follows_kilns_fallback(cx: &mut TestAppContext) {
     let kiln_dark = (
         ThemeData::dark().tokens,
         EditorPalette {
-            styles: vec![],
+            // Markup's styles alone, every theme's.
+            styles: (fe_config::theme::MARKUP_STYLES.iter())
+                .map(|&(name, style)| (name.to_owned(), style))
+                .collect(),
             ..EditorPalette::fastedit_dark().clone()
         },
     );
@@ -524,7 +527,9 @@ fn the_current_mark_follows_kilns_fallback(cx: &mut TestAppContext) {
     let kiln_light = (
         ThemeData::light().tokens,
         EditorPalette {
-            styles: vec![],
+            styles: (fe_config::theme::MARKUP_STYLES.iter())
+                .map(|&(name, style)| (name.to_owned(), style))
+                .collect(),
             ..EditorPalette::fastedit_light().clone()
         },
     );

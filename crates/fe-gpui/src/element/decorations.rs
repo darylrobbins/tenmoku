@@ -450,8 +450,9 @@ impl Decorations {
                     place(whole_row(row.row, *x, width), color, Some(line));
                     *x += width + em;
                 }
-                // Recolours text through the highlight spans; paints nothing.
-                DecorationKind::Foreground(_) => {}
+                // Recolour or strike text through the highlight spans; paint
+                // nothing.
+                DecorationKind::Foreground(_) | DecorationKind::Strikethrough => {}
             }
         }
         out.placed = (placed.into_iter())

@@ -8,6 +8,11 @@ const NAMES: &[&str] = &[
     "comment",
     "comment.documentation",
     "comment.documentation.code",
+    "comment.documentation.italic",
+    "comment.documentation.list",
+    "comment.documentation.quote",
+    "comment.documentation.strikethrough",
+    "comment.documentation.strong",
     "comment.fixme",
     "comment.hack",
     "comment.note",
@@ -30,9 +35,15 @@ const NAMES: &[&str] = &[
     "markup.deleted",
     "markup.heading",
     "markup.inserted",
+    "markup.italic",
     "markup.link",
+    "markup.link.label",
     "markup.link.url",
+    "markup.list",
+    "markup.quote",
     "markup.raw",
+    "markup.strikethrough",
+    "markup.strong",
     "module",
     "number",
     "operator",
@@ -62,23 +73,36 @@ const ALIASES: &[(&str, &str)] = &[
     ("delimiter", "punctuation.delimiter"),
     ("diff.minus", "markup.deleted"),
     ("diff.plus", "markup.inserted"),
+    ("emphasis", "markup.italic"),
+    ("emphasis.strong", "markup.strong"),
     ("exception", "keyword"),
     ("field", "property"),
     ("float", "number"),
     ("function.special", "function.macro"),
     ("include", "keyword"),
+    ("link_text", "markup.link"),
+    ("link_uri", "markup.link.url"),
+    ("markup.bold", "markup.strong"),
+    ("markup.emphasis", "markup.italic"),
+    ("markup.strike", "markup.strikethrough"),
     ("method", "function.method"),
     ("namespace", "module"),
     ("parameter", "variable.parameter"),
     ("preproc", "keyword"),
+    ("punctuation.list_marker", "markup.list"),
     ("repeat", "keyword"),
     ("storageclass", "keyword"),
     ("string.escape", "escape"),
     ("tag.attribute", "attribute"),
+    ("text.emphasis", "markup.italic"),
     ("text.literal", "markup.raw"),
+    ("text.quote", "markup.quote"),
     ("text.reference", "markup.link"),
+    ("text.strike", "markup.strikethrough"),
+    ("text.strong", "markup.strong"),
     ("text.title", "markup.heading"),
     ("text.uri", "markup.link.url"),
+    ("title", "markup.heading"),
     ("type.qualifier", "keyword"),
     ("variable.member", "property"),
 ];
@@ -95,6 +119,14 @@ impl Highlight {
 
     pub fn name(self) -> &'static str {
         NAMES[self.0 as usize]
+    }
+
+    /// Whether this is markup's, `markup.*` or a doc comment's
+    /// `comment.documentation.*`: text nested in markup takes the face of
+    /// the markup around it as well as its own ([`Highlights::markup`]).
+    pub fn is_markup(self) -> bool {
+        let name = self.name();
+        name.starts_with("markup.") || name.starts_with("comment.documentation.")
     }
 
     /// Position in [`Highlight::all`], for per-highlight lookup tables.
@@ -153,6 +185,12 @@ pub struct HighlightSpan<H = Highlight> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Highlights {
     pub spans: Vec<HighlightSpan>,
+    /// Every markup capture ([`Highlight::is_markup`]) in the range, of
+    /// every layer, nested ones too, sorted by start: where `spans` has one
+    /// winner a byte, strong text's emphasis is in both. A span of markup
+    /// takes its face from each of these around it, and its colour from
+    /// itself; the delimiters between them aren't markup.
+    pub markup: Vec<HighlightSpan>,
     /// Whether `spans` are all the range's, from a tree parsed at the current
     /// version: no query or injection ran out of time, no injected language
     /// was missing, no injection was left out by a limit or a grammar that
@@ -200,7 +238,13 @@ pub(crate) struct Capture {
 /// cleared span. A byte no capture covers is in no span.
 /// Captures from one tree only nest, but this also holds for ones that
 /// partly overlap, as an edited tree's can.
-pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Painted> {
+///
+/// Also returns the markup captures ([`Highlights::markup`]) within `clip`,
+/// a node's highest precedence capture only, sorted by start.
+pub(crate) fn flatten(
+    mut captures: Vec<Capture>,
+    clip: Range<usize>,
+) -> (Vec<Painted>, Vec<HighlightSpan>) {
     captures.sort_by(|a, b| {
         a.range
             .start
@@ -210,6 +254,15 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Pai
     });
     // Keeps the highest precedence for each node.
     captures.dedup_by(|next, kept| next.range == kept.range);
+    let markup = (captures.iter())
+        .filter_map(|capture| {
+            let highlight = capture
+                .highlight
+                .filter(|highlight| highlight.is_markup())?;
+            let range = capture.range.start.max(clip.start)..capture.range.end.min(clip.end);
+            (!range.is_empty()).then_some(HighlightSpan { range, highlight })
+        })
+        .collect();
 
     let mut spans = Vec::new();
     let mut push = |range: Range<usize>, highlight: Option<Highlight>| {
@@ -248,7 +301,7 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Pai
         push(pos..end, highlight);
         pos = pos.max(end);
     }
-    spans
+    (spans, markup)
 }
 
 /// The parts of `spans` inside `ranges`. Both are sorted and don't overlap.

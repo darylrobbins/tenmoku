@@ -19,8 +19,7 @@
 # are, not the theme's translucent minimap.* and minimapGutter.* values.
 #
 # Scopes with no highlight name are left out: font styles (italic
-# functions, types, comments and parameters), markup.bold/italic/
-# strikethrough/quote, the diff scopes, the regexp scopes, headings 2 to 6
+# functions, types, comments and parameters), the diff scopes, the regexp scopes, headings 2 to 6
 # (heading 1's colour is markup.heading's) and the CSS-only and
 # language-specific scope variants. Of the semanticTokenColors only
 # enumMember is used (`constant.enum_member`): boolean, number, selfKeyword
@@ -35,6 +34,12 @@
 # punctuation's and string's. `label` and `variable` have no
 # scope of their own and take the text colour; `property` is Lavender, as in
 # catppuccin/vscode (variable.other.property).
+#
+# The markdown scopes markup.bold, markup.italic, markup.strikethrough,
+# markup.quote and the list bullets (punctuation.definition.list.begin) give
+# markup.strong, markup.italic, markup.strikethrough, markup.quote and
+# markup.list; markup.link.label takes markup.link's. Their font styles are
+# every theme's (bold, italic, struck through), as upstream's are.
 #
 # To try it, copy it to ~/.config/tenmoku/theme.toml with `mode = "dark"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
@@ -205,9 +210,15 @@ minimap_gutter_deleted = "#F38BA8"
 "markup.deleted" = "#F38BA8"
 "markup.heading" = "#F38BA8"
 "markup.inserted" = "#A6E3A1"
+"markup.italic" = "#F38BA8"
 "markup.link" = "#B4BEFE"
+"markup.link.label" = "#B4BEFE"
 "markup.link.url" = "#89B4FA"
+"markup.list" = "#94E2D5"
+"markup.quote" = "#F5C2E7"
 "markup.raw" = "#A6E3A1"
+"markup.strikethrough" = "#A6ADC8"
+"markup.strong" = "#F38BA8"
 "module" = "#F9E2AF"
 "number" = "#FAB387"
 "operator" = "#94E2D5"

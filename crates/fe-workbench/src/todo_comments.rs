@@ -210,7 +210,18 @@ pub fn comment_ranges(
         return None;
     }
     let mut spans: Vec<_> = (highlights.spans.into_iter())
-        .filter(|span| matches!(span.highlight.name(), "comment" | "comment.documentation"))
+        .filter(|span| {
+            matches!(
+                span.highlight.name(),
+                "comment"
+                    | "comment.documentation"
+                    | "comment.documentation.italic"
+                    | "comment.documentation.list"
+                    | "comment.documentation.quote"
+                    | "comment.documentation.strikethrough"
+                    | "comment.documentation.strong"
+            )
+        })
         .collect();
     spans.sort_by_key(|span| span.range.start);
     let mut ranges: Vec<Range<usize>> = Vec::new();

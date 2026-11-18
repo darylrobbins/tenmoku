@@ -323,33 +323,101 @@ pub struct EditorPalette {
     /// prefix. The base's entries come first, then the theme's new ones in
     /// table order; no name appears twice.
     pub syntax: Vec<(String, Color)>,
-    /// Font styles for highlight captures, from a theme's `[syntax_style]`
-    /// table, by the same longest-prefix rule as `syntax`. Nothing draws
-    /// them yet. No name appears twice.
+    /// Font styles for highlight captures: [`MARKUP_STYLES`], then a
+    /// theme's `[syntax_style]` table over them, by the same longest-prefix
+    /// rule as `syntax`. No name appears twice.
     pub styles: Vec<(String, FontStyle)>,
     /// The terminal's colours: a theme's `[terminal]` table.
     pub terminal: TerminalColors,
 }
 
-/// A capture's font style: `"italic"`, `"bold"` or `"bold italic"` in a
-/// theme's `[syntax_style]` table.
+/// A capture's font style: `"italic"`, `"bold"`, `"strikethrough"` or
+/// several of them (`"bold italic"`) in a theme's `[syntax_style]` table.
+/// Strikethrough is a line drawn through the text, not a face.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FontStyle {
     pub italic: bool,
     pub bold: bool,
+    pub strikethrough: bool,
+}
+
+impl FontStyle {
+    pub const ITALIC: FontStyle = FontStyle {
+        italic: true,
+        bold: false,
+        strikethrough: false,
+    };
+    pub const BOLD: FontStyle = FontStyle {
+        italic: false,
+        bold: true,
+        strikethrough: false,
+    };
+    pub const STRIKETHROUGH: FontStyle = FontStyle {
+        italic: false,
+        bold: false,
+        strikethrough: true,
+    };
+}
+
+impl FontStyle {
+    /// Both styles at once: each face or line either has.
+    pub fn union(self, other: FontStyle) -> FontStyle {
+        FontStyle {
+            italic: self.italic || other.italic,
+            bold: self.bold || other.bold,
+            strikethrough: self.strikethrough || other.strikethrough,
+        }
+    }
+}
+
+/// The font styles every theme starts from, as markup means them: strong
+/// text bold, emphasis italic, headings bold and struck text struck
+/// through, in Markdown and in doc comments' Markdown. A theme's
+/// `[syntax_style]` can set any of them otherwise, by its exact name
+/// (`"markup.strong" = "normal"`). One it leaves a doc comment's emphasis to
+/// adds its face to the doc comment's style ([`DOC_EMPHASIS`]).
+pub const MARKUP_STYLES: [(&str, FontStyle); 7] = [
+    ("comment.documentation.italic", FontStyle::ITALIC),
+    (
+        "comment.documentation.strikethrough",
+        FontStyle::STRIKETHROUGH,
+    ),
+    ("comment.documentation.strong", FontStyle::BOLD),
+    ("markup.heading", FontStyle::BOLD),
+    ("markup.italic", FontStyle::ITALIC),
+    ("markup.strikethrough", FontStyle::STRIKETHROUGH),
+    ("markup.strong", FontStyle::BOLD),
+];
+
+/// The doc comments' emphasis: drawn in the comment's colour, in the
+/// comment's style with markup's face for it added, so bold text in an
+/// italic comment is bold italic. A theme that sets one in its
+/// `[syntax_style]` gets that style alone.
+pub const DOC_EMPHASIS: [&str; 3] = [
+    "comment.documentation.italic",
+    "comment.documentation.strikethrough",
+    "comment.documentation.strong",
+];
+
+/// [`MARKUP_STYLES`], as a palette lists them.
+fn markup_styles() -> Vec<(String, FontStyle)> {
+    (MARKUP_STYLES.iter())
+        .map(|&(name, style)| (name.to_owned(), style))
+        .collect()
 }
 
 impl std::str::FromStr for FontStyle {
     type Err = String;
 
-    /// Words separated by spaces, each `italic` or `bold`; `normal` alone
-    /// is no style.
+    /// Words separated by spaces, each `italic`, `bold` or
+    /// `strikethrough`; `normal` alone is no style.
     fn from_str(text: &str) -> Result<Self, String> {
         let mut style = FontStyle::default();
         for word in text.split_whitespace() {
             match word {
                 "italic" => style.italic = true,
                 "bold" => style.bold = true,
+                "strikethrough" => style.strikethrough = true,
                 "normal" => {}
                 _ => {
                     return Err(
@@ -431,7 +499,10 @@ fn bundled(file_name: &str, source: &str) -> EditorPalette {
     let (file, diagnostics) = ThemeFile::parse(Path::new(file_name), source, EXTENSIONS);
     debug_assert_eq!(diagnostics, [], "the bundled palette has problems");
     let file = file.unwrap_or_default();
-    let mut palette = EditorPalette::default();
+    let mut palette = EditorPalette {
+        styles: markup_styles(),
+        ..EditorPalette::default()
+    };
     let warnings = palette.overlay(
         file.extensions.get("editor"),
         file.extensions.get("syntax"),
@@ -482,8 +553,8 @@ impl EditorPalette {
     pub fn for_theme(theme: &ThemeData) -> (EditorPalette, Vec<String>) {
         let mut palette = Self::bundled(theme.appearance).clone();
         // Font styles are a theme's own: without a `[syntax_style]` a theme
-        // has none, not the bundled palette's.
-        palette.styles.clear();
+        // has the markup's alone, not the bundled palette's others.
+        palette.styles = markup_styles();
         let syntax = theme.extension("syntax");
         let editor = theme.extension("editor");
         if editor.is_some() {
@@ -643,7 +714,22 @@ impl EditorPalette {
             let mut path = Vec::new();
             self.syntax_styles(styles, &mut path, &mut warnings);
         }
+        self.doc_emphasis(syntax_style);
         warnings
+    }
+
+    /// Adds the doc comment's style to each [`DOC_EMPHASIS`] name that
+    /// `syntax_style`, a theme's table, doesn't set.
+    fn doc_emphasis(&mut self, syntax_style: Option<&Table>) {
+        let comment = self.style_for("comment.documentation").unwrap_or_default();
+        for name in DOC_EMPHASIS {
+            if syntax_style.is_some_and(|table| sets_name(table, name)) {
+                continue;
+            }
+            if let Some((_, style)) = self.styles.iter_mut().find(|(capture, _)| capture == name) {
+                *style = style.union(comment);
+            }
+        }
     }
 
     /// Sets the `[syntax_style]` table's font styles, with nested tables as

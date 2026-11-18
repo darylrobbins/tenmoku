@@ -24,7 +24,7 @@ const ALL: [SpellScope; 3] = [SpellScope::Comments, SpellScope::Strings, SpellSc
 
 /// Compiles the languages that drawing a buffer would have compiled by now.
 fn compile_injected() {
-    for name in ["markdown_inline", "html", "rustdoc_inline"] {
+    for name in ["markdown_inline", "html", "rustdoc", "rustdoc_inline"] {
         language_by_name(name).unwrap();
     }
 }
@@ -628,6 +628,19 @@ fn markdown_email_autolinks_are_excluded() {
     );
 }
 
+/// A reference link's text is words, whether its label follows it or it is
+/// its own label; the `[label]` after it and the definition's aren't.
+#[test]
+fn markdown_reference_link_text_is_prose() {
+    let source = "See [fulword text][labelone] and [colapsed words][] here.\n\n\
+                  [labelone]: https://example.com/one\n\
+                  [colapsed words]: https://example.com/two\n";
+    assert_eq!(
+        found_all("markdown", source, &[SpellScope::Text]),
+        ["See [fulword text]", "and [colapsed words][] here."]
+    );
+}
+
 #[test]
 fn markdown_asks_for_its_grammars_when_they_are_not_compiled() {
     // A test run by nextest has its own process, so nothing has compiled this.
@@ -647,7 +660,7 @@ fn markdown_asks_for_its_grammars_when_they_are_not_compiled() {
 #[test]
 fn completeness_covers_what_was_asked_past_the_rows() {
     // As below: a test run by nextest has its own process.
-    if loaded_language("rustdoc_inline").is_some() {
+    if loaded_language("rustdoc").is_some() {
         return;
     }
     let buffer = Buffer::new("/// call `frobnicate` today\nfn a() {}\nfn b() {}\n");
@@ -664,6 +677,8 @@ fn completeness_covers_what_was_asked_past_the_rows() {
     assert!(!row_one.complete, "unfinished past the rows");
     assert!(row_one.ranges.is_empty());
 
+    // The doc comment's block Markdown, and the inline Markdown it holds.
+    language_by_name("rustdoc").unwrap();
     language_by_name("rustdoc_inline").unwrap();
     syntax.take_missing_languages();
     let row_one = checked_spellable_ranges(Some(&syntax), text, &ALL, 1..2);
@@ -681,7 +696,7 @@ fn an_incomplete_result_is_no_ranges() {
     // A test run by nextest has its own process, so nothing has compiled this.
     // Its doc comment would be read with its code span in it, were it not for
     // the language it lacks.
-    if loaded_language("rustdoc_inline").is_some() {
+    if loaded_language("rustdoc").is_some() {
         return;
     }
     let buffer = Buffer::new("/// call `frobnicate` today\nfn a() {}\n// plain remark\n");
@@ -691,9 +706,10 @@ fn an_incomplete_result_is_no_ranges() {
     assert!(!syntax.checked_highlights(0..buffer.text().len()).complete);
     assert!(spellable_ranges(Some(&syntax), buffer.text(), &ALL, 0..9).is_empty());
     assert!(
-        syntax.take_missing_languages().contains(&"rustdoc_inline"),
+        syntax.take_missing_languages().contains(&"rustdoc"),
         "nothing asked for it"
     );
+    language_by_name("rustdoc").unwrap();
     language_by_name("rustdoc_inline").unwrap();
     assert_eq!(
         found(&syntax, &buffer, &ALL, 0..9),

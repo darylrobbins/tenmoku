@@ -66,8 +66,16 @@ fn markdown_inline_and_fenced_code_are_highlighted() {
             (" ", "markup.raw"),
         ],
     );
-    // Emphasis has no highlight of ours, but its delimiters do.
-    assert!(!found.iter().any(|(text, _)| text.contains("emphasis")));
+    // Emphasis is `markup.italic`, its delimiters punctuation; the quote's
+    // text, outside them, is the quote's.
+    assert_includes(
+        &found,
+        &[
+            ("emphasis", "markup.italic"),
+            ("*", "punctuation.delimiter"),
+            ("Some ", "markup.quote"),
+        ],
+    );
 
     // Fence languages resolve by alias and extension, ignoring case.
     for (fence, keyword) in [
@@ -638,13 +646,14 @@ fn injections_out_of_time_stay_plain() {
                 deadline,
                 &mut layers,
                 host_spans.clone(),
+                Vec::new(),
             )
         };
         assert_eq!(
             paint(Some(Instant::now())),
-            (host_spans.clone(), false, false)
+            (host_spans.clone(), Vec::new(), false, false)
         );
-        let (spans, complete, _) = paint(None);
+        let (spans, _, complete, _) = paint(None);
         assert!(complete && spans != host_spans, "{injected}");
         assert_eq!(layers.keys().len(), 1);
     }
@@ -710,6 +719,7 @@ fn combined_templates_stop_at_the_deadline() {
         include_children: true,
         include_gaps: false,
         trim_delimiters: false,
+        line_prefix: None,
         also_kinds: Vec::new(),
     };
     let collected = Cell::new(0);
@@ -750,6 +760,7 @@ fn combined_templates_stop_at_the_deadline() {
             host_parsed: true,
             layers: &mut layers,
             parser: None,
+            markup: Vec::new(),
             complete: true,
         };
         let found = painter.find(syntax.language(), tree, None);
@@ -847,7 +858,15 @@ fn paint_all(
         tree: syntax.tree().unwrap(),
         parsed: true,
     };
-    super::paint(host, 0..buffer.len(), deadline, layers, Vec::new()).1
+    super::paint(
+        host,
+        0..buffer.len(),
+        deadline,
+        layers,
+        Vec::new(),
+        Vec::new(),
+    )
+    .2
 }
 
 /// Painting injections, from finding them to parsing, reusing and
@@ -1087,4 +1106,30 @@ fn the_ruby_extension_query_injects_regex_literals() {
         native.iter().any(|(t, h)| t == "+" && *h == "operator"),
         "{native:?}"
     );
+}
+
+/// Stripping a block comment's decoration reads it a chunk at a time,
+/// checking the deadline at each, so a long comment is cut short as soon as
+/// it passes, not read whole first.
+#[test]
+fn stripping_line_prefixes_checks_the_deadline_as_it_reads() {
+    let text = format!("/**{}*/\n", " * line of a long comment\n".repeat(10_000));
+    let buffer = Buffer::new(&text);
+    let range = 3..text.len() - 3;
+    let strip = || {
+        super::strip_line_prefixes(
+            buffer.text(),
+            std::slice::from_ref(&range),
+            b"*",
+            far_deadline(),
+        )
+    };
+    let (whole, checks) = with_deadline_after(usize::MAX, &mut || strip());
+    let whole = whole.expect("stripped");
+    assert_eq!(whole.len(), 10_000, "a range a line");
+    assert!(checks > 10, "a check a chunk: {checks}");
+    for after in [0, 1, checks / 2] {
+        let (cut, _) = with_deadline_after(after, &mut || strip());
+        assert_eq!(cut, Err(super::Collected::OutOfTime), "after {after}");
+    }
 }

@@ -37,7 +37,8 @@ use gpui::{
 };
 
 use super::{
-    FrameLayout, Line, SpanStyle, StyledShaper, styled_foreground_spans, styled_highlights,
+    FrameLayout, Line, SpanStyle, StyledShaper, deprecated_ranges, merged_ranges, strike_spans,
+    struck_ranges, styled_foreground_spans, styled_highlights,
 };
 use crate::{EditorTheme, EditorView};
 
@@ -463,6 +464,8 @@ pub(crate) fn layout(
     }
     let theme = &view.theme;
     let model = &view.model;
+    // Struck through as in the text area.
+    let deprecated = deprecated_ranges(&model.diagnostics());
     let display = model.display();
     let frame = &layout.frame;
     let line_height = frame.line_height;
@@ -495,10 +498,13 @@ pub(crate) fn layout(
             slice.start_column,
             tab_size,
         );
-        let foreground = styled_foreground_spans(&model.decorations(shown.clone()), theme);
+        let decorations = model.decorations(shown.clone());
+        let foreground = styled_foreground_spans(&decorations, theme);
         let spans = styled_highlights(syntax, theme, unnecessary, &foreground, shown.clone());
-        let first = spans.partition_point(|span| span.range.end <= shown.start);
         let text_style = SpanStyle::plain(theme.foreground);
+        let struck = merged_ranges(struck_ranges(&decorations), &deprecated);
+        let spans = strike_spans(spans, &struck, &shown, text_style);
+        let first = spans.partition_point(|span| span.range.end <= shown.start);
         let runs = row_runs(&expanded, shown.start, &spans[first..], &text_style);
         (shaper.shape(expanded.text(), &runs), expanded)
     };

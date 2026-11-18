@@ -123,7 +123,15 @@ pub(crate) enum Token {
 /// expression, a symbol or an object's key.
 fn token_of(highlight: Highlight, scopes: &[SpellScope]) -> Option<Token> {
     match highlight.name() {
-        "comment" | "comment.documentation" if scopes.contains(&SpellScope::Comments) => {
+        "comment"
+        | "comment.documentation"
+        | "comment.documentation.italic"
+        | "comment.documentation.list"
+        | "comment.documentation.quote"
+        | "comment.documentation.strikethrough"
+        | "comment.documentation.strong"
+            if scopes.contains(&SpellScope::Comments) =>
+        {
             Some(Token::Comment)
         }
         "string" if scopes.contains(&SpellScope::Strings) => Some(Token::String),
@@ -768,8 +776,8 @@ fn has_word(text: &str) -> bool {
 /// looked at; a table's cells have no inline highlights to tell code from words.
 ///
 /// The inline grammar is an injected language with no tree to hand, but its
-/// highlights are there: what they paint is markup, but for heading and link
-/// text.
+/// highlights are there: what they paint is markup, but for heading, link,
+/// strong, emphasised, struck and quoted text.
 fn markdown_prose(syntax: &Syntax, text: &Text, window: Range<usize>) -> Spellable {
     let inlines = inline_nodes(syntax, window);
     let (Some(first), Some(last)) = (inlines.first(), inlines.last()) else {
@@ -929,7 +937,11 @@ fn tag_len(body: &str) -> Option<usize> {
 /// heading's or a link's text, but not a `[label]`, which keeps its brackets.
 fn is_prose(highlight: Highlight, first: Option<char>) -> bool {
     match highlight.name() {
-        "markup.heading" => true,
+        "markup.heading"
+        | "markup.strong"
+        | "markup.italic"
+        | "markup.strikethrough"
+        | "markup.quote" => true,
         "markup.link" => first != Some('['),
         _ => false,
     }

@@ -856,7 +856,7 @@ proptest! {
         clip_len in 0usize..30,
     ) {
         let clip = clip_start..clip_start + clip_len;
-        let spans = flatten(captures(&specs), clip.clone());
+        let (spans, _) = flatten(captures(&specs), clip.clone());
         let mut painted = vec![None; clip.len()];
         let mut last: Option<&Painted> = None;
         for span in &spans {

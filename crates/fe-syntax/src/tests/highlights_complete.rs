@@ -138,9 +138,9 @@ fn an_injection_with_too_many_ranges_is_incomplete() {
 
 #[test]
 fn injections_nested_past_the_limit_are_incomplete() {
-    // Markdown, then HTML in a fence, then its script, then a tagged template's
-    // HTML, which could inject in turn.
-    let source = "```html\n<script>const a = html`<p>b</p>`;</script>\n```\n";
+    // Markdown, then Markdown in a fence, then HTML in its fence, then its
+    // script, then a tagged template's HTML, which could inject in turn.
+    let source = "````markdown\n```html\n<script>const a = html`<p>b</p>`;</script>\n```\n````\n";
     let buffer = Buffer::new(source);
     let syntax = parsed(language_by_name("markdown").unwrap(), &buffer);
     is_incomplete_but_cached(&syntax, 0..source.len());

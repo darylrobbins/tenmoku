@@ -15,8 +15,8 @@
 # are all absent at that commit), so a property takes the `variable` rule.
 #
 # Left out: font styles (italic storage.type, parameters and support.type,
-# underlined class names), `invalid`, the markdown-only and find-in-files
-# scopes and the token.*-token semantic rules. Chosen from the palette, as
+# underlined class names), `invalid`, the markdown-only (`*.markdown`) and
+# find-in-files scopes and the token.*-token semantic rules. Chosen from the palette, as
 # upstream sets none: the diagnostics (error pink, warning yellow, info blue,
 # hint cyan), the change bar, the brackets, the jump labels, the vim mode
 # segments, quick scope and the yank highlight. Every highlight name is set,
@@ -24,6 +24,12 @@
 # match marks are the editor's and VS Code's defaults, as every bundled
 # theme's are; Monokai sets no minimapSlider.*, so the slider is VS Code's
 # dark default.
+#
+# markup.bold and markup.italic, markup.quote and markup.list give
+# markup.strong, markup.italic, markup.quote and markup.list;
+# markup.link.label takes markup.link's (the markdown link text's) and
+# markup.strikethrough, which upstream only strikes through, is the text
+# colour. Their font styles are every theme's (bold, italic, struck through).
 #
 # To try it, copy it to ~/.config/tenmoku/theme.toml with `mode = "dark"`.
 # Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
@@ -209,9 +215,15 @@ minimap_gutter_deleted = "#F92672"
 "markup.deleted" = "#F92672"
 "markup.heading" = "#A6E22E"
 "markup.inserted" = "#A6E22E"
+"markup.italic" = "#66D9EF"
 "markup.link" = "#AE81FF"
+"markup.link.label" = "#AE81FF"
 "markup.link.url" = "#E6DB74"
+"markup.list" = "#E6DB74"
+"markup.quote" = "#F92672"
 "markup.raw" = "#FD971F"
+"markup.strikethrough" = "#F8F8F2"
+"markup.strong" = "#66D9EF"
 "module" = "#A6E22E"
 "number" = "#AE81FF"
 "operator" = "#F92672"
