@@ -1,0 +1,64 @@
+#!/bin/sh
+# Regression cases for review F7 (T1682): the run's wait must end whatever happens to
+# the anchor's status publication. Not a stand-in xcodebuild: run it directly. Each case
+# runs scripts/e2e-macos.sh --no-build (or the script given as $1) with a stand-in, for
+# at most 90 s, then checks the exit status and that no stand-in process is left,
+# running or stopped. Exits 1 if a case fails.
+#   - paused: E2E_ANCHOR_HOLD names a fifo nothing writes, so the anchor's status write
+#     waits while the watchdog fires (quick-exit, MODE=exit, --timeout 4): exit 124.
+#   - failed: bad-status makes the write fail: exit 1.
+# Usage: tools/e2e-macos/standins/status-cases [SCRIPT]
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+script=${1:-"$here/../../../scripts/e2e-macos.sh"}
+work=$(mktemp -d "${TMPDIR:-/tmp}/e2e-status-cases.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+mkfifo "$work/hold"
+failures=0
+pattern='e2etest|standins/(quick-child|late-child|bad-status|quick-exit)'
+
+# run NAME EXPECTED-STATUS ENV...: runs the script with ENV, bounded at 90 s.
+run() {
+	name=$1 expected=$2
+	shift 2
+	set -m
+	env "$@" "$script" --no-build --timeout 4 >"$work/out" 2>&1 &
+	pid=$!
+	set +m
+	waited=0
+	while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 450 ]; do
+		sleep 0.2
+		waited=$((waited + 1))
+	done
+	if kill -0 "$pid" 2>/dev/null; then
+		got="still waiting after 90 s"
+		kill -KILL -- "-$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null
+		# What the hung run left: its anchor (a group of its own) and the stand-in's.
+		pkill -KILL -f "$pattern" 2>/dev/null || true
+		pkill -KILL -f 'sleep 2592000' 2>/dev/null || true
+	else
+		wait "$pid"
+		got=$?
+	fi
+	sleep 1
+	left=$(pgrep -fl "$pattern" | grep -v status-cases || true)
+	stopped=$(ps -A -o stat= -o command= | awk '$1 ~ /^T/' | grep -E "$pattern|sleep 2592000" || true)
+	grep -E '^(stand-in|e2e-macos):' "$work/out" | sed 's/^/     /'
+	if [ "$got" = "$expected" ] && [ -z "$left" ] && [ -z "$stopped" ]; then
+		echo "ok   $name: exit $got; nothing left, nothing stopped"
+	else
+		echo "FAIL $name: exit $got (expected $expected); left [${left}]; stopped [${stopped}]"
+		failures=$((failures + 1))
+	fi
+}
+
+run "status write paused while the watchdog fires" 124 \
+	MODE=exit E2E_XCODEBUILD="$here/quick-exit" E2E_ANCHOR_HOLD="$work/hold"
+run "status write fails" 1 E2E_XCODEBUILD="$here/bad-status"
+
+if [ "$failures" -ne 0 ]; then
+	echo "status-cases: $failures failed"
+	exit 1
+fi
+echo "status-cases: all passed"

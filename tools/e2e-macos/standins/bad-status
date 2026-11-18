@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stand-in xcodebuild for review F7 (T1682, finish round 4): makes the run's status
+# publication fail. It puts directories where the anchor writes the command's exit
+# status (.run-status, and .run-status.tmp, which the round-3 script used) in the run's
+# results folder, and exits 0 at once. The run must end anyway (exit 1), not wait forever.
+while [ $# -gt 0 ]; do
+	[ "$1" = -resultBundlePath ] && results=$(dirname "$2")
+	shift
+done
+mkdir -p "$results/.run-status" "$results/.run-status.tmp"
+echo "stand-in: bad-status blocked the status file and exits"
+exit 0

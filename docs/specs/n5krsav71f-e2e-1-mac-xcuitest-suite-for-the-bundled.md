@@ -155,3 +155,7 @@ Uses a human-run UI session: a UI run needs the user's go-ahead before it starts
   frozen. The new stand-ins are `quick-exit`, `group-reuse` (real processes, the script's
   own `cleanup_run`) and `no-identity/ps`, and `scan-cases` gained the reaped and zombie
   cases. The change is script-only; no UI run was needed.
+- Finish round 4 (F7): the anchor writes the exit status with builtins only. The wait
+  also ends when the anchor becomes its sleep without a status, or when the watchdog has
+  finished. `status-cases` (the paused write under the watchdog gives 124; the failed
+  write, `bad-status`, gives 1) is the regression.

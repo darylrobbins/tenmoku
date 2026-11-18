@@ -32,6 +32,17 @@ stand-in run that makes them, and are inert.
 - `quick-exit`: review r3 F6 (T1682): a command that leaves a TERM-resistant child
   (`quick-child`) and exits at once. `MODE=exit`, or `MODE=hang` (a sub-command does it
   while the stand-in waits, for `--timeout`).
+- `bad-status`: review F7 (T1682): puts directories where the anchor writes the
+  command's exit status, so the write fails, and exits 0 at once. The run must end
+  (exit 1), not wait forever.
+- `status-cases`: review F7 (T1682): not a stand-in xcodebuild. It runs the script, each
+  run bounded at 90 s:
+  - with `E2E_ANCHOR_HOLD`, a fifo nothing writes, pausing the status write while the
+    watchdog fires (`quick-exit`, `--timeout 4`): it must exit 124;
+  - with `bad-status`: it must exit 1.
+
+  Either way no stand-in process may be left, running or stopped. Run it directly
+  (optionally with another script as `$1`); it exits 1 if a case fails.
 - `no-identity/ps`: review r3 F6 (T1682): a `ps` that can't read the run anchor's start
   time. With its folder first on `PATH`, a run must fail ("can't read the identity of the
   run's anchor") without starting the stand-in it names.

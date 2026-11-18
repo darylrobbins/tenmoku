@@ -158,6 +158,22 @@ Fixed, in two rounds.
    killed outright starts nothing. A recorded member of an unanchored group whose leader
    is reaped stays owned by its own identity.
 
+5. Review round 4 (F7) found that the anchor published the exit status with an external
+   `mv`. That `mv` ran inside the anchored group, so the watchdog's TERM, or a freeze and
+   KILL, could catch it as the command finished near the timeout. Without the status,
+   the anchor still became its sleep, and the wait never ended. Now:
+   - From the command's end to its `exec sleep`, the anchor runs only builtins. It writes
+     the status with one `printf`, which nothing the script signals can interrupt, since
+     the anchor itself is never signalled.
+   - The wait ends when the status is published (a non-empty file), when the anchor has
+     gone or become its sleep without one ("the run's anchor wrote no exit status",
+     exit 1), or when the watchdog has finished its TERM, grace and KILL (exit 124).
+     So no failed or paused publication can hold the run.
+
+   `tools/e2e-macos/standins/status-cases` tests this. A test-only `E2E_ANCHOR_HOLD`
+   pauses the status write while the watchdog fires, and `bad-status` makes the write
+   fail (results below).
+
 Cleanup: freeze; KILL the owned processes outside xcodebuild's group; TERM and CONT its
 members; scan every 0.2 s for up to 10 s; then freeze and KILL what is left; then up to
 three more scans, each freezing and killing anything a killed process left; then KILL
@@ -207,8 +223,8 @@ e2e-macos: FAILED (timed out after 4s)
 exit 124; pgrep afterwards: 16727 /bin/sh …/tools/e2e-macos/standins/late-child
 ```
 
-**With the final script** (2026-11-18 00:00, after review round 3: the anchor, and KILL
-outside xcodebuild's group). Every run ended with the expected status, and nothing was
+**With the round-3 script** (2026-11-18 00:00: the anchor, and KILL outside
+xcodebuild's group). Every run ended with the expected status, and nothing was
 left on any of them: `pgrep -fl 'e2etest|standins/|helper-resist|helper-orphan'` found
 none each time. Four runs are quoted from a rerun:
 - two whose pgrep in the first pass also listed my own shell commands running alongside,
@@ -274,6 +290,42 @@ still bundling, and the shell died of it outright (exit -15, nothing launched). 
 script now traps INT and TERM from its first lines: `spawn-loop` signalled at 1 s ended
 `FAILED (SIGTERM, before the run)` with exit 143, and `FAILED (SIGINT, before the run)`
 with exit 130. Nothing was left, and its temporary state and config folders were removed.
+
+**Review round 4, F7, with the final script** (2026-11-18 01:20). `status-cases`:
+
+```
+     stand-in: quick-exit left quick-child pid 72255 and exits
+     e2e-macos: timed out after 4s; stopping xcodebuild, the runner and the app
+     e2e-macos: FAILED (timed out after 4s)
+ok   status write paused while the watchdog fires: exit 124; nothing left, nothing stopped
+     stand-in: bad-status blocked the status file and exits
+     e2e-macos: the run's anchor wrote no exit status
+     e2e-macos: FAILED (xcodebuild test exited 1)
+ok   status write fails: exit 1; nothing left, nothing stopped
+status-cases: all passed
+```
+
+Against the round-3 script, the paused case can't pause, because that script has no
+`E2E_ANCHOR_HOLD`: it exited 1, not 124. The failed-write case ended with exit 1 there
+too, because that anchor exited on the failed write instead of becoming its sleep.
+Neither case reproduces codex's exact race (the watchdog catching the `mv`). Codex's
+read-only probes are the before-fix evidence. Both cases cover the new paths: the wait
+released by the watchdog, and an anchor that became its sleep without a status.
+
+The whole matrix above was rerun on the final script, and every run ended as in the
+table: 124, 1, 130 and 143 for each four-path stand-in, 124 for `hang-ignore-term`, 1 for
+`exit-zero`, and 143 and 130 for signals before the run. pgrep found nothing each time.
+At load average 30 to 45 the script's setup took up to 8 s, so three signal runs were
+repeated with later signals, to land after the stand-in had started:
+- `quick-exit` SIGINT at 10 s: `left quick-child pid 87410`, `sending KILL to: 87410 …`,
+  `FAILED (SIGINT)`, 130;
+- `quick-exit` SIGTERM at 7 s: pid 77454 killed, 143;
+- `late-orphan` SIGINT and SIGTERM at 14 s, after `started late-child pid 80136` (and
+  `82252`): 130 and 143.
+
+`scan-cases` and `group-reuse` passed again. `group-reuse` now fails, rather than ending
+silently, if a case stops early. It had stopped early once, because `cleanup_run` named a
+variable the stand-in didn't set.
 
 `scan-cases`, the script's own scan on synthetic snapshots (review F4, rounds 2 and 3).
 With the round-2 script, the reaped and zombie reuse cases adopted the unrelated pid 601,

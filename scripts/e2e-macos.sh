@@ -241,6 +241,8 @@ owned="$results/.owned-processes"
 owned_groups="$results/.owned-groups"
 run_ack="$results/.run-ack"
 run_status="$results/.run-status"
+timed_out="$results/.timed-out"
+watchdog_done="$results/.watchdog-done"
 
 # Prints the pids owned now, one per line (never the anchor's), and records each new one
 # in $owned, and each group one leads in $owned_groups as "pgid leader-start-time". A
@@ -400,7 +402,8 @@ $p
 		wait "$anchor_pid" 2>/dev/null || true
 		anchor_pid=""
 	fi
-	rm -f "$owned" "$owned_groups" "$owned_groups.retired" "$run_ack" "$run_status" "$run_status.tmp"
+	rm -f "$owned" "$owned_groups" "$owned_groups.retired" "$run_ack" "$run_status" \
+		"$watchdog_done"
 }
 
 on_signal() { # on_signal NAME STATUS
@@ -418,7 +421,12 @@ on_signal() { # on_signal NAME STATUS
 # command in the foreground, in its group, writes the command's exit status to
 # $run_status, and then becomes a sleep, the same process (pid and start time), holding
 # the group's id until cleanup_run kills it. Until the ack it only polls for it (30 s
-# at most, then it exits 1 and the run fails).
+# at most, then it exits 1 and the run fails). From the command's end to the exec it
+# starts no process, only builtins, so nothing the watchdog or cleanup signals in its
+# group can stop the status being written (review F7); and if the write fails, the
+# waiter in run_watched sees the anchor become the sleep and ends anyway.
+# E2E_ANCHOR_HOLD, for tools/e2e-macos/standins/hold-status only, names a fifo the anchor
+# opens before writing the status, which pauses the write until something opens it too.
 anchor() {
 	set +m
 	trap : INT TERM HUP
@@ -430,23 +438,30 @@ anchor() {
 	done
 	s=0
 	"$@" || s=$?
-	printf '%s\n' "$s" >"$run_status.tmp"
-	mv "$run_status.tmp" "$run_status"
+	if [ -n "${E2E_ANCHOR_HOLD:-}" ]; then read -r _ <"$E2E_ANCHOR_HOLD" || true; fi
+	# One short write, read back only once it isn't empty (published).
+	printf '%s\n' "$s" >"$run_status" || true
 	exec sleep 2592000
 }
+
+# Whether the anchor has written the command's exit status: a file, not empty.
+published() { [ -f "$run_status" ] && [ -s "$run_status" ]; }
 
 # Runs a command under an anchor (see anchor), in a process group of its own, its output
 # in $xcodebuild_log and shown as it comes, then cleans up after it (cleanup_run). The
 # anchor's pid and start time are recorded, and checked to lead its group, before the
 # command starts; if they can't be read the run fails. After $timeout seconds a watchdog
 # sends TERM to the group's members, and KILL $grace seconds later (after a freeze), so
-# the command ends, and the status is 124. Everything else is cleanup_run's.
+# the command ends, and the status is 124. The wait ends when the anchor writes the
+# command's status, when the anchor has gone or become its sleep without one, or when the
+# watchdog has done all it does ($watchdog_done), status or not. Everything else is
+# cleanup_run's.
 run_watched() {
 	: >"$xcodebuild_log"
 	: >"$owned"
 	: >"$owned_groups"
 	: >"$owned_groups.retired"
-	rm -f "$run_ack" "$run_status" "$run_status.tmp"
+	rm -f "$run_ack" "$run_status" "$timed_out" "$watchdog_done"
 	set -m
 	anchor "$@" >"$xcodebuild_log" 2>&1 &
 	anchor_pid=$!
@@ -465,15 +480,23 @@ run_watched() {
 	echo "$anchor_pid $anchor_started" >>"$owned"
 	: >"$run_ack"
 	(
-		while [ ! -e "$run_status" ]; do
-			# The anchor gone (or a zombie) without a status: it failed.
-			case $(ps -o stat= -p "$anchor_pid" 2>/dev/null) in
+		while :; do
+			if published; then
+				read -r s <"$run_status" || s=1
+				exit "${s:-1}"
+			fi
+			if [ -e "$watchdog_done" ]; then exit 124; fi
+			# The anchor gone, a zombie, or already its sleep, without a status: failed.
+			case $(ps -o stat= -o comm= -p "$anchor_pid" 2>/dev/null) in
 			"" | Z*) exit 1 ;;
+			*sleep)
+				if published; then continue; fi
+				echo "e2e-macos: the run's anchor wrote no exit status" >&2
+				exit 1
+				;;
 			esac
 			sleep 0.2
 		done
-		read -r s <"$run_status"
-		exit "$s"
 	) &
 	waiter=$!
 	tail -f "$xcodebuild_log" &
@@ -485,13 +508,11 @@ run_watched() {
 		done
 	) &
 	tracker=$!
-	timed_out="$results/.timed-out"
-	rm -f "$timed_out"
 	(
 		waited=0
 		while [ "$waited" -lt "$timeout" ]; do
 			sleep 1
-			if [ -e "$run_status" ]; then exit 0; fi
+			if published; then exit 0; fi
 			waited=$((waited + 1))
 		done
 		: >"$timed_out"
@@ -499,17 +520,19 @@ run_watched() {
 		# shellcheck disable=SC2046 # a list of pids
 		kill -TERM $(group_members) 2>/dev/null || true
 		waited=0
-		while [ ! -e "$run_status" ] && [ "$waited" -lt "$grace" ]; do
+		while ! published && [ "$waited" -lt "$grace" ]; do
 			sleep 1
 			waited=$((waited + 1))
 		done
 		# Frozen and recorded first, so a child the group's members started outside it
 		# stays owned once they're killed; cleanup_run deals with everything else.
-		if [ ! -e "$run_status" ]; then
+		if ! published; then
 			freeze >/dev/null
 			# shellcheck disable=SC2046
 			kill -KILL $(group_members) 2>/dev/null || true
 		fi
+		# Whether or not the status comes, the wait ends now.
+		: >"$watchdog_done"
 	) &
 	watcher=$!
 	status=0

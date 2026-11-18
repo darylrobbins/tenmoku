@@ -15,13 +15,19 @@ here=$(cd "$(dirname "$0")" && pwd)
 script="$here/../../../scripts/e2e-macos.sh"
 work=$(mktemp -d "${TMPDIR:-/tmp}/e2e-group-reuse.XXXXXX")
 maker=""
+finished=""
 cleanup() {
+	if [ -z "$finished" ]; then
+		echo "group-reuse: stopped before its last case" >&2
+		if [ -s "$work/out" ]; then sed 's/^/     /' "$work/out" >&2; fi
+	fi
 	if [ -n "$maker" ]; then kill "$maker" 2>/dev/null || true; fi
 	if [ -s "$work/pids" ]; then
 		# shellcheck disable=SC2046 # two pids
 		kill -KILL $(cat "$work/pids") 2>/dev/null || true
 	fi
 	rm -rf "$work"
+	if [ -z "$finished" ]; then exit 1; fi
 }
 trap cleanup EXIT
 code="$work/cleanup.sh"
@@ -42,6 +48,7 @@ owned="$work/owned"
 owned_groups="$work/groups"
 run_ack="$work/ack"
 run_status="$work/status"
+watchdog_done="$work/watchdog-done"
 grace=1
 tracker="" waiter="" anchor_pid=""
 failures=0
@@ -120,6 +127,7 @@ make zombie
 started=$(ps -o lstart= -p "$leader" | tr -s ' ' | sed 's/^ //; s/ $//')
 run "control: the recorded leader a zombie, the group still ours" "$started" killed
 
+finished=1
 if [ "$failures" -ne 0 ]; then
 	echo "group-reuse: $failures failed"
 	exit 1
