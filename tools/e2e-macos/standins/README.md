@@ -25,6 +25,14 @@ stand-in run that makes them, and are inert.
 - `build-only`: review F3 (T1682): builds the test bundle for real with the script's
   `CODE_SIGN_ENTITLEMENTS`, runs no test, prints the runner's signed read-write exception
   and exits 1. Run it with a `CARGO_TARGET_DIR` holding `&` (and a `release/tenmoku`).
+- `fake-launch`: review F5 (T1682): writes launch records naming the bundle under test
+  (and, with `MODE=other`, one naming another executable) and exits 0. Run it with a
+  `CARGO_TARGET_DIR` holding regex characters, such as `<tmp>/build[1]`: the audit must
+  count 0 (or, with `MODE=other`, 1) other processes.
+- `scan-cases`: review F4 (T1682): not a stand-in xcodebuild. It runs the script's own
+  scan on synthetic `ps` snapshots: a group kept after its leader exits, retired once
+  empty, never adopted when its id is reused, pid identity by start time, and the app
+  path matched literally. Run it directly; it exits 1 if a case fails.
 - `hang-ignore-term`, `exit-zero`, `short-run` (needs `MOCK_XCRESULT`, a real result
   bundle): the T1661 record's other stand-ins.
 - `resister`, `quitter`, `setsid`, `late-parent`, `late-helper`, `late-child`,

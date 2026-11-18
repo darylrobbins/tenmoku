@@ -106,6 +106,18 @@ Fixed, in two rounds.
      the loaded Mac (load average 17, other lanes building) took 451 s with
      pass-counted waits.
 
+3. Review round 2 (finding F4) showed that a recorded group was trusted by its bare id.
+   Once the group emptied and the id was reused, an unrelated group would have been
+   adopted and signalled. Each group is now recorded as "pgid leader-start-time",
+   xcodebuild's own included (recorded as it starts, in place of the old bare
+   `$run_pid` match). It stays owned only while it has members and no live process
+   holding its id started at another time. A group that fails either test is retired
+   for good, so a reused id is never adopted. A child left in the original group after
+   its leader exits is still found. `tools/e2e-macos/standins/scan-cases` runs the
+   script's own scan on synthetic `ps` snapshots for each of these cases (results
+   below). The watchdog still signals xcodebuild's group by id, but only while
+   xcodebuild is unreaped, when its id can't be reused.
+
 Cleanup: freeze, TERM and CONT; scans every 0.2 s for up to 10 s; then freeze and KILL
 what is left; then up to three more scans, each freezing and killing anything a killed
 process left.
@@ -150,17 +162,38 @@ e2e-macos: FAILED (timed out after 4s)
 exit 124; pgrep afterwards: 16727 /bin/sh …/tools/e2e-macos/standins/late-child
 ```
 
-**With the final script** (2026-11-16 08:18, after review round 1; KILL lists include the
+**With the final script** (2026-11-17 19:50, after review round 2; KILL lists include the
 stand-ins' own `sleep` children). Every run ended with the expected status, and nothing
 was left on any of them: `pgrep -fl 'e2etest|standins/|helper-resist|helper-orphan'` found
 none each time.
 
 | Stand-in | `--timeout` | `MODE=exit` | SIGINT | SIGTERM |
 |---|---|---|---|---|
-| `term-spawner` (child made on TERM, parent exits at once) | `spawn-on-term got TERM, started pid 66591 and exits`, `sending KILL to: 66591 66854`, `FAILED (timed out after 4s)`, **124** | `started pid 67489`, `KILL to: 67489 67817`, `FAILED (xcodebuild exited 0, but these could not be exported: …)`, **1** | `started pid 68550`, `KILL to: 68550 68846`, `FAILED (SIGINT)`, **130** | `started pid 69379`, `KILL to: 69379 69654`, `FAILED (SIGTERM)`, **143** |
-| `spawn-loop` (new-session children up to the KILL) | `KILL to:` 55 pids, `FAILED (timed out after 4s)`, **124** | 55 pids, `FAILED (xcodebuild exited 0, …)`, **1** | 41 pids, `FAILED (SIGINT)`, **130** | 45 pids, `FAILED (SIGTERM)`, **143** |
-| `late-orphan` (F1: orphan's late child) | `late-helper (pid 74495, parent gone) started late-child pid 74534`, `KILL to: 74495 74534 74844 74845`, **124** | `started late-child pid 75576`, `KILL to: 75539 75576 …`, **1** | `started late-child pid 76494`, `KILL to: 76461 76494 …`, **130** | `started late-child pid 77362`, `KILL to: 77330 77362 …`, **143** |
-| `family` (the spike record's four runs) | `--timeout 4`, `KILL to:` 6 pids, **124** | 6 pids, **1** | 6 pids, **130** | 6 pids, **143** |
+| `term-spawner` (child made on TERM, parent exits at once) | `spawn-on-term got TERM, started pid 54420 and exits`, 3 pids killed, `FAILED (timed out after 4s)`, **124** | `started pid 57680`, 3 killed, `FAILED (xcodebuild exited 0, but these could not be exported: …)`, **1** | `started pid 60055`, 3 killed, `FAILED (SIGINT)`, **130** | `started pid 62094`, 3 killed, `FAILED (SIGTERM)`, **143** |
+| `spawn-loop` (new-session children up to the KILL) | 53 pids killed, `FAILED (timed out after 4s)`, **124** | 57, `FAILED (xcodebuild exited 0, …)`, **1** | 41, `FAILED (SIGINT)`, **130** | at 8 s: `sending KILL to:` …, `FAILED (SIGTERM)`, **143** |
+| `late-orphan` (F1: orphan's late child) | `late-helper (pid 78943, parent gone) started late-child pid 79486`, 5 killed, **124** | `started late-child pid 83027`, 5 killed, **1** | `started late-child pid 86699`, 5 killed, **130** | `started late-child pid 91053`, 5 killed, **143** |
+| `family` (the spike record's four runs) | `--timeout 4`, 7 pids killed, **124** | 7, **1** | 7, **130** | 7, **143** |
+
+A signal that arrives before xcodebuild starts, during the build, bundle or xcodegen
+steps, has nothing to stop. One harness run sent SIGTERM at 3 s, while the loaded Mac was
+still bundling, and the shell died of it outright (exit -15, nothing launched). The
+script now traps INT and TERM from its first lines: `spawn-loop` signalled at 1 s ended
+`FAILED (SIGTERM, before the run)` with exit 143, and `FAILED (SIGINT, before the run)`
+with exit 130. Nothing was left, and its temporary state and config folders were removed.
+
+`scan-cases`, the script's own scan on synthetic snapshots (review F4), all passed:
+
+```
+ok   a matched leader and its group: owned [500 501]
+ok   the leader gone, its group's members kept: owned [501 502]
+ok   the group empty: owned []
+     retired: 500 Mon Nov 17 10:00:00 2026
+ok   the id reused after the group emptied: owned []
+ok   the id held by a process of another start time: owned []
+ok   pid identity by start time: owned [701 702]
+ok   the app by its path, taken literally: owned [800]
+scan-cases: all passed
+```
 
 The spike record's other stand-ins gave the same results as before: `hang-ignore-term`
 `--timeout 3` ended `FAILED (timed out after 3s)` with exit 124 after 19 s, and
@@ -469,7 +502,12 @@ only one copy survived the export. Each of those launches was still checked in t
 test itself: `recordLaunch()` asserts that the running `dev.tenmoku.tenmoku.e2e` is the
 bundle under test, and every test passed. Records are now numbered per kind
 (`launched-<test>-<iteration>-<n>`), the copy refuses two attachments with one name, and
-the script fails a run if any launch record names no process or another one. None notes a
+the script fails a run if any launch record names no process or another one. The audit
+compares the executable path as a fixed string (`grep -F`, review finding F5), and so
+does `--only`'s check. With the `fake-launch` stand-in under `CARGO_TARGET_DIR=<tmp>/build[1]`,
+it reported `launch records: 2, of which 0 name … other than '<tmp>/build[1]/…/Tenmoku.app'`.
+With `MODE=other` it reported `3, of which 1` and named the `/Applications` record. The
+old regex `grep` counted both correct records as other processes. None notes a
 `dev.tenmoku.tenmoku` process: the user's own Tenmoku wasn't running during the run.
 `/Applications/Tenmoku.app/Contents/Info.plist` and
 `~/Applications/Tenmoku.app/Contents/Info.plist` are both from Nov 9 15:45, before the

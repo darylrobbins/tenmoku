@@ -1,0 +1,25 @@
+#!/bin/sh
+# Stand-in xcodebuild for review F5 (T1682): writes two launch records, as the tests'
+# recordLaunch() does, into the run's results folder, naming the bundle under test
+# (<target>/e2e-macos/bundle/Tenmoku.app, from -derivedDataPath), and with MODE=other a
+# third naming another executable; runs no test and exits 0. Run it with a
+# CARGO_TARGET_DIR holding regex characters, such as <tmp>/build[1].
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-derivedDataPath) derived=$2; shift ;;
+	-resultBundlePath) bundle=$2; shift ;;
+	esac
+	shift
+done
+app="$(dirname "$derived")/bundle/Tenmoku.app"
+results=$(dirname "$bundle")
+for n in 1 2; do
+	printf 'pid %s executable %s bundle %s' "$((4000 + n))" "$app/Contents/MacOS/tenmoku" "$app" \
+		>"$results/launched-testFake-001-$n.txt"
+done
+if [ "$MODE" = other ]; then
+	printf 'pid 4009 executable %s bundle %s' /Applications/Tenmoku.app/Contents/MacOS/tenmoku \
+		/Applications/Tenmoku.app >"$results/launched-testFake-001-3.txt"
+fi
+echo "stand-in: wrote launch records naming $app"
+exit 0

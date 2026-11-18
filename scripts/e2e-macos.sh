@@ -118,7 +118,7 @@ if [ -n "$fixture" ]; then
 		die "--fixture: $fixtures/$fixture/project is not a folder (see $fixtures)"
 fi
 if [ -n "$only" ]; then
-	printf '%s\n' "$declared" | grep -qx "$only" ||
+	printf '%s\n' "$declared" | grep -Fqx -- "$only" ||
 		die "--only takes one of the declared tests ($(printf '%s\n' "$declared" | tr '\n' ' ' | sed 's/ $//')), got '$only'"
 fi
 selected=$(printf '%s\n' "$declarations" | while read -r name fixture_name settings fresh; do
@@ -139,6 +139,10 @@ esac
 TENMOKU_STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tenmoku-e2e-state.XXXXXX")
 TENMOKU_CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tenmoku-e2e-config.XXXXXX")
 trap 'rm -rf "$TENMOKU_STATE_DIR" "$TENMOKU_CONFIG_DIR"' EXIT
+# Until xcodebuild starts (when on_signal takes over) there is nothing to stop: a signal
+# just exits, through the EXIT trap, with the status it would have.
+trap 'echo "e2e-macos: FAILED (SIGINT, before the run)"; exit 130' INT
+trap 'echo "e2e-macos: FAILED (SIGTERM, before the run)"; exit 143' TERM
 export TENMOKU_STATE_DIR TENMOKU_CONFIG_DIR
 
 [ "$(uname -s)" = Darwin ] || die "macOS only (XCUITest drives AppKit apps)"
@@ -225,28 +229,49 @@ tracker=""
 owned="$results/.owned-processes"
 owned_groups="$results/.owned-groups"
 
-# Prints the pids owned now, one per line, and records each new one in $owned (and each
-# group one leads in $owned_groups). Paths come through the environment, not argv, so the
-# awk can't match itself.
+# Prints the pids owned now, one per line, and records each new one in $owned, and each
+# group one leads in $owned_groups. A group is recorded as "pgid leader-start-time" and
+# stays owned while it has members and no live process holding its id started at another
+# time: so a child left in it after its leader exits is still found, and a group whose id
+# is reused after it emptied is never adopted. A group that fails either test is retired
+# for good ($owned_groups.retired). xcodebuild's own group is recorded the same way when it
+# starts (run_watched). Paths come through the environment, not argv, so the awk can't
+# match itself. E2E_SCAN_SNAPSHOT, for tools/e2e-macos/standins/scan-cases only, names a
+# file to read in place of `ps`.
 # shellcheck disable=SC2016 # an awk program, its $ fields not the shell's
 scan_awk='
 BEGIN {
-	me = ENVIRON["E2E_SCAN_UID"]; group = ENVIRON["E2E_SCAN_GROUP"]
+	me = ENVIRON["E2E_SCAN_UID"]
 	products = ENVIRON["E2E_SCAN_PRODUCTS"]; exe = ENVIRON["E2E_SCAN_EXE"]
-	rf = ENVIRON["E2E_SCAN_OWNED"]; gf = ENVIRON["E2E_SCAN_GROUPS"]
+	rf = ENVIRON["E2E_SCAN_OWNED"]; gf = ENVIRON["E2E_SCAN_GROUPS"]; xf = gf ".retired"
 	while ((getline line < rf) > 0) rec[line] = 1
 	close(rf)
-	while ((getline line < gf) > 0) grp[line] = 1
+	while ((getline line < xf) > 0) retired[line] = 1
+	close(xf)
+	while ((getline line < gf) > 0) if (!(line in retired)) grp[line] = 1
 	close(gf)
 }
 $5 !~ /^Z/ {
-	pid = $1; ppid[pid] = $2; pgid[pid] = $3; start[pid] = $6 " " $7 " " $8 " " $9 " " $10
+	pid = $1; ppid[pid] = $2; pgid[pid] = $3; uid[pid] = $4
+	start[pid] = $6 " " $7 " " $8 " " $9 " " $10
 	n++; order[n] = pid
-	if ((group != "" && $3 == group) || ((pid " " start[pid]) in rec) ||
-	    ($4 == me && (($3 in grp) || index($0, products) || index($0, exe))))
+	members[$3]++
+	if (((pid " " start[pid]) in rec) || ($4 == me && (index($0, products) || index($0, exe))))
 		own[pid] = 1
 }
 END {
+	for (k in grp) {
+		g = k; sub(/ .*/, "", g); since = k; sub(/^[^ ]* /, "", since)
+		if (!(g in members) || ((g in start) && start[g] != since)) {
+			print k >> xf
+			continue
+		}
+		live[g] = 1
+	}
+	for (i = 1; i <= n; i++) {
+		p = order[i]
+		if ((pgid[p] in live) && uid[p] == me) own[p] = 1
+	}
 	do {
 		changed = 0
 		for (i = 1; i <= n; i++) {
@@ -256,16 +281,20 @@ END {
 	} while (changed)
 	for (p in own) {
 		if (!((p " " start[p]) in rec)) print p " " start[p] >> rf
-		if (pgid[p] == p && !(p in grp)) print p >> gf
+		if (pgid[p] == p && !((p " " start[p]) in grp) && !((p " " start[p]) in retired))
+			print p " " start[p] >> gf
 		print p
 	}
 }'
 
 scan() {
-	ps -A -o pid= -o ppid= -o pgid= -o uid= -o stat= -o lstart= -o command= 2>/dev/null |
-		E2E_SCAN_UID=$(id -u) E2E_SCAN_GROUP=$run_pid \
-			E2E_SCAN_PRODUCTS="$derived/Build/Products/" E2E_SCAN_EXE="$app/Contents/MacOS/tenmoku" \
-			E2E_SCAN_OWNED="$owned" E2E_SCAN_GROUPS="$owned_groups" awk "$scan_awk" | sort -n
+	if [ -n "${E2E_SCAN_SNAPSHOT:-}" ]; then
+		cat "$E2E_SCAN_SNAPSHOT"
+	else
+		ps -A -o pid= -o ppid= -o pgid= -o uid= -o stat= -o lstart= -o command= 2>/dev/null
+	fi | E2E_SCAN_UID=$(id -u) \
+		E2E_SCAN_PRODUCTS="$derived/Build/Products/" E2E_SCAN_EXE="$app/Contents/MacOS/tenmoku" \
+		E2E_SCAN_OWNED="$owned" E2E_SCAN_GROUPS="$owned_groups" awk "$scan_awk" | sort -n
 }
 
 # Stops every owned process, then scans and stops again until a pass finds no process it
@@ -326,7 +355,7 @@ cleanup_run() {
 		# shellcheck disable=SC2086
 		kill -KILL $pids 2>/dev/null || true
 	done
-	rm -f "$owned" "$owned_groups"
+	rm -f "$owned" "$owned_groups" "$owned_groups.retired"
 }
 
 on_signal() { # on_signal NAME STATUS
@@ -347,10 +376,14 @@ run_watched() {
 	: >"$xcodebuild_log"
 	: >"$owned"
 	: >"$owned_groups"
+	: >"$owned_groups.retired"
 	set -m
 	"$@" >"$xcodebuild_log" 2>&1 &
 	run_pid=$!
 	set +m
+	# Its group, owned with its leader's start time (see scan).
+	run_started=$(ps -o lstart= -p "$run_pid" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
+	if [ -n "$run_started" ]; then echo "$run_pid $run_started" >>"$owned_groups"; fi
 	tail -f "$xcodebuild_log" &
 	tail_pid=$!
 	(
@@ -617,7 +650,7 @@ if [ -z "$dry" ]; then
 		[ -f "$record" ] || continue
 		records=$((records + 1))
 		if ! grep -q '^pid ' "$record" ||
-			grep '^pid ' "$record" | grep -qv " executable $app/Contents/MacOS/tenmoku "; then
+			grep '^pid ' "$record" | grep -Fqv " executable $app/Contents/MacOS/tenmoku "; then
 			others=$((others + 1))
 			echo "e2e-macos: $(basename "$record") names no process or another one: $(head -n 1 "$record")" >&2
 		fi

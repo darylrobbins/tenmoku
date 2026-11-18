@@ -1,0 +1,119 @@
+#!/bin/sh
+# Regression cases for scripts/e2e-macos.sh's process scan (T1682 review F4): feeds its
+# scan, taken from the script itself, synthetic `ps` snapshots (E2E_SCAN_SNAPSHOT) and
+# checks which pids it owns. Launches nothing. Prints one line per case; exits 1 if any
+# fails. Usage: tools/e2e-macos/standins/scan-cases
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+script="$here/../../../scripts/e2e-macos.sh"
+work=$(mktemp -d "${TMPDIR:-/tmp}/e2e-scan-cases.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+code="$work/scan.sh"
+sed -n '/^scan_awk=/,/^}'"'"'$/p' "$script" >"$code"
+sed -n '/^scan() {$/,/^}$/p' "$script" >>"$code"
+if ! grep -q 'scan_awk=' "$code" || ! grep -q '^scan() {' "$code"; then
+	echo "scan-cases: can't find scan_awk and scan() in $script" >&2
+	exit 1
+fi
+# shellcheck source=/dev/null
+. "$code"
+derived=/e2e/DerivedData
+app=/e2e/bundle/Tenmoku.app
+owned="$work/owned"
+owned_groups="$work/groups"
+me=$(id -u)
+T1="Mon Nov 17 10:00:00 2026"
+T2="Mon Nov 17 10:00:05 2026"
+T9="Mon Nov 17 11:00:00 2026"
+failures=0
+
+fresh() { : >"$owned"; : >"$owned_groups"; : >"$owned_groups.retired"; }
+# row PID PPID PGID START COMMAND...: one snapshot line, as ps prints it.
+row() {
+	pid=$1 ppid=$2 pgid=$3 started=$4
+	shift 4
+	echo "$pid $ppid $pgid $me Ss $started $*"
+}
+# check NAME EXPECTED: runs a scan of $work/snap and compares the owned pids.
+check() {
+	got=$(E2E_SCAN_SNAPSHOT="$work/snap" scan | tr '\n' ' ' | sed 's/ $//')
+	if [ "$got" = "$2" ]; then
+		echo "ok   $1: owned [$got]"
+	else
+		echo "FAIL $1: owned [$got], expected [$2]"
+		failures=$((failures + 1))
+	fi
+}
+
+# 1. A runner under the build products leads a group; its helper is in the group.
+fresh
+{
+	row 500 1 500 "$T1" "$derived/Build/Products/Debug/Runner"
+	row 501 500 500 "$T1" /bin/helper
+	row 900 1 900 "$T1" /usr/bin/unrelated
+} >"$work/snap"
+check "a matched leader and its group" "500 501"
+echo "     recorded groups: $(cat "$owned_groups")"
+
+# 2. The leader exits; its child, reparented to launchd, stays in the group (a child
+#    made on TERM): still owned through the group.
+{
+	row 501 1 500 "$T1" /bin/helper
+	row 502 1 500 "$T2" /bin/made-on-term
+	row 900 1 900 "$T1" /usr/bin/unrelated
+} >"$work/snap"
+check "the leader gone, its group's members kept" "501 502"
+
+# 3. The group empties: retired.
+{
+	row 900 1 900 "$T1" /usr/bin/unrelated
+} >"$work/snap"
+check "the group empty" ""
+echo "     retired: $(cat "$owned_groups.retired")"
+
+# 4. Its id is reused later by an unrelated leader with a helper: never adopted.
+{
+	row 500 1 500 "$T9" /usr/bin/someone-else
+	row 503 500 500 "$T9" /usr/bin/someone-elses-helper
+	row 900 1 900 "$T1" /usr/bin/unrelated
+} >"$work/snap"
+check "the id reused after the group emptied" ""
+
+# 5. Reuse never seen empty: the recorded group's id is held by a live process that
+#    started at another time (its own new group). Its members aren't adopted, and the
+#    group is retired.
+fresh
+echo "600 $T1" >"$owned_groups"
+{
+	row 600 1 600 "$T9" /usr/bin/someone-else
+	row 601 600 600 "$T9" /usr/bin/someone-elses-helper
+} >"$work/snap"
+check "the id held by a process of another start time" ""
+echo "     retired: $(cat "$owned_groups.retired")"
+
+# 6. A recorded pid reused by another process (another start time) is not owned; the
+#    recorded one, still there, is, and so is its new child.
+fresh
+echo "700 $T1" >"$owned"
+echo "701 $T1" >>"$owned"
+{
+	row 700 1 700 "$T9" /usr/bin/reused-pid
+	row 701 1 701 "$T1" /bin/orphan
+	row 702 701 701 "$T2" /bin/late-child
+} >"$work/snap"
+check "pid identity by start time" "701 702"
+
+# 7. The app under test, matched by its path (a literal match: the path holds [1]).
+fresh
+app='/e2e/build[1]/bundle/Tenmoku.app'
+{
+	row 800 1 800 "$T1" "$app/Contents/MacOS/tenmoku"
+	row 801 1 801 "$T1" "/e2e/build1/bundle/Tenmoku.app/Contents/MacOS/tenmoku"
+} >"$work/snap"
+check "the app by its path, taken literally" "800"
+
+if [ "$failures" -ne 0 ]; then
+	echo "scan-cases: $failures failed"
+	exit 1
+fi
+echo "scan-cases: all passed"
