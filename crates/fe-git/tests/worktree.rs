@@ -28,7 +28,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// committed, under `<tempdir>/main`, so lane worktrees can sit beside it.
 fn init() -> (tempfile::TempDir, PathBuf, Repo) {
     let dir = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(dir.path()).unwrap().join("main");
+    let root = dunce::canonicalize(dir.path()).unwrap().join("main");
     fs::create_dir(&root).unwrap();
     git(&root, &["init", "-q"]);
     git(&root, &["config", "user.name", "t"]);
