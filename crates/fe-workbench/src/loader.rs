@@ -42,6 +42,10 @@ pub enum Opened {
     /// An image file, unread: the image viewer reads and decodes it
     /// itself, off the main thread.
     Image,
+    /// A PDF ([`is_pdf`]), unread but for its first [`PDF_PROBE`] bytes:
+    /// the notice says what it is and offers the OS's viewer or the hex
+    /// viewer.
+    Pdf,
     /// A binary file ([`is_binary`]), unread but for its first
     /// [`BINARY_PROBE`] bytes: the hex viewer reads the rows it shows.
     Binary { view: Arc<FileView> },
@@ -53,6 +57,7 @@ impl std::fmt::Debug for Opened {
             Opened::Text(buffer) => write!(f, "Text({:?} bytes)", buffer.as_ref().map(Buffer::len)),
             Opened::Large { view, .. } => write!(f, "Large({})", view.path().display()),
             Opened::Image => write!(f, "Image"),
+            Opened::Pdf => write!(f, "Pdf"),
             Opened::Binary { view } => write!(f, "Binary({})", view.path().display()),
         }
     }
@@ -64,13 +69,16 @@ impl From<Buffer> for Opened {
     }
 }
 
-/// Opens `path`: an image unread, a binary file ([`is_binary`]) as a view
+/// Opens `path`: an image or a PDF unread, a binary file ([`is_binary`]) as a view
 /// for the hex viewer, whatever its size, a file of [`LARGE_FILE_BYTES`] or
 /// more as a view whose index starts building, anything else as [`read`]
 /// does.
 pub fn open(path: PathBuf) -> io::Result<Opened> {
     if is_image(&path) {
         return Ok(Opened::Image);
+    }
+    if is_pdf(&path) {
+        return Ok(Opened::Pdf);
     }
     if is_binary(&path) {
         let view = Arc::new(FileView::open(&path)?);
@@ -96,6 +104,36 @@ pub(crate) fn is_image(path: &Path) -> bool {
             .iter()
             .any(|image| ext.eq_ignore_ascii_case(image))
         })
+}
+
+/// How many bytes from a file's start [`is_pdf`] looks at for `%PDF-`
+/// (the PDF spec lets the header sit past byte 0).
+pub const PDF_PROBE: usize = 1024;
+
+/// Whether `path` is a PDF: `%PDF-` in its first [`PDF_PROBE`] bytes, or a
+/// `pdf` extension (in any case), either alone. Nothing past the probe is
+/// read, whatever the file's size. A path that isn't a file, such as a
+/// missing one a save would create, isn't.
+pub(crate) fn is_pdf(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
+        return false;
+    }
+    let by_name = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
+    if by_name {
+        return true;
+    }
+    let mut probe = Vec::with_capacity(PDF_PROBE);
+    if file.take(PDF_PROBE as u64).read_to_end(&mut probe).is_err() {
+        return false;
+    }
+    probe.windows(5).any(|window| window == b"%PDF-")
 }
 
 /// How many bytes from a file's start [`is_binary`] looks at.

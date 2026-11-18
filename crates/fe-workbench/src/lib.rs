@@ -277,6 +277,8 @@ pub fn init(cx: &mut App) {
     kiln_shell::layout::register_item::<fe_gpui::FileViewer>(cx);
     // ... and their image viewers.
     kiln_shell::layout::register_item::<fe_gpui::ImageViewer>(cx);
+    // ... and their PDF notices.
+    kiln_shell::layout::register_item::<fe_gpui::PdfNotice>(cx);
     // ... and their hex viewers.
     kiln_shell::layout::register_item::<fe_gpui::HexViewer>(cx);
     // `app.quit` and `window.close` ask the windows' editors first.

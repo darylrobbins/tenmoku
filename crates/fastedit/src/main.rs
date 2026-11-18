@@ -108,6 +108,7 @@ fn loaded(read: loader::Read, started: Instant) -> io::Result<Opened> {
             Ok(Opened::Large { view, index })
         }
         Opened::Image => Ok(Opened::Image),
+        Opened::Pdf => Ok(Opened::Pdf),
         Opened::Binary { view } => Ok(Opened::Binary { view }),
     }
 }

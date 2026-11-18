@@ -195,7 +195,7 @@ fn load_of(workbench: &crate::Workbench, path: &Path, cx: &App) -> Load {
     }
     // A file too large to edit, or a binary one (T1895), in its viewer:
     // open only once read.
-    if tab.viewer().is_some() || tab.hex_viewer().is_some() {
+    if tab.viewer().is_some() || tab.hex_viewer().is_some() || tab.pdf_notice().is_some() {
         Load::Loaded
     } else {
         Load::Failed

@@ -78,6 +78,8 @@ settings; light is Tenmoku Light with `[theme] mode = "light"`.
 | `target/ui-audit/operations_list_light.png` | Status bar: the operations list open | Tenmoku Light |
 | `target/ui-audit/hex_viewer_dark.png` | Hex viewer (T1895): a small binary file, its header strip, bytes 0x10–0x1F selected (the hex column's selection, the ASCII column's mirror) | Tenmoku Dark |
 | `target/ui-audit/hex_viewer_light.png` | Hex viewer: bytes 0x10–0x1F selected | Tenmoku Light |
+| `target/ui-audit/pdf_notice_dark.png` | PDF notice (T1955): a PDF's name, size, "This is a PDF" line and the Open in Default App / Open as Hex buttons, centred | Tenmoku Dark |
+| `target/ui-audit/pdf_notice_light.png` | PDF notice | Tenmoku Light |
 | `target/ui-audit/vscode-dark-modern.png` | Chrome scene | Dark Modern |
 | `target/ui-audit/vscode-2026-dark.png` | Chrome scene | Dark 2026 |
 | `target/ui-audit/vscode-2026-light.png` | Chrome scene | Light 2026 |

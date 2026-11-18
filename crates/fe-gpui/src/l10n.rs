@@ -11,6 +11,7 @@ kiln_l10n::resources! {
         "../l10n/en-US/hover.ftl",
         "../l10n/en-US/debug.ftl",
         "../l10n/en-US/hex.ftl",
+        "../l10n/en-US/pdf.ftl",
     ],
 }
 

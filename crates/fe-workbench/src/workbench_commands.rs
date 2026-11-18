@@ -1964,10 +1964,10 @@ impl Workbench {
     /// The active editor, large file's viewer or image viewer replaced by a
     /// hex viewer of its file. (The large file's viewer sets the `editor` key
     /// context too.)
-    #[command(id = "hex.open_as_hex", context = "editor || ImageViewer")]
+    #[command(id = "hex.open_as_hex", context = "editor || ImageViewer || PdfNotice")]
     fn open_as_hex_command(&mut self, cx: &mut Cx<Self>) {
         self.in_context(
-            verbatim!("editor || ImageViewer"),
+            verbatim!("editor || ImageViewer || PdfNotice"),
             cx,
             |this, window, cx| {
                 let pane = this.pane().clone();
@@ -1977,6 +1977,23 @@ impl Workbench {
                 }
             },
         );
+    }
+
+    /// Open in Default App
+    ///
+    /// The active PDF notice's file, opened by the OS's handler for it.
+    #[command(id = "pdf.open_in_default_app", context = "PdfNotice")]
+    fn open_pdf_in_default_app_command(&mut self, cx: &mut Cx<Self>) {
+        self.in_context(fe_gpui::PDF_NOTICE_CONTEXT, cx, |this, _, cx| {
+            let pane = this.pane().clone();
+            let path = pdf_tab(&pane, cx);
+            if let Some(path) = path {
+                match cx.try_global::<OpenSeam>().copied() {
+                    Some(OpenSeam(open)) => open(&path, cx),
+                    None => cx.open_with_system(&path),
+                }
+            }
+        });
     }
 
     /// Open as Text
@@ -2382,10 +2399,33 @@ fn hex_tab(
     let tab = pane.tabs().get(pane.active()?)?;
     let shown = match hex {
         true => tab.hex_viewer().is_some(),
-        false => tab.editor().is_some() || tab.viewer().is_some() || tab.image_viewer().is_some(),
+        false => {
+            tab.editor().is_some()
+                || tab.viewer().is_some()
+                || tab.image_viewer().is_some()
+                || tab.pdf_notice().is_some()
+        }
     };
     shown.then(|| tab.path.clone()).flatten()
 }
+
+/// The path of `pane`'s active tab if it's a PDF notice:
+/// `pdf.open_in_default_app` does nothing on any other tab.
+fn pdf_tab(pane: &gpui::Entity<crate::Pane>, cx: &gpui::App) -> Option<std::path::PathBuf> {
+    let pane = pane.read(cx);
+    let tab = pane.tabs().get(pane.active()?)?;
+    tab.pdf_notice()
+        .is_some()
+        .then(|| tab.path.clone())
+        .flatten()
+}
+
+/// What opens a path in the OS's handler for it, if not GPUI's: set by
+/// tests, which record the path instead of launching anything.
+#[derive(Clone, Copy)]
+pub(crate) struct OpenSeam(pub(crate) fn(&std::path::Path, &mut gpui::App));
+
+impl gpui::Global for OpenSeam {}
 
 /// The path of `pane`'s active tab if it's an SVG's viewer (`viewer`) or
 /// an SVG's editor: `image.open_as_text` and `image.open_as_image` do

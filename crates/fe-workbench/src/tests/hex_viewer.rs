@@ -456,7 +456,11 @@ fn hex_commands_are_cataloged_in_their_contexts(cx: &mut TestAppContext) {
             .collect()
     });
     for (id, title, context) in [
-        ("hex.open_as_hex", "Open as Hex", "editor || ImageViewer"),
+        (
+            "hex.open_as_hex",
+            "Open as Hex",
+            "editor || ImageViewer || PdfNotice",
+        ),
         ("hex.open_as_text", "Open as Text", "HexViewer"),
     ] {
         let found = typed.iter().find(|(typed, ..)| typed == id);

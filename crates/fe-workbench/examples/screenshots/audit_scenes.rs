@@ -60,6 +60,8 @@ mod hover;
 mod inbox;
 #[path = "audit/operations.rs"]
 mod operations;
+#[path = "audit/pdf_notice.rs"]
+mod pdf_notice;
 #[path = "audit/problems.rs"]
 mod problems;
 #[path = "audit/problems_detail.rs"]
@@ -152,6 +154,7 @@ const SURFACES: &[&Surface] = &[
     &debug_console::SURFACE,
     &debug_hover::SURFACE,
     &hex_viewer::SURFACE,
+    &pdf_notice::SURFACE,
     &editor_menu::STARTING,
     &editor_menu::CONTEXT,
 ];

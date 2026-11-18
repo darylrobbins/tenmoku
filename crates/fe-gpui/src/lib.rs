@@ -37,6 +37,7 @@ mod link_ranges;
 mod memory;
 pub mod menu;
 pub mod pane_item;
+mod pdf_notice;
 mod server_folds;
 pub mod signature_help;
 mod theme;
@@ -78,6 +79,9 @@ pub use image_viewer::{
 pub use inlay_hints::{InlayHint, InlayHintFuture, InlayHintHost, InlayHintKind};
 pub use lens::{Lens, LensItem, LensProvider};
 pub use memory::EditorMemory;
+pub use pdf_notice::{
+    KEY_CONTEXT as PDF_NOTICE_CONTEXT, OPEN_IN_DEFAULT_APP as PDF_OPEN_IN_DEFAULT_APP, PdfNotice,
+};
 
 pub use fe_display::minimap::MinimapOptions;
 pub use fe_vim::search::set_time_limit as set_vim_time_limit;

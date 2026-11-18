@@ -538,6 +538,7 @@ impl Workbench {
                 ),
                 Some((_, Some(Opened::Large { view, index }))) => pane.add_viewer(view, index, cx),
                 Some((path, Some(Opened::Image))) => pane.add_image_viewer(path, cx),
+                Some((path, Some(Opened::Pdf))) => pane.add_pdf_notice(path, cx),
                 Some((_, Some(Opened::Binary { view }))) => pane.add_hex_viewer(view, cx),
                 Some((path, None)) => pane.opening(path, cx),
             }

@@ -154,6 +154,7 @@ command-image-open_as_image = Open as Image
 command-image-open_as_text = Open as Text
 command-hex-open_as_hex = Open as Hex
 command-hex-open_as_text = Open as Text
+command-pdf-open_in_default_app = Open in Default App
 
 command-inline_edit-cancel = Cancel Inline Edit
 command-inline_edit-submit = Send Inline Edit

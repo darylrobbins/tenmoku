@@ -22,7 +22,7 @@ use fe_editor::{EditorModel, IndentStyle};
 use fe_fileview::{FileView, Freshness, LineIndex};
 use fe_gpui::{
     DiffView, EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, HexViewer,
-    HexViewerEvent, ImageViewer, SettingsEvent, commands::RunCommand,
+    HexViewerEvent, ImageViewer, PdfNotice, SettingsEvent, commands::RunCommand,
 };
 use fe_keymap::{KeyOutcome, Keymap, Matcher};
 use fe_ui::{
@@ -110,6 +110,11 @@ impl Tab {
 
     /// The tab's image viewer, if it shows an image file.
     pub fn image_viewer(&self) -> Option<&Entity<ImageViewer>> {
+        self.item.downcast_ref()
+    }
+
+    /// The tab's notice, if it says its file is a PDF.
+    pub fn pdf_notice(&self) -> Option<&Entity<PdfNotice>> {
         self.item.downcast_ref()
     }
 
@@ -644,6 +649,13 @@ impl Pane {
         self.add_item(Box::new(viewer), cx);
     }
 
+    /// Opens a notice that `path` is a PDF in a new tab and shows it,
+    /// without focusing it.
+    pub(crate) fn add_pdf_notice(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let notice = self.new_pdf_notice(path, cx);
+        self.add_item(Box::new(notice), cx);
+    }
+
     /// Opens `item`, an editor or a viewer, in a new tab and shows it,
     /// without focusing it.
     pub(crate) fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut Context<Self>) {
@@ -1140,7 +1152,7 @@ impl Pane {
     }
 
     /// Replaces the active tab of `path`, an editor, a large file's viewer
-    /// or an image viewer, with a hex viewer of the file, in place. An
+    /// an image viewer or a PDF notice, with a hex viewer of the file, in place. An
     /// editor with unsaved changes stays, with a toast saying why. For
     /// `hex.open_as_hex`; ordinary opens go by [`loader::is_binary`].
     pub fn open_as_hex(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
@@ -1152,7 +1164,11 @@ impl Pane {
             cx.notify();
         }
         let tab = &self.tabs[ix];
-        if tab.editor().is_none() && tab.viewer().is_none() && tab.image_viewer().is_none() {
+        if tab.editor().is_none()
+            && tab.viewer().is_none()
+            && tab.image_viewer().is_none()
+            && tab.pdf_notice().is_none()
+        {
             return;
         }
         if tab.item().is_dirty(cx) {
@@ -1527,6 +1543,7 @@ impl Pane {
                         }
                         Opened::Large { view, index } => Box::new(self.new_viewer(view, index, cx)),
                         Opened::Image => Box::new(self.new_image_viewer(path.clone(), cx)),
+                        Opened::Pdf => Box::new(self.new_pdf_notice(path.clone(), cx)),
                         Opened::Binary { view } => Box::new(self.new_hex_viewer(view, cx)),
                     };
                     if preview {
@@ -2144,6 +2161,12 @@ impl Pane {
     fn new_hex_viewer(&mut self, view: Arc<FileView>, cx: &mut Context<Self>) -> Entity<HexViewer> {
         let theme = self.theme.clone();
         cx.new(|cx| HexViewer::new(view, theme, cx))
+    }
+
+    /// A notice that `path` is a PDF.
+    fn new_pdf_notice(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Entity<PdfNotice> {
+        let theme = self.theme.clone();
+        cx.new(|cx| PdfNotice::new(path, theme, cx))
     }
 
     /// A viewer of the image file `path`, which decodes it off the main
