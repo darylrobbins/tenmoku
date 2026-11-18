@@ -49,7 +49,10 @@ fixture folder and settings file named exists, or the script stops before buildi
 A set is `<scratch>/<test>/<iteration>/`: `project/` copied from
 `tools/e2e-macos/fixtures/<fixture>/project/`, `config/` with the declared
 `settings/<name>.toml` as `settings.toml`, `state/` with `setup.toml`
-(`outcome = "skipped"`) unless the entry says `fresh: true`, and `home/`. Each test checks
+(`outcome = "skipped"`) and `whats_new.toml` (`seen = "<workspace version>"`, so the What's
+New tab T1946 added stays away; the seed came with main's T1946 change and is kept here)
+unless the entry says `fresh: true`, and `home/`. A fresh state is a new install, for
+which the app records What's New as seen itself. Each test checks
 its set against the fixture byte for byte before it launches, so a reused or stale set
 fails at once. `--fixture <name>` runs the tests that declare `<name>` (with `--only`,
 that test must), and `--only` takes only declared names. The fixtures folder has a

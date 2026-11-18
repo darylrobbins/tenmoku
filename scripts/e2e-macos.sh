@@ -29,7 +29,8 @@ Each test declares its fixture in tools/e2e-macos/TenmokuE2E/Fixtures.swift: a f
 under tools/e2e-macos/fixtures/ whose project/ becomes the scratch project, optionally
 one of its settings/<name>.toml as the scratch config's settings.toml, and whether the
 state folder starts empty (a first launch) or with a setup.toml that keeps the setup
-wizard away. The runner is sandboxed (it may write only this run's scratch folder, and
+wizard away and a whats_new.toml (the bundle's version seen) that keeps the What's New
+tab away. The runner is sandboxed (it may write only this run's scratch folder, and
 nothing in the repo), so this script makes every set before the run, one per test and
 iteration.
 
@@ -622,8 +623,15 @@ run "$root/scripts/bundle-macos.sh" --sign-only "$app"
 # Xcode 27's test runner is sandboxed and can't write here, so the scratch sets are made
 # now: <scratch>/<test>/<iteration>/, each a copy of the test's fixture project, a config
 # folder (with the declared settings.toml, if any), a state folder (holding a setup.toml
-# that keeps the setup wizard away, unless the test declares a fresh state) and a home
-# for the app's log.
+# that keeps the setup wizard away and a whats_new.toml, the bundle's version seen, that
+# keeps the What's New tab away, unless the test declares a fresh state: a new install,
+# which records What's New as seen itself) and a home for the app's log.
+# The bundle's version: bundle-macos.sh's default, the [workspace.package] one.
+version=$(awk '
+	/^\[/ { in_pkg = ($0 == "[workspace.package]") }
+	in_pkg && /^version[ \t]*=/ { gsub(/.*=[ \t]*"|".*/, ""); print; exit }
+' "$root/Cargo.toml")
+[ -n "$version" ] || die "no [workspace.package] version in $root/Cargo.toml"
 run mkdir -p "$results"
 last=$(printf '%03d' "$iterations")
 echo "# fixtures: $tests test(s) x $iterations iteration(s), one scratch set each"
@@ -636,9 +644,10 @@ printf '%s\n' "$selected" | while read -r name fixture_name settings fresh; do
 		echo "+ $name:   cp $(quote "$fixtures/$fixture_name/settings/$settings.toml") $sets/config/settings.toml"
 	fi
 	if [ "$fresh" = true ]; then
-		echo "+ $name:   (fresh state: no setup.toml, an empty state folder)"
+		echo "+ $name:   (fresh state: no setup.toml or whats_new.toml, an empty state folder)"
 	else
-		echo "+ $name:   echo 'outcome = \"skipped\"' >$sets/state/setup.toml"
+		echo "+ $name:   echo 'outcome = \"skipped\"' >$sets/state/setup.toml;" \
+			"echo 'seen = \"$version\"' >$sets/state/whats_new.toml"
 	fi
 	if [ -z "$dry" ]; then
 		n=1
@@ -651,6 +660,7 @@ printf '%s\n' "$selected" | while read -r name fixture_name settings fresh; do
 			fi
 			if [ "$fresh" != true ]; then
 				echo 'outcome = "skipped"' >"$set_dir/state/setup.toml"
+				echo "seen = \"$version\"" >"$set_dir/state/whats_new.toml"
 			fi
 			n=$((n + 1))
 		done

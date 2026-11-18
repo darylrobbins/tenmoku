@@ -11,8 +11,10 @@
 // the run (the sandboxed runner may write only this run's scratch folder): <E2E_SCRATCH>/<test>/<iteration>/ holds
 //   project/   a copy of tools/e2e-macos/fixtures/<folder>/project/
 //   config/    empty, or with settings.toml copied from <folder>/settings/<name>.toml
-//   state/     with setup.toml (`outcome = "skipped"`, so no setup wizard), or empty
-//              when the entry says `fresh: true` (a first launch: the wizard shows)
+//   state/     with setup.toml (`outcome = "skipped"`, so no setup wizard) and
+//              whats_new.toml (`seen = "<the bundle's version>"`, so no What's New tab),
+//              or empty when the entry says `fresh: true` (a first launch: the wizard
+//              shows, and the app records What's New as seen itself)
 //   home/      the app's HOME, so its log lands in the set
 
 struct Fixture {
