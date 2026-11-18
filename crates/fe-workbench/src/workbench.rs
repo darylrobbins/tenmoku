@@ -130,6 +130,11 @@ fn resolved_parents(path: &Path) -> Option<PathBuf> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootChanged(pub PathBuf);
 
+/// The workbench's folder was closed, by [`Workbench::close_folder`]: it
+/// has no root now, for whatever follows the root to let it go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootClosed;
+
 pub(crate) use crate::dock::TERMINAL_BUTTON;
 
 pub struct Workbench {
@@ -387,6 +392,7 @@ pub struct Workbench {
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
+impl EventEmitter<RootClosed> for Workbench {}
 impl EventEmitter<TrustChanged> for Workbench {}
 
 /// A hook the app installs to run once after each frame the window draws:

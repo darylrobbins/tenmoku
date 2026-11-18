@@ -180,6 +180,7 @@ File
     workbench.close_tab = Close Tab
     workbench.reopen_closed_editor = Reopen Closed Editor
     pane.close = Close Pane
+    workbench.close_folder = Close Folder
     window.close = Close Window
 Edit
     editor.undo = Undo
@@ -302,6 +303,7 @@ File
     workbench.close_tab = Close Tab
     workbench.reopen_closed_editor = Reopen Closed Editor
     pane.close = Close Pane
+    workbench.close_folder = Close Folder
     window.close = Close Window
     app.quit = Quit
 Edit

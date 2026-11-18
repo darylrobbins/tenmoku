@@ -2000,6 +2000,16 @@ impl Workbench {
         self.open_command(OpenOp::Folder, cx);
     }
 
+    /// Close Folder
+    ///
+    /// Closes every tab, asking about unsaved ones as Close All Editors
+    /// does, then leaves the window with no folder. Nothing with none open.
+    #[command(id = "workbench.close_folder")]
+    fn close_folder_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.close_folder(cx.window, cx.cx);
+    }
+
     /// Open File…
     #[command(id = "workbench.open_file")]
     fn open_file(&mut self, cx: &mut Cx<Self>) {

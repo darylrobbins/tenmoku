@@ -246,10 +246,11 @@ impl Nav {
         self.index.as_ref().map(|index| read(index).progress())
     }
 
-    /// Navigates in `root` from now on: the old root's build stops and its
-    /// search provider goes, a new one being built on the next nav command.
-    /// Requests in flight are cancelled; the history stays.
-    pub(crate) fn set_root(&mut self, root: PathBuf, cx: &mut Context<Workbench>) {
+    /// Navigates in `root` from now on, or in none: the old root's build
+    /// stops and its search provider goes, a new one being built on the next
+    /// nav command if there's a root. Requests in flight are cancelled; the
+    /// history stays.
+    pub(crate) fn set_root(&mut self, root: Option<PathBuf>, cx: &mut Context<Workbench>) {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::default();
         self.navigation.remove(SearchNavigation::NAME);
@@ -260,7 +261,7 @@ impl Nav {
         self.held.clear();
         self.applying = None;
         self.goto.next();
-        self.root = Some(root);
+        self.root = root;
         self.symbols.update(cx, |picker, cx| {
             picker.delegate.reset();
             cx.notify();

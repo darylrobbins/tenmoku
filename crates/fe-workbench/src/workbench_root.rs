@@ -11,7 +11,8 @@ use fe_config::settings::IconTheme;
 use fe_gpui::SettingsEvent;
 use gpui::{App, AppContext as _, Context, Entity, Focusable, Subscription, Window};
 
-use super::{Palette, RootChanged, Workbench, git_blame, recent_picker};
+use super::workbench_chrome::terminal_dir;
+use super::{Launch, Palette, RootChanged, RootClosed, Workbench, git_blame, recent_picker};
 use crate::{
     GitPanel, GitPanelEvent, ProjectPanel, git::GitState, project_panel::PanelEvent, title_bar,
 };
@@ -145,6 +146,32 @@ impl Workbench {
     /// tab on it follows its edits; the service still loads only the launch
     /// root's.
     pub fn set_root(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.re_root(Some(root.clone()), window, cx);
+        recent_picker::record(root.clone(), true, cx);
+        cx.emit(RootChanged(root));
+        cx.notify();
+    }
+
+    /// Leaves the workbench with no root, as [`Self::set_root`] re-roots
+    /// it, once its tabs are closed (File > Close Folder): the project
+    /// panel shows no folder, quick open, search and navigation have
+    /// nothing to look in, the git state and the root's settings watch go,
+    /// and the next launch reopens the window with no folder. A new
+    /// terminal session starts in the home folder; one running stays. The
+    /// folder stays in Open Recent. Emits [`RootClosed`], which stops the
+    /// root's language servers.
+    pub(crate) fn close_root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.root.is_none() {
+            return;
+        }
+        self.re_root(None, window, cx);
+        cx.emit(RootClosed);
+        cx.notify();
+    }
+
+    /// What [`Self::set_root`] and [`Self::close_root`] share: everything
+    /// the root reaches follows `root`, or none.
+    fn re_root(&mut self, root: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(
             self.palette,
             Some(Palette::Toolbar | Palette::Definitions | Palette::Symbols)
@@ -166,15 +193,20 @@ impl Workbench {
         let changes_focused =
             (self.dock.read(cx).changes().focus_handle(cx)).contains_focused(window, cx);
         let show_ignored = self.panel.read(cx).lists_ignored();
-        let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), show_ignored, cx));
-        let changes = cx.new(|cx| GitPanel::new(Some(root.clone()), cx));
-        let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), cx);
-        // The next session starts in the new root; one running stays.
-        (self.terminal).update(cx, |terminal, _| terminal.set_cwd(root.clone()));
+        let panel = cx.new(|cx| ProjectPanel::new(root.clone(), show_ignored, cx));
+        let changes = cx.new(|cx| GitPanel::new(root.clone(), cx));
+        let quick_open = Self::new_quick_open(root.clone(), self.active.downgrade(), cx);
+        // The next session starts in the new root, or with none at home;
+        // one running stays.
+        let cwd = terminal_dir(&Launch {
+            root: root.clone(),
+            file: None,
+        });
+        (self.terminal).update(cx, |terminal, _| terminal.set_cwd(cwd));
         self.root_subscription = Self::follow_root(&panel, window, cx);
         self.changes_subscription = Self::follow_changes(&changes, window, cx);
         self.git.update(cx, |git, _| git.close());
-        self.git = Self::new_git(Some(root.clone()), &changes, cx);
+        self.git = Self::new_git(root.clone(), &changes, cx);
         let search = self.dock.update(cx, |dock, cx| {
             dock.set_project(panel.clone(), cx);
             dock.set_changes(changes.clone(), cx);
@@ -194,24 +226,28 @@ impl Workbench {
         }
         // So the new tree reveals the active file, if it's under the root.
         self.revealed = None;
-        self.root = Some(root.clone());
-        // Its saved layout names the new root, for the next launch.
-        *self.layout_keys.root.borrow_mut() = Some(root.clone());
+        self.root = root.clone();
+        // Its saved layout names the new root, or none, for the next launch.
+        *self.layout_keys.root.borrow_mut() = root.clone();
         self.layout_keys_changed(cx);
-        self.root_settings = Self::watch_root_settings(Some(&root), cx);
+        self.root_settings = Self::watch_root_settings(root.as_deref(), cx);
         for pane in self.panes(cx) {
-            let root = Some(root.clone());
+            let root = root.clone();
             pane.update(cx, |pane, cx| {
                 pane.update_toolbar(|toolbar| toolbar.root = root, cx)
             });
         }
-        self.resolve_trust(Some(root.clone()), true, window, cx);
+        self.resolve_trust(root.clone(), true, window, cx);
         self.track_editors(cx);
-        recent_picker::record(root.clone(), true, cx);
-        let name = title_bar::name(Some(&root));
+        let name = title_bar::name(root.as_deref());
         self.shell.update(cx, |shell, cx| shell.set_title(name, cx));
-        cx.emit(RootChanged(root));
-        cx.notify();
+    }
+
+    /// Whether the config service watches a root's settings file for this
+    /// window.
+    #[cfg(test)]
+    pub(crate) fn watches_root_settings(&self) -> bool {
+        self.root_settings.is_some()
     }
 
     /// The folder the workbench is rooted at, if any.

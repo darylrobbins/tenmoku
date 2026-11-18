@@ -143,7 +143,7 @@ use crate::diagnostic_owner::{DiagnosticIdentity, DiagnosticOwner};
 use crate::lsp_consent::ConsentGate;
 use crate::open::settings_path;
 use crate::workbench::toast::{self, Toast};
-use crate::{RootChanged, TrustChanged, Workbench};
+use crate::{RootChanged, RootClosed, TrustChanged, Workbench};
 use kiln_l10n::{tr, verbatim};
 use kiln_shell::{Icon, StatusSide, StatusTone};
 
@@ -1067,6 +1067,11 @@ impl Workbench {
             workbench.new_lsp_manager(cx);
             cx.notify();
         });
+        // The root's servers shut down; the new manager has no root.
+        let closed_root = cx.subscribe_self(|workbench, _: &RootClosed, cx| {
+            workbench.new_lsp_manager(cx);
+            cx.notify();
+        });
         // The window's gone, or the workbench: its servers shut down, and
         // quitting waits for them.
         let ours = window.window_handle().window_id();
@@ -1091,7 +1096,7 @@ impl Workbench {
         self.lsp._tasks.push(applied);
         self.lsp
             ._subscriptions
-            .extend([trust, decisions, root, closed, released]);
+            .extend([trust, decisions, root, closed_root, closed, released]);
         self.new_lsp_manager(cx);
     }
 

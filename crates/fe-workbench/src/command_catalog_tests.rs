@@ -391,6 +391,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "workbench.change_line_ending",
     "workbench.clear_recent",
     "workbench.close_all_editors",
+    "workbench.close_folder",
     "workbench.close_group_editors",
     "workbench.close_other_tabs",
     "workbench.close_saved",

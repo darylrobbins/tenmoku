@@ -37,6 +37,7 @@ keymap-menu-compare-active-file-with = Compare Active File With…
 keymap-menu-close-tab = Close Tab
 keymap-menu-reopen-closed-editor = Reopen Closed Editor
 keymap-menu-close-pane = Close Pane
+keymap-menu-close-folder = Close Folder
 keymap-menu-close-window = Close Window
 keymap-menu-quit = Quit
 

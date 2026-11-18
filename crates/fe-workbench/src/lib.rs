@@ -214,7 +214,8 @@ pub use terminal_panel::TerminalPanel;
 pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
 pub use trust::{TrustChanged, set_trust_file};
 pub use workbench::{
-    AfterFrame, AfterFrameHook, Launch, RootChanged, Workbench, resolve_launch, window_layouts,
+    AfterFrame, AfterFrameHook, Launch, RootChanged, RootClosed, Workbench, resolve_launch,
+    window_layouts,
 };
 
 use chat_panel::ChatPanel;

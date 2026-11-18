@@ -62,6 +62,7 @@ mod build_timeline_view;
 mod caret_keys_hosts;
 mod caret_keys_lines;
 mod changes_b3;
+mod close_folder;
 mod coloured_icon_surfaces;
 mod commit_diff_b3;
 mod completion_as_you_type;

@@ -384,6 +384,7 @@ command-workbench-change_encoding = Change File Encoding
 command-workbench-change_line_ending = Change End of Line Sequence…
 command-workbench-clear_recent = Clear Recently Opened
 command-workbench-close_all_editors = Close All Editors
+command-workbench-close_folder = Close Folder
 command-workbench-close_group_editors = Close Editors in Group
 command-workbench-close_other_tabs = Close Other Tabs
 command-workbench-close_saved = Close Saved Editors

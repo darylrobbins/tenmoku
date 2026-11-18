@@ -312,6 +312,7 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("lsp.format_document", "Format Document", "editor"),
     ("lsp.format_selection", "Format Selection", "editor"),
     ("workbench.open_folder", "Open Folder…", "workbench"),
+    ("workbench.close_folder", "Close Folder", "workbench"),
     ("workbench.open_file", "Open File…", "workbench"),
     (
         "workbench.open_settings",

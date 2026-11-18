@@ -1327,8 +1327,15 @@ impl LayoutKeys {
         if let Some(bounds) = self.bounds.get() {
             keys.push(("bounds", layout::save_bounds(bounds)));
         }
-        if let Some(root) = self.root.borrow().as_deref().and_then(|root| root.to_str()) {
-            keys.push(("root", Value::from(root)));
+        // A window with no root says so, else it would reopen on its
+        // store's root (`entry_root`): its launch folder, after Close Folder.
+        match self.root.borrow().as_deref() {
+            Some(root) => {
+                if let Some(root) = root.to_str() {
+                    keys.push(("root", Value::from(root)));
+                }
+            }
+            None => keys.push(("root", Value::from(""))),
         }
         let run_tasks = self.run_tasks.borrow();
         if !run_tasks.is_empty() {

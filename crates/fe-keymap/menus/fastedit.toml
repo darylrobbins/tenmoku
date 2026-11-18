@@ -185,6 +185,10 @@ title_key = "keymap-menu-close-pane"
 command = "pane.close"
 
 [[menus.items]]
+title_key = "keymap-menu-close-folder"
+command = "workbench.close_folder"
+
+[[menus.items]]
 title_key = "keymap-menu-close-window"
 command = "window.close"
 
