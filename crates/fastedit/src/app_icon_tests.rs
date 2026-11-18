@@ -2,6 +2,11 @@ use std::path::{Path, PathBuf};
 
 use crate::app_icon::should_set_icon;
 
+// Move to New Window's destination test (T1930 F4) rides this base-declared
+// module, so a test-only overlay at base discovers and compiles it.
+#[path = "move_to_window_tests.rs"]
+mod move_to_window_tests;
+
 /// A scratch `<root>/<app>/Contents/{MacOS,Resources}` tree; returns the exe path.
 fn layout(name: &str, app: &str, plist: Option<&str>, icns: bool) -> PathBuf {
     let root = std::env::temp_dir().join(format!("tenmoku-app-icon-{name}-{}", std::process::id()));
