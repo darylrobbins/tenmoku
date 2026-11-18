@@ -2194,7 +2194,8 @@ impl GitLogPanel {
                 let workbench = self.workbench.clone();
                 window.defer(cx, move |window, cx| {
                     (workbench.update(cx, |workbench, cx| {
-                        workbench.hide_bottom_panel(cx);
+                        let panel = kiln_shell::PanelId(crate::dock::GIT_LOG_BUTTON);
+                        workbench.hide_bottom_tool(panel, window, cx);
                         window.focus(&workbench.focus_handle(cx), cx);
                     }))
                     .ok();

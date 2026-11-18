@@ -202,6 +202,7 @@ mod title_bar_b3;
 mod toast_b3;
 mod toast_overflow;
 mod tool_window_placement;
+mod tool_window_placement_followups;
 mod toolbar_history;
 mod trash_isolation;
 mod tree_keys;

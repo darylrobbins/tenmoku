@@ -303,6 +303,10 @@ impl Workbench {
         if !move_between(docks, panel, to, at, cx) {
             return false;
         }
+        // Where focus came from isn't where it goes back to: the tool
+        // window is in the other dock, and its focus-out no longer ends it.
+        self.bottom_from_sidebar = false;
+        self.bottom_watch = None;
         self.show_bottom_panel(panel, window, cx);
         if let Some(focus) = self.bottom_tool_focus(panel, cx) {
             window.focus(&focus, cx);
@@ -560,6 +564,7 @@ impl Workbench {
     }
 
     /// Hides the bottom dock. Focus in it stays: the caller moves it.
+    #[cfg(test)]
     pub(crate) fn hide_bottom_panel(&mut self, cx: &mut Context<Self>) {
         self.terminal_dock.update(cx, |dock, cx| {
             dock.dock_mut().set_visible(false);
@@ -1523,6 +1528,9 @@ impl LayoutKeys {
     /// `workbench.rail` put it: the terminal's dock gives way if it was
     /// saved there ([`dock_layout::displaced`]).
     pub(super) fn restore(&self, entry: &Value, cx: &mut App) {
+        // An earlier layout's groups don't apply to this one's tool windows.
+        self.sidebar
+            .update(cx, |dock, _| dock.keep_pending_groups(None));
         // The tool windows' places first, so the docks' state finds them:
         // without, each in its default place.
         let saved = entry.get("placements").and_then(Value::as_object);
@@ -1576,6 +1584,25 @@ impl LayoutKeys {
                     dock.dock_mut().restore(&restored, cx);
                     cx.notify();
                 });
+                // A tool window made on first use, placed there, joins its
+                // group when it's made.
+                let waiting = (crate::dock::LAZY_TOOLS.iter()).any(|panel| {
+                    let panel = panel.id();
+                    self.sidebar.read(cx).place_of(panel) == Place::Bottom
+                        && !self.terminal.read(cx).dock().panel_ids().contains(&panel)
+                });
+                let pending = waiting.then(|| crate::dock::PendingGroups {
+                    saved: Value::from_iter([("groups", restored["groups"].clone())]),
+                    left: self
+                        .terminal
+                        .read(cx)
+                        .dock()
+                        .save(cx)
+                        .get("groups")
+                        .cloned(),
+                });
+                self.sidebar
+                    .update(cx, |dock, _| dock.keep_pending_groups(pending));
                 bottom = None;
             }
         }
@@ -1647,7 +1674,35 @@ fn move_between(
         }),
     }
     sidebar.update(cx, |dock, cx| dock.set_place(panel, to, cx));
+    if to == Place::Bottom && at.is_none() {
+        rejoin_saved_group((sidebar, bottom), cx);
+    }
     true
+}
+
+/// A tool window made on first use has come to the bottom dock: puts the
+/// groups as a restore saved them ([`crate::dock::PendingGroups`]) back
+/// for it, unless they've been changed since, the saved layout is done
+/// with once every such tool window has come.
+fn rejoin_saved_group((sidebar, bottom): (&Entity<Dock>, &Entity<kiln_shell::Dock>), cx: &mut App) {
+    let Some(pending) = sidebar.read(cx).pending_groups().cloned() else {
+        return;
+    };
+    let groups = |dock: &kiln_shell::Dock, cx: &App| dock.dock().save(cx).get("groups").cloned();
+    if groups(bottom.read(cx), cx) == pending.left {
+        bottom.update(cx, |dock, cx| {
+            dock.dock_mut().restore(&pending.saved, cx);
+            cx.notify();
+        });
+    }
+    let left = groups(bottom.read(cx), cx);
+    let here = bottom.read(cx).dock().panel_ids();
+    let waiting = crate::dock::LAZY_TOOLS.iter().any(|panel| {
+        let panel = panel.id();
+        sidebar.read(cx).place_of(panel) == Place::Bottom && !here.contains(&panel)
+    });
+    let pending = waiting.then_some(crate::dock::PendingGroups { left, ..pending });
+    sidebar.update(cx, |dock, _| dock.keep_pending_groups(pending));
 }
 
 /// Puts `panel` in the bottom dock: a bottom tool window in its place among

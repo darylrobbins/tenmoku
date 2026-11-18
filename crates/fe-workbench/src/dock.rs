@@ -670,6 +670,10 @@ pub struct Dock {
     debug_stopped: bool,
     /// The tool windows moved from their default dock ([`Place`]).
     placements: HashMap<PanelId, Place>,
+    /// The bottom panel's saved groups, kept while a tool window made on
+    /// first use, saved placed there, hasn't been: it joins them when it is
+    /// ([`Dock::pending_groups`]).
+    pending_groups: Option<PendingGroups>,
     /// The rail foot's actions, as last put there ([`Dock::sync_foot`]),
     /// and the bottom panel's tool windows shown, which light theirs.
     foot: Vec<&'static str>,
@@ -686,6 +690,23 @@ pub struct Dock {
     /// Its text in a new language ([`Dock::follow_locale`]).
     _locale: Subscription,
 }
+
+/// The bottom panel's groups as a restore saved them, and as that left
+/// them: a tool window made after, placed there, rejoins its saved group
+/// only while the groups are still as the restore left them.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingGroups {
+    pub(crate) saved: fe_command::Value,
+    pub(crate) left: Option<fe_command::Value>,
+}
+
+/// The tool windows made on first use.
+pub(crate) const LAZY_TOOLS: [DockPanel; 4] = [
+    DockPanel::History,
+    DockPanel::CallHierarchy,
+    DockPanel::Quickfix,
+    DockPanel::AiChanges,
+];
 
 /// The Explorer: `project`'s tree, its lead, over `outline`, collapsed at
 /// first, its header showing `caret_symbol`.
@@ -828,6 +849,7 @@ impl Dock {
             debug_joined: false,
             debug_stopped: false,
             placements: HashMap::new(),
+            pending_groups: None,
             foot: Vec::new(),
             bottom_shown: Vec::new(),
             #[cfg(test)]
@@ -997,6 +1019,17 @@ impl Dock {
         moved
     }
 
+    /// Keeps the bottom panel's saved `groups`, as `restored` has them, for
+    /// the tool windows made on first use that they place there.
+    pub(crate) fn keep_pending_groups(&mut self, groups: Option<PendingGroups>) {
+        self.pending_groups = groups;
+    }
+
+    /// The saved groups kept for tool windows not made yet.
+    pub(crate) fn pending_groups(&self) -> Option<&PendingGroups> {
+        self.pending_groups.as_ref()
+    }
+
     /// Notes that the tool window `panel` is placed `at`, its foot button
     /// following: the workbench moves it ([`Dock::take`], [`Dock::insert`]).
     pub(crate) fn set_place(&mut self, panel: PanelId, at: Place, cx: &mut Context<Self>) {
@@ -1091,17 +1124,31 @@ impl Dock {
     /// The title of the sidebar's panel `panel`, as its header has it, if
     /// it has been made.
     fn panel_title(&self, panel: DockPanel, cx: &App) -> Option<SharedString> {
+        // A panel made on first use, restored in the bottom panel before
+        // it has been, has the title it starts with.
         Some(match panel {
             DockPanel::Explorer => DockItem::title(self.explorer.read(cx), cx),
             DockPanel::Search => DockItem::title(self.search.read(cx), cx),
             DockPanel::SourceControl => DockItem::title(self.source_control.read(cx), cx),
             DockPanel::Agents => DockItem::title(self.agents.read(cx), cx),
             DockPanel::References => DockItem::title(self.references.read(cx), cx),
-            DockPanel::History => DockItem::title(self.history.as_ref()?.read(cx), cx),
+            DockPanel::History => match self.history.as_ref() {
+                Some(history) => DockItem::title(history.read(cx), cx),
+                None => tr!("workbench-git-log-history-title"),
+            },
             DockPanel::Chat => DockItem::title(self.chat.as_ref()?.read(cx), cx),
-            DockPanel::CallHierarchy => DockItem::title(self.hierarchy.as_ref()?.read(cx), cx),
-            DockPanel::Quickfix => DockItem::title(self.quickfix.as_ref()?.read(cx), cx),
-            DockPanel::AiChanges => DockItem::title(self.ai_changes.as_ref()?.read(cx), cx),
+            DockPanel::CallHierarchy => match self.hierarchy.as_ref() {
+                Some(hierarchy) => DockItem::title(hierarchy.read(cx), cx),
+                None => tr!("workbench-lsp-hierarchy-calls"),
+            },
+            DockPanel::Quickfix => match self.quickfix.as_ref() {
+                Some(quickfix) => DockItem::title(quickfix.read(cx), cx),
+                None => tr!("workbench-lsp-quickfix-quickfix-list"),
+            },
+            DockPanel::AiChanges => match self.ai_changes.as_ref() {
+                Some(panel) => DockItem::title(panel.read(cx), cx),
+                None => tr!("workbench-dock-ai-changes-title"),
+            },
             _ => return None,
         })
     }
@@ -1542,6 +1589,9 @@ impl Render for Dock {
             self.menu_side = side;
             self.state.set_menu(dock_menu(side));
         }
+        // The foot's titles are read as drawn: a panel's can change, as
+        // History's with its file, or a locale's switch, without a sync.
+        self.sync_foot(cx);
         self.state.render(cx)
     }
 }

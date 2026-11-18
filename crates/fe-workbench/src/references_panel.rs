@@ -699,11 +699,9 @@ impl Workbench {
     pub(crate) fn find_references(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A go-to-definition still running would take focus from the panel.
         self.nav_state.goto.next();
-        let dock = self.dock().clone();
-        let panel = dock.update(cx, |dock, cx| {
-            dock.show(DockPanel::References, window, cx);
-            dock.references().clone()
-        });
+        // In whichever dock holds it, as moved.
+        self.show_bottom_panel(DockPanel::References.id(), window, cx);
+        let panel = self.dock().read(cx).references().clone();
         window.focus(&panel.focus_handle(cx), cx);
         let Some(ready) = self.nav_state.start(cx) else {
             return panel.update(cx, |panel, cx| panel.reset(Status::NoFolder, cx));
@@ -736,11 +734,9 @@ impl Workbench {
     ) {
         // A go-to-definition still running would take focus from the panel.
         self.nav_state.goto.next();
-        let dock = self.dock().clone();
-        let panel = dock.update(cx, |dock, cx| {
-            dock.show(DockPanel::References, window, cx);
-            dock.references().clone()
-        });
+        // In whichever dock holds it, as moved.
+        self.show_bottom_panel(DockPanel::References.id(), window, cx);
+        let panel = self.dock().read(cx).references().clone();
         window.focus(&panel.focus_handle(cx), cx);
         let (Some(root), Some(manager)) = (self.lsp.root.clone(), self.lsp.manager().clone())
         else {

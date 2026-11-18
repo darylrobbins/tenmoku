@@ -11,7 +11,7 @@ use fe_git::CommitInfo;
 use gpui::{App, Context, Focusable as _, KeyContext, KeyDownEvent, WeakEntity, Window};
 use kiln_l10n::tr;
 
-use crate::{Workbench, dock::DockOp};
+use crate::Workbench;
 
 /// The flag a list's key context has while vim is on.
 const VIM_FLAG: &str = "vim";
@@ -151,9 +151,8 @@ pub(super) fn key_context(context: &str, cx: &App) -> KeyContext {
 pub(super) fn leave(workbench: WeakEntity<Workbench>, window: &mut Window, cx: &mut App) {
     window.defer(cx, move |window, cx| {
         let leave = |workbench: &mut Workbench, cx: &mut Context<Workbench>| {
-            if workbench.dock.read(cx).is_visible() {
-                workbench.run_dock_op(DockOp::Toggle, window, cx);
-            }
+            // The dock that holds History, as placed.
+            workbench.hide_bottom_tool(crate::DockPanel::History.id(), window, cx);
             window.focus(&workbench.focus_handle(cx), cx);
         };
         workbench.update(cx, leave).ok();

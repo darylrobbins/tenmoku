@@ -47,7 +47,7 @@ use gpui::{
     Styled as _, WeakEntity, Window, div, px, svg,
 };
 use kiln_l10n::{Text, text, tr, verbatim};
-use kiln_shell::{DockView as _, ModalId, PanelId, picker::joined_label};
+use kiln_shell::{ModalId, PanelId, picker::joined_label};
 
 use crate::{
     Workbench,
@@ -724,8 +724,8 @@ impl PickerDelegate for SessionMenu {
             MenuItem::ShowDebugger => {
                 // `debug.show_panels` toggles: shown already, it stays.
                 let shown = (self.workbench.upgrade()).is_some_and(|workbench| {
-                    let dock = workbench.read(cx).terminal_dock().read(cx);
-                    dock.dock().rail_highlighted() == Some(PanelId(crate::debug_panel::PANEL))
+                    let panel = PanelId(crate::debug_panel::PANEL);
+                    workbench.read(cx).tool_shown(panel, cx)
                 });
                 if !shown {
                     dispatch(crate::debug_panel::SHOW_COMMAND, Value::Null, window, cx);

@@ -252,9 +252,7 @@ impl Workbench {
             return false;
         };
         let source = location.then(|| self.pane().entity_id());
-        dock.is_visible()
-            && dock.active() == DockPanel::Quickfix
-            && panel.read(cx).source() == source
+        self.tool_shown(DockPanel::Quickfix.id(), cx) && panel.read(cx).source() == source
     }
 
     /// `:copen`, or with `location` `:lopen`: shows the panel, focused,
@@ -296,7 +294,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         if self.quickfix_panel_shown(location, cx) {
-            self.run_dock_op(DockOp::Toggle, window, cx);
+            self.hide_bottom_tool(DockPanel::Quickfix.id(), window, cx);
         }
     }
 

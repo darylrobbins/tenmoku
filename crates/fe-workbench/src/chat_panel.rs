@@ -1698,8 +1698,7 @@ impl ChatPanel {
                 (editor.entity_id(), changed)
             });
         }
-        let dock = workbench.read(cx).dock().read(cx);
-        if !dock.is_visible() || dock.active() != DockPanel::Chat {
+        if !workbench.read(cx).tool_shown(DockPanel::Chat.id(), cx) {
             return;
         }
         let active = ActiveFile::of(workbench.read(cx), self.generation, cx);
