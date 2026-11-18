@@ -1,7 +1,7 @@
 ---
 task_uid: "01m7reb1ze9jv2zy526bwrm4t6"
 task: "T1967"
-rev: 1
+rev: 2
 type: "bugfix"
 complexity: "m"
 criteria:
@@ -18,7 +18,7 @@ criteria:
     required: true
     manual: false
   - id: "C4"
-    text: "macOS and Linux behaviour is unchanged: the fe-acp tests pass on the gate with no expectation edits other than the fixture canonicalize"
+    text: "macOS and Linux behaviour is unchanged: the fe-acp tests pass on the gate with no expectation edits other than the fixture canonicalize and the self-respec helpers (profile_text, outside_dir), which give the same strings off Windows"
     required: true
     manual: false
 ---
@@ -41,3 +41,10 @@ GH CI 44405849017 on 8ba6f008c, windows Test: 40 fe-acp integration tests panic 
 - Fixtures: use `dunce::canonicalize` in both test files.
 - preflight test: make the relative entry portable. Strip the root/prefix components rather than "/", and on Windows make the dir under the cwd's drive (e.g. `tempfile::tempdir_in` a folder under `CARGO_MANIFEST_DIR`/target) so a relative path exists.
 - New tests/lane_dirs_windows.rs (`#![cfg(windows)]`) is the regression test. It can't fail at the Mac base, so it isn't a `--regression-test`; evidence comes from GH CI windows after landing.
+
+## Self-respec (rev 2, lead-approved): the Windows profile format
+
+The dunce fix alone leaves C1 and C2 failing on Windows. `GLOB_SYNTAX` included `\`, so every Windows lane was refused as a glob. The profile also wrote native paths (`Read(/C:\…)`), but the tests expect `Read(//…)` anchors and separators that match however the path was joined. The lead approved this change (option A):
+
+- claude.rs, Windows only (`cfg(windows)`): `path_text` writes Claude Code's POSIX form. A drive path `C:\Users\me` (or verbatim `\\?\C:\…`) becomes `/c/Users/me`, so deny rules read `Read(//c/Users/…/**/.env*)`, and a UNC path becomes `//server/share/…`. `denyWrite` and `allowWrite` use the same form. `GLOB_SYNTAX` leaves out `\`, which is the separator there. The lane glob check runs on `path_text`. `resolve` doesn't canonicalize a bare drive prefix. On macOS and Linux, `path_text` and `GLOB_SYNTAX` are unchanged, so the profile is byte-identical.
+- tests/claude_profile.rs: `profile_text`, which is `path_text` off Windows and the POSIX form on Windows, replaces `path_text` where an expectation reads a profile path (deny rules, `denyWrite`, `allowWrite`). `outside_dir()`, which is `/var/tmp` off Windows and the temp dir on Windows, replaces the literal `/var/tmp`. The `re\po` entry of `sandbox_allow_write_refuses_glob_patterns` is `cfg(not(windows))`. Off Windows, each of these gives the same strings as before.
