@@ -9,7 +9,8 @@
 //! Folder | Rename, Duplicate, Move to Trash | Cut, Copy, Paste | Copy Path,
 //! Copy Relative Path, Reveal in Finder (the File Manager elsewhere), Open in
 //! Terminal, Find in Folder | Collapse All Folders. A file's menu is the same
-//! without New File and New Folder; its Paste goes beside it, as the key's
+//! without New File and New Folder, and starts with Open and Open to the
+//! Side; its Paste goes beside it, as the key's
 //! does. A right click on the empty space below the rows selects nothing
 //! and offers New File, New Folder | Paste | Refresh, each acting on the
 //! root. Items that would do nothing now are left out, not disabled: Paste
@@ -41,6 +42,8 @@ pub(super) const MENU_KEY_CONTEXT: &str = verbatim!("project_panel_menu");
 /// An item of the menu: a panel command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MenuItem {
+    Open,
+    OpenToSide,
     NewFile,
     NewFolder,
     Rename,
@@ -59,6 +62,10 @@ pub(crate) enum MenuItem {
 }
 
 use MenuItem::*;
+
+/// A file row's menu starts with these, ahead of [`FOLDER_ITEMS`]' rows
+/// from its Rename on; `None` is a separator.
+const FILE_HEAD: &[Option<MenuItem>] = &[Some(Open), Some(OpenToSide), None];
 
 /// A folder row's menu; `None` is a separator.
 const FOLDER_ITEMS: &[Option<MenuItem>] = &[
@@ -96,6 +103,8 @@ impl MenuItem {
     /// The op it runs.
     fn op(self) -> PanelOp {
         match self {
+            Open => PanelOp::Open,
+            OpenToSide => PanelOp::OpenToSide,
             NewFile => PanelOp::NewFile,
             NewFolder => PanelOp::NewFolder,
             Rename => PanelOp::Rename,
@@ -117,6 +126,8 @@ impl MenuItem {
     /// The command it is, which titles it and finds its key.
     pub(crate) fn command(self) -> &'static str {
         match self {
+            Open => "project_panel.open",
+            OpenToSide => "project_panel.open_to_side",
             NewFile => "project_panel.new_file",
             NewFolder => "project_panel.new_folder",
             Rename => "project_panel.rename",
@@ -247,13 +258,13 @@ impl ProjectPanel {
         let Some(tree) = self.tree() else {
             return;
         };
-        let items = match id {
+        let items: Vec<Option<MenuItem>> = match id {
             Some(id) => match tree.row(id).map(|row| row.kind) {
-                Some(EntryKind::Dir) => FOLDER_ITEMS,
-                Some(_) => &FOLDER_ITEMS[3..],
+                Some(EntryKind::Dir) => FOLDER_ITEMS.to_vec(),
+                Some(_) => [FILE_HEAD, &FOLDER_ITEMS[3..]].concat(),
                 None => return,
             },
-            None => EMPTY_ITEMS,
+            None => EMPTY_ITEMS.to_vec(),
         };
         self.cancel_reveal();
         self.selected = id;
@@ -261,7 +272,7 @@ impl ProjectPanel {
             self.selected_hint = ix;
         }
         let can_paste = self.can_paste();
-        let entries = kept(items, |item| item != Paste || can_paste);
+        let entries = kept(&items, |item| item != Paste || can_paste);
         self.new_menu = None;
         window.focus(&self.focus, cx);
         let focus_out = cx.on_focus_out(&self.focus, window, |panel, _, _, cx| {

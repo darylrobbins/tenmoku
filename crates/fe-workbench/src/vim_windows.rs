@@ -139,6 +139,29 @@ impl Workbench {
         self.drop_second_view(&new, second, window, cx);
     }
 
+    /// Open to the Side: `path` opens in the pane right of the active one,
+    /// as a tab there, or in a pane split off to the right if there is
+    /// none, which takes focus.
+    pub(crate) fn open_to_side(
+        &mut self,
+        path: std::path::PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active = self.active.clone();
+        match self.pane_group(cx).neighbour(&active, Direction::Right, cx) {
+            Some(pane) => {
+                self.activate(pane, window, cx);
+                self.open_from_tree(path, false, window, cx);
+            }
+            None => {
+                let (new, second) = self.split_alone(Direction::Right, window, cx);
+                self.open_from_tree(path, false, window, cx);
+                self.drop_second_view(&new, second, window, cx);
+            }
+        }
+    }
+
     /// Splits the active pane in `direction` as `pane.split_down` does:
     /// the new pane, and the second view it shows, if the pane split showed
     /// a tab, for [`Workbench::drop_second_view`].

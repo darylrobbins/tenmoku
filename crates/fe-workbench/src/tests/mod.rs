@@ -149,6 +149,7 @@ mod project_folder_icons;
 mod project_menu;
 mod project_multi_select;
 mod project_new_menu;
+mod project_open_to_side;
 mod project_os_commands;
 mod project_panel;
 #[cfg(target_os = "macos")]

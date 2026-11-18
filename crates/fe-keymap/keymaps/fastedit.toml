@@ -1298,6 +1298,11 @@ command = "project_panel.open"
 context = "project_panel"
 
 [[bindings]]
+keys = "secondary-enter"
+command = "project_panel.open_to_side"
+context = "project_panel"
+
+[[bindings]]
 keys = "f2"
 command = "project_panel.rename"
 context = "project_panel"

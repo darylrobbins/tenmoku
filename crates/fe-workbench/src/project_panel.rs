@@ -248,6 +248,9 @@ pub enum PanelEvent {
     /// A file row was double-clicked, or Enter pressed on it: it opens
     /// to stay.
     OpenFile(PathBuf),
+    /// Open to the Side: the file opens in the pane right of the active
+    /// one, split off if there is none.
+    OpenFileToSide(PathBuf),
     /// A file row was clicked once: it opens for a look, in a preview tab
     /// that the next one replaces, if `workbench.preview_tabs` is on.
     PreviewFile(PathBuf),
@@ -900,6 +903,20 @@ impl ProjectPanel {
 
     /// Enter, and vim's `l` and `o`: opens the selected file, or toggles
     /// the selected directory, as a click does.
+    /// Opens the selected file in the pane to the right; a folder does
+    /// nothing.
+    fn open_selected_to_side(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected_index().and(self.selected) else {
+            return;
+        };
+        let is_file = (self.tree())
+            .and_then(|tree| tree.row(id))
+            .is_some_and(|row| row.kind != EntryKind::Dir);
+        if let Some(path) = self.shown_path(id).filter(|_| is_file) {
+            cx.emit(PanelEvent::OpenFileToSide(path));
+        }
+    }
+
     fn open_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.selected_index().and(self.selected) {
             self.click(id, cx);
@@ -1185,6 +1202,7 @@ impl ProjectPanel {
                 | CollapseOrParent
                 | ExpandOrFirstChild
                 | Open
+                | OpenToSide
                 | Toggle
         );
         if moves && self.several() {
@@ -1201,6 +1219,7 @@ impl ProjectPanel {
             PanelOp::CollapseOrParent => self.collapse_or_parent(cx),
             PanelOp::ExpandOrFirstChild => self.expand_or_first_child(cx),
             PanelOp::Open | PanelOp::Toggle => self.open_selected(cx),
+            PanelOp::OpenToSide => self.open_selected_to_side(cx),
             PanelOp::SelectFirst => self.select_end(false, cx),
             PanelOp::SelectLast => self.select_end(true, cx),
             PanelOp::NewFile => self.start_edit(EditKind::NewFile, window, cx),
@@ -1905,6 +1924,7 @@ pub(crate) enum PanelOp {
     CollapseOrParent,
     ExpandOrFirstChild,
     Open,
+    OpenToSide,
     SelectFirst,
     SelectLast,
     NewFile,
@@ -1973,6 +1993,7 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
             ExpandOrFirstChild,
         ),
         ("project_panel.open", KEY_CONTEXT, Open),
+        ("project_panel.open_to_side", KEY_CONTEXT, OpenToSide),
         ("project_panel.select_first", KEY_CONTEXT, SelectFirst),
         ("project_panel.select_last", KEY_CONTEXT, SelectLast),
         ("project_panel.new_file", KEY_CONTEXT, NewFile),

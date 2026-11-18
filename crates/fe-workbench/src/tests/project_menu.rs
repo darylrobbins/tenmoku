@@ -260,7 +260,13 @@ fn file_menu_has_no_new_items(cx: &mut TestAppContext) {
     let (dir, _workbench, panel, cx) = workbench(cx, false);
     right_click(&panel, "a.txt", cx);
     let menu_now = menu(&panel, cx).unwrap();
-    assert_eq!(menu_now.as_slice(), &FOLDER_MENU[3..]);
+    let mut file_menu = vec![
+        Some("project_panel.open"),
+        Some("project_panel.open_to_side"),
+        None,
+    ];
+    file_menu.extend_from_slice(&FOLDER_MENU[3..]);
+    assert_eq!(menu_now, file_menu);
 
     // Something copied: a file's Paste goes beside it.
     choose("Copy", cx);
@@ -433,13 +439,17 @@ fn arrows_and_enter_choose_an_item(cx: &mut TestAppContext) {
     assert_eq!(highlighted(cx), None);
 
     press("down", cx);
-    assert_eq!(highlighted(cx), Some("project_panel.rename"));
+    assert_eq!(highlighted(cx), Some("project_panel.open"));
     press("up", cx);
     assert_eq!(
         highlighted(cx),
         Some("project_panel.collapse_all"),
         "wrapping"
     );
+    press("down", cx);
+    assert_eq!(highlighted(cx), Some("project_panel.open"));
+    press("down", cx);
+    assert_eq!(highlighted(cx), Some("project_panel.open_to_side"));
     press("down", cx);
     assert_eq!(highlighted(cx), Some("project_panel.rename"));
     // Past the separators.

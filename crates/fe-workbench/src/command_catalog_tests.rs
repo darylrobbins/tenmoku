@@ -583,6 +583,7 @@ const LISTED_IN_THE_PROJECT_PANEL: &[&str] = &[
     "project_panel.new_folder",
     "project_panel.open",
     "project_panel.open_in_terminal",
+    "project_panel.open_to_side",
     "project_panel.rename",
     "project_panel.reveal_in_os",
     "project_panel.select_first",

@@ -62,6 +62,9 @@ impl Workbench {
                 PanelEvent::OpenFile(path) => {
                     workbench.open_from_tree(path.clone(), false, window, cx)
                 }
+                PanelEvent::OpenFileToSide(path) => {
+                    workbench.open_to_side(path.clone(), window, cx)
+                }
                 PanelEvent::PreviewFile(path) => {
                     workbench.open_from_tree(path.clone(), true, window, cx)
                 }
