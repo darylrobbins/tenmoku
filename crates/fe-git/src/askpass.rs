@@ -65,6 +65,8 @@ type Answer = dyn Fn(&AskpassRequest, &Withdrawn) -> Option<String> + Send + Syn
 pub struct Askpass {
     helper: Vec<OsString>,
     dir: PathBuf,
+    // Only the unix socket server reads it; askpass is not used on Windows.
+    #[cfg_attr(not(unix), allow(dead_code))]
     answer: Arc<Answer>,
 }
 

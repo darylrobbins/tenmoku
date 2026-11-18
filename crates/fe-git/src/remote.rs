@@ -27,7 +27,9 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use crate::askpass::Askpass;
-use crate::cli::{Access, run, run_raw, run_raw_with};
+#[cfg(unix)]
+use crate::cli::run_raw_with;
+use crate::cli::{Access, run, run_raw};
 use crate::{GitError, Repo};
 
 /// How [`Repo::pull`] brings in the upstream's commits.
