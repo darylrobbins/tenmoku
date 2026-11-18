@@ -81,26 +81,26 @@ command = ["cargo", "build"]
 
 /// A workbench on a project the fake debugs, with the fake as the host's
 /// adapter `fake`.
-struct Debug<'a> {
+pub(crate) struct Debug<'a> {
     _dir: tempfile::TempDir,
     _link_dir: Option<tempfile::TempDir>,
-    root: PathBuf,
+    pub(crate) root: PathBuf,
     workbench: Entity<Workbench>,
     launcher: Arc<FakeLauncher>,
     /// How many times the ptrace scope was read.
     scope_reads: Arc<AtomicUsize>,
-    cx: &'a mut VisualTestContext,
+    pub(crate) cx: &'a mut VisualTestContext,
 }
 
 /// The fake's script for the project at `root`: its program is
 /// `src/main.rs`.
-fn script(root: &Path) -> Script {
+pub(crate) fn script(root: &Path) -> Script {
     let mut script = Script::default();
     script.program.path = main_path(root).to_string_lossy().into_owned();
     script
 }
 
-fn main_path(root: &Path) -> PathBuf {
+pub(crate) fn main_path(root: &Path) -> PathBuf {
     root.join("src").join("main.rs")
 }
 
@@ -232,7 +232,7 @@ fn untrusted_with<'a>(
 }
 
 /// As [`untrusted`], with the root trusted.
-fn trusted<'a>(
+pub(crate) fn trusted<'a>(
     cx: &'a mut TestAppContext,
     files: &[(&str, &str)],
     script: impl FnOnce(&Path) -> Script,
@@ -285,7 +285,7 @@ impl Debug<'_> {
 
     /// Starts the configuration `name`, as `debug.rerun_last` and a
     /// debuggee tab's rerun do.
-    fn start(&mut self, name: &str) {
+    pub(crate) fn start(&mut self, name: &str) {
         let workbench = self.workbench.clone();
         let name = name.to_owned();
         self.cx.update(|window, cx| {
@@ -473,7 +473,7 @@ fn sent_lines(fake: &FakeAdapter, path: &Path) -> Vec<Vec<i64>> {
         .collect()
 }
 
-fn launch_file() -> [(&'static str, &'static str); 2] {
+pub(crate) fn launch_file() -> [(&'static str, &'static str); 2] {
     [
         (".tenmoku/launch.toml", LAUNCH),
         (".tenmoku/tasks.toml", TASKS),

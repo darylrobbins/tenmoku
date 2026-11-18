@@ -661,14 +661,18 @@ fn open_window_on(
     cx.spawn(async move |cx| {
         // Over once the file is in its tab or has failed to open.
         landing.await;
-        let loaded = cx.update(|cx| fe_workbench::file_loaded(window, path, cx));
+        let loaded = cx.update(|cx| fe_workbench::file_loaded(window, path.clone(), cx));
         if loaded.await {
             return true;
         }
         // Opened for the file alone: it goes, and the tab stays where it was.
-        window
-            .update(cx, |_, window, _| window.remove_window())
-            .ok();
+        // One the user has used meanwhile stays, the failed tab showing why.
+        let untouched = cx.update(|cx| fe_workbench::holds_only_untouched(window, &path, cx));
+        if untouched {
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+        }
         false
     })
 }
@@ -1584,6 +1588,24 @@ mod tests {
         assert!(move_to_window(cx, &root, &image, None, None));
         assert_eq!(cx.windows().len(), windows + 2);
 
+        // A binary file lands in a hex viewer (T1895), and its window stays.
+        let blob = root.join("blob.bin");
+        fs::write(&blob, b"a\0b\0\xff\x01c").unwrap();
+        assert!(move_to_window(cx, &root, &blob, None, None));
+        assert_eq!(cx.windows().len(), windows + 3);
+        let hexed = (cx.windows().into_iter())
+            .filter_map(|window| window.downcast::<Workbench>())
+            .any(|window| {
+                window
+                    .read_with(cx, |workbench, cx| {
+                        (workbench.pane_group(cx).panes().iter()).any(|pane| {
+                            (pane.read(cx).tabs().iter()).any(|tab| tab.hex_viewer().is_some())
+                        })
+                    })
+                    .unwrap_or(false)
+            });
+        assert!(hexed, "a hex viewer tab in the new window");
+
         // What doesn't load from disk doesn't land, and its window goes: a
         // missing file, which opens as a new file's empty buffer; an image
         // that can't be decoded; a file that can't be read.
@@ -1604,8 +1626,58 @@ mod tests {
                 "{}",
                 path.display()
             );
-            assert_eq!(cx.windows().len(), windows + 2, "{}", path.display());
+            assert_eq!(cx.windows().len(), windows + 3, "{}", path.display());
         }
+        WATCH.with(|w| w.set(None));
+    }
+
+    /// A destination window the user has used while the moved file's load was
+    /// pending stays when the load fails, with what they opened there
+    /// (T1606 F3); the failed tab shows its error as usual.
+    #[gpui::test]
+    fn a_destination_the_user_used_stays_when_the_load_fails(cx: &mut TestAppContext) {
+        assert!(
+            std::env::var_os("TENMOKU_STATE_DIR").is_some(),
+            "needs the state dir nextest's setup script gives (scripts/nextest-isolate-state.sh)"
+        );
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
+        let (a, missing) = (root.join("a.txt"), root.join("missing.txt"));
+        fs::write(&a, "one\n").unwrap();
+        cx.update(|cx| {
+            fe_gpui::init(cx);
+            fe_workbench::init(cx);
+            cx.set_global(fe_workbench::ConfigDirOverride(None));
+        });
+        WATCH.with(|w| w.set(Some(|_, _| None)));
+
+        let windows = cx.windows().len();
+        let file = fe_workbench::WindowFile {
+            path: missing.clone(),
+            line: None,
+            col: None,
+        };
+        let task = cx.update(|cx| super::open_window_on(Some(root.clone()), Some(file), cx));
+        // The user opens a file there before the load has ended.
+        let window = (cx.windows().into_iter())
+            .filter_map(|window| window.downcast::<Workbench>())
+            .next_back()
+            .expect("the destination window");
+        window
+            .update(cx, |workbench, window, cx| {
+                workbench.open_document(a.clone(), window, cx)
+            })
+            .unwrap();
+        let landed = std::rc::Rc::new(std::cell::Cell::new(None));
+        let set = landed.clone();
+        cx.spawn(async move |_| set.set(Some(task.await))).detach();
+        wait_for(cx, |_| landed.get().is_some());
+
+        // A missing file didn't load, but the window and the file stay.
+        assert_eq!(landed.get(), Some(false));
+        assert_eq!(cx.windows().len(), windows + 1);
+        assert!(window_files(window, cx)[0].contains(&a));
         WATCH.with(|w| w.set(None));
     }
 

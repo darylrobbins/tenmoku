@@ -9,7 +9,9 @@ use std::{cell::RefCell, fs, path::PathBuf, rc::Rc};
 
 use fe_command::{CommandId, ContextFrame, ContextStack, Invocation};
 use fe_gpui::{EditorView, commands::RunCommand};
-use gpui::{Entity, Focusable as _, Modifiers, Task, TestAppContext, VisualTestContext};
+use gpui::{
+    AppContext as _, Entity, Focusable as _, Modifiers, Task, TestAppContext, VisualTestContext,
+};
 use kiln::platform::command_actions::typed_command;
 use kiln_l10n::tr;
 use kiln_shell::PaneView as _;
@@ -334,4 +336,91 @@ fn the_menu_item_and_command_exist(cx: &mut TestAppContext) {
         fe_command::l10n::command_label(ID, "").to_string(),
         tr!("command-pane-move_to_new_window").to_string()
     );
+}
+
+/// Whether `path` loaded in the test window, as a host's opener asks once
+/// the file's open has ended.
+fn loaded(path: PathBuf, cx: &mut VisualTestContext) -> bool {
+    let window = cx.update(|window, _| window.window_handle().downcast::<Workbench>().unwrap());
+    let loaded = cx.update(|_, cx| crate::file_loaded(window, path, cx));
+    cx.run_until_parked();
+    cx.foreground_executor().block_test(loaded)
+}
+
+/// A binary file opens in a hex viewer there, which counts as loaded
+/// (T1606 F4): the destination stays.
+#[gpui::test]
+fn a_binary_file_in_a_hex_viewer_counts_as_loaded(cx: &mut TestAppContext) {
+    let dir = project();
+    fs::write(dir.path().join("blob.bin"), b"a\0b\0\xff\x01c").unwrap();
+    let (workbench, cx, _) = opened(cx, &dir, &["blob.bin"]);
+    let pane = active(&workbench, cx);
+    assert!(pane.read_with(cx, |pane, _| pane.tabs()[0].hex_viewer().is_some()));
+    assert!(loaded(dir.path().join("blob.bin"), cx));
+}
+
+/// Moving a binary file's tab (a hex viewer, T1895) to a new window: an
+/// opener that really opens the destination and answers whether the file
+/// loaded there (as the host's does) finds it loaded, so the destination
+/// stays with the hex viewer and the tab closes here (T1606 F4).
+#[gpui::test]
+fn a_binary_file_tab_moves_to_a_new_window_with_a_hex_viewer(cx: &mut TestAppContext) {
+    let dir = project();
+    fs::write(dir.path().join("blob.bin"), b"a\0b\0\xff\x01c").unwrap();
+    let (workbench, cx, _) = opened(cx, &dir, &["a.txt", "blob.bin"]);
+    assert_eq!(tabs(&workbench, cx), [["a.txt", "blob.bin"]]);
+    let landed = Rc::new(RefCell::new(None));
+    cx.update(|_, cx| {
+        let landed = landed.clone();
+        crate::set_file_window_opener(cx, move |root, file, cx| {
+            let WindowFile { path, line, col } = file.expect("the file to open");
+            let destination = cx
+                .open_window(gpui::WindowOptions::default(), |window, cx| {
+                    let theme = fe_gpui::EditorTheme::default_dark(cx);
+                    let launch = crate::Launch { root, file: None };
+                    cx.new(|cx| {
+                        Workbench::new(
+                            launch,
+                            theme,
+                            fe_gpui::EditorSettings::default(),
+                            window,
+                            cx,
+                        )
+                    })
+                })
+                .unwrap();
+            let opening = destination
+                .update(cx, |workbench, window, cx| {
+                    workbench.open_document_at(path.clone(), line, col, window, cx)
+                })
+                .unwrap();
+            let landed = landed.clone();
+            cx.spawn(async move |cx| {
+                opening.await;
+                let loaded = cx.update(|cx| crate::file_loaded(destination, path, cx));
+                let loaded = loaded.await;
+                *landed.borrow_mut() = Some((destination, loaded));
+                loaded
+            })
+        });
+    });
+    run(ID, cx);
+    settle(cx);
+
+    // The destination loaded it in a hex viewer and stays; the tab is gone here.
+    let (destination, loaded) = landed.borrow().expect("the destination answered");
+    assert!(loaded);
+    assert_eq!(cx.windows().len(), 2);
+    let hexed = destination
+        .read_with(cx, |workbench, cx| {
+            (workbench.pane_group(cx).panes().iter()).any(|pane| {
+                pane.read(cx)
+                    .tabs()
+                    .iter()
+                    .any(|tab| tab.hex_viewer().is_some())
+            })
+        })
+        .unwrap();
+    assert!(hexed, "a hex viewer tab in the new window");
+    assert_eq!(tabs(&workbench, cx), [["a.txt"]]);
 }

@@ -193,8 +193,9 @@ fn load_of(workbench: &crate::Workbench, path: &Path, cx: &App) -> Load {
             (false, None) => Load::Loaded,
         };
     }
-    // A file too large to edit, in its viewer: open only once read.
-    if tab.viewer().is_some() {
+    // A file too large to edit, or a binary one (T1895), in its viewer:
+    // open only once read.
+    if tab.viewer().is_some() || tab.hex_viewer().is_some() {
         Load::Loaded
     } else {
         Load::Failed
@@ -239,6 +240,48 @@ pub fn file_loaded(
             }
         }
     })
+}
+
+/// Whether `window`'s workbench holds nothing but a tab of `path`, unedited,
+/// and is reading no other file: the untouched attempt a host's window opener made for a file
+/// that then failed to load, which it may close unasked. Anything else the
+/// user did there (an edit, another tab or pane) keeps the window.
+pub fn holds_only_untouched<C: gpui::AppContext>(
+    window: gpui::WindowHandle<crate::Workbench>,
+    path: &Path,
+    cx: &C,
+) -> bool {
+    // No debug session, starting or begun (its console stays once it ends).
+    let debugging = window.entity(cx).is_ok_and(|workbench| {
+        workbench.read_with(cx, |_, cx| {
+            crate::debug_session::debugger_of(&workbench, cx).is_some_and(|debugger| {
+                let debugger = debugger.read(cx);
+                debugger.starting().is_some() || debugger.state().is_some()
+            })
+        })
+    });
+    !debugging
+        && window
+            .read_with(cx, |workbench, cx| {
+                let panes = workbench.pane_group(cx).panes();
+                let [pane] = panes.as_slice() else {
+                    return false;
+                };
+                let pane = pane.read(cx);
+                // The file's own tab, unedited (none, if it couldn't be read),
+                // and no other file being read: a fresh window has no other tab,
+                // so any other is the user's, a pathless one too.
+                // No terminal session either: closing the window ends it.
+                workbench.terminal().read(cx).views().next().is_none()
+                    && pane.reading().all(|reading| reading == path)
+                    && pane.tabs().iter().all(|tab| {
+                        tab.path.as_deref() == Some(path)
+                            && tab
+                                .editor()
+                                .is_none_or(|editor| !editor.read(cx).model().is_dirty())
+                    })
+            })
+            .unwrap_or(false)
 }
 
 /// Where a path the system asked the app to open goes.
@@ -638,4 +681,46 @@ fn hook(path: &Path, stage: Stage) -> io::Result<()> {
     };
     // Called unlocked: it blocks.
     hook.map_or(Ok(()), |hook| hook(stage))
+}
+
+#[cfg(test)]
+mod untouched_tests {
+    use gpui::TestAppContext;
+
+    use crate::{
+        Workbench,
+        terminal_panel::terminal_tabs_tests::opened,
+        tests::debug_session::{launch_file, main_path, script, trusted},
+    };
+
+    /// A destination where the user started a terminal while the file was
+    /// loading isn't the untouched attempt: closing it would end the
+    /// session (T382 F5).
+    #[gpui::test]
+    fn a_destination_with_a_terminal_session_is_not_untouched(cx: &mut TestAppContext) {
+        let (workbench, cx, dir) = opened(cx);
+        let path = dir.path().join("a.rs");
+        let window = cx.update(|window, _| window.window_handle().downcast::<Workbench>().unwrap());
+        assert!(super::holds_only_untouched(window, &path, cx));
+
+        let terminal = workbench.read_with(cx, |workbench, _| workbench.terminal().clone());
+        cx.update(|window, cx| terminal.update(cx, |terminal, cx| terminal.add(window, cx)));
+        cx.run_until_parked();
+        assert!(!super::holds_only_untouched(window, &path, cx));
+    }
+
+    /// A destination where debugging was started while a moved file was
+    /// loading isn't the untouched attempt, with no terminal tab: closing it
+    /// would stop the session and lose its console (T382 F5).
+    #[gpui::test]
+    fn a_debug_session_makes_a_destination_used(cx: &mut TestAppContext) {
+        let mut debug = trusted(cx, &launch_file(), script);
+        let window = debug
+            .cx
+            .update(|window, _| window.window_handle().downcast::<Workbench>().unwrap());
+        let main = main_path(&debug.root);
+        assert!(super::holds_only_untouched(window, &main, debug.cx));
+        debug.start("main");
+        assert!(!super::holds_only_untouched(window, &main, debug.cx));
+    }
 }
