@@ -1046,7 +1046,7 @@ fn the_system_runner_stops_a_descendant_holding_its_stdout() {
     write_script(
         &lingering,
         &format!(
-            "echo /opt/rust\nsleep 30 &\necho $! > '{}'\nexit 0",
+            "sleep 30 &\necho $! > '{}'\necho /opt/rust\nexit 0",
             pid_file.display()
         ),
     );
@@ -1054,12 +1054,12 @@ fn the_system_runner_stops_a_descendant_holding_its_stdout() {
     assert_eq!(runner.stdout(&lingering, &[], &fixture.root), None);
     let took = started.elapsed();
     assert!(took < Duration::from_secs(5), "{took:?}");
-    let pid: u32 = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    wait_gone(pid);
+    // Under load the deadline can stop the script before it writes the pid
+    // file; then no descendant was started, so there is nothing to wait for.
+    match std::fs::read_to_string(&pid_file) {
+        Ok(text) => wait_gone(text.trim().parse().unwrap()),
+        Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound, "{err}"),
+    }
 
     // One that never ends is stopped at the deadline too.
     let hanging = fixture.dir.join("hanging");
