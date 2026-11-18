@@ -353,13 +353,21 @@ run "$root/scripts/bundle-macos.sh" --sign-only "$app"
 
 # Xcode 27's test runner is sandboxed and can't write here, so the scratch sets are made
 # now, one per test run: a project with an empty notes.txt, config, a state folder whose
-# setup.toml keeps the setup wizard away, and a home for the app's log.
+# setup.toml keeps the setup wizard away and whose whats_new.toml, the bundle's version,
+# the What's New tab, and a home for the app's log.
 tests=3
 [ -n "$only" ] && tests=1
 pool=$((tests * iterations))
+# The bundle's version: bundle-macos.sh's default, the [workspace.package] one.
+version=$(awk '
+	/^\[/ { in_pkg = ($0 == "[workspace.package]") }
+	in_pkg && /^version[ \t]*=/ { gsub(/.*=[ \t]*"|".*/, ""); print; exit }
+' "$root/Cargo.toml")
+[ -n "$version" ] || die "no [workspace.package] version in $root/Cargo.toml"
 run mkdir -p "$results"
 echo "+ for n in 001 .. $(printf '%03d' "$pool"): mkdir -p $(quote "$scratch")/\$n/{project,config,state,home};" \
-	": >\$n/project/notes.txt; echo 'outcome = \"skipped\"' >\$n/state/setup.toml"
+	": >\$n/project/notes.txt; echo 'outcome = \"skipped\"' >\$n/state/setup.toml;" \
+	"echo 'seen = \"$version\"' >\$n/state/whats_new.toml"
 if [ -z "$dry" ]; then
 	n=1
 	while [ "$n" -le "$pool" ]; do
@@ -367,6 +375,7 @@ if [ -z "$dry" ]; then
 		mkdir -p "$set_dir/project" "$set_dir/config" "$set_dir/state" "$set_dir/home"
 		: >"$set_dir/project/notes.txt"
 		echo 'outcome = "skipped"' >"$set_dir/state/setup.toml"
+		echo "seen = \"$version\"" >"$set_dir/state/whats_new.toml"
 		n=$((n + 1))
 	done
 fi

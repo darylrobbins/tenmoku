@@ -52,6 +52,14 @@ workbench-workbench-compare-cant-open = Can't open { $path }: { $error }
 workbench-workbench-preview-title = Preview { $name }
 workbench-workbench-preview-untitled = Preview Untitled
 
+## What's New: its tab's title, each release's heading, and the line under
+## the running version's heading when it has no notes.
+
+workbench-workbench-whats-new-title = What's New
+# $app is the app's name, $version a release's, as 0.2.3.
+workbench-workbench-whats-new-heading = { $app } { $version }
+workbench-workbench-whats-new-none = There are no release notes for this version.
+
 ## Vim commands the workbench runs: vim's own messages, in nvim's English,
 ## and Tenmoku's.
 

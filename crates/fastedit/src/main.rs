@@ -1248,12 +1248,21 @@ fn main() {
             install_a11y_dump(path, A11ySource::window(), cx);
         }
         let opened = open_files(window, files_left(files, launch_failed), cx);
+        let (settle, settled) = async_channel::bounded::<()>(1);
         let landed = cx.spawn(async move |_| {
             if let Some(read) = launch_read {
                 read.await;
             }
             opened.await;
+            settle.try_send(()).ok();
         });
+        // Once, for this first window, over the files the launch opens in
+        // it: a launch whose files never land (its window closed) drops
+        // `settle`, and the window takes nothing.
+        let settled = async move {
+            settled.recv().await.ok();
+        };
+        fe_workbench::offer_whats_new(window, setup, settled, cx);
         let landed = ipc::while_open(window, landed, cx);
         match waiter {
             Some(waiter) => wait::add(waiter, waited_on, landed, cx),

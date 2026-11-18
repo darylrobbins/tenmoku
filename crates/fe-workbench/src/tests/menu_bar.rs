@@ -105,8 +105,8 @@ fn f10_and_the_arrows_choose_an_item(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("left");
     assert_eq!(
         open_menu(&workbench, cx),
-        Some((4, Some(0))),
-        "wraps to Window"
+        Some((5, Some(0))),
+        "wraps to Help"
     );
     cx.simulate_keystrokes("right right");
     // Edit: Undo, Redo, separator, Cut, Copy, Paste, Select All, ...

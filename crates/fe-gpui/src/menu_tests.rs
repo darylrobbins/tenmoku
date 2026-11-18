@@ -82,7 +82,10 @@ fn install_sets_menus_and_display_bindings(cx: &mut TestAppContext, bare: &mut T
     install(cx);
     let menus = cx.update(|cx| cx.get_menus()).unwrap();
     let names: Vec<_> = menus.iter().map(|menu| menu.name.to_string()).collect();
-    assert_eq!(names, ["Tenmoku", "File", "Edit", "View", "Go", "Window"]);
+    assert_eq!(
+        names,
+        ["Tenmoku", "File", "Edit", "View", "Go", "Window", "Help"]
+    );
     let view = &menus[3];
     let search = view.items.iter().find_map(|item| match item {
         OwnedMenuItem::Action { name, action, .. } if name == "Search" => {
@@ -205,7 +208,7 @@ fn keymap_reload_refreshes_menus(cx: &mut TestAppContext, bare: &mut TestAppCont
             .count()
     });
     assert_eq!(with_cmd_s, 0);
-    assert_eq!(cx.update(|cx| cx.get_menus()).unwrap().len(), 6);
+    assert_eq!(cx.update(|cx| cx.get_menus()).unwrap().len(), 7);
 
     // An embedding host without menus is left alone.
     bare.update(|cx| {

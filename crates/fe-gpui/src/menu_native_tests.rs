@@ -99,7 +99,7 @@ fn shortcuts_without_a_native_key_equivalent_are_not_shown(cx: &mut TestAppConte
     });
     assert_eq!(with_cmd_s, 0);
     // The menus are still set, Save without a shortcut.
-    assert_eq!(cx.update(|cx| cx.get_menus()).unwrap().len(), 6);
+    assert_eq!(cx.update(|cx| cx.get_menus()).unwrap().len(), 7);
 }
 
 struct Blank;

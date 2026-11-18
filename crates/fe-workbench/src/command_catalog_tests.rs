@@ -236,6 +236,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "app.quit",
     "app.set_up",
     "app.show_all",
+    "app.show_whats_new",
     "chat.review_latest_changes",
     "debug.continue",
     "debug.evaluate",

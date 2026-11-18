@@ -32,6 +32,7 @@ pub mod settings_model;
 pub mod theme;
 pub mod themes;
 pub mod user_snippets;
+pub mod whats_new;
 pub mod write;
 
 // The generic config machinery is kiln's (docs/decisions/app-framework.md);

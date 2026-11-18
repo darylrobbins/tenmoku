@@ -276,6 +276,8 @@ Window
     pane.move_tab_right = Move Tab Right
     pane.move_tab_up = Move Tab Up
     pane.move_tab_down = Move Tab Down
+Help
+    app.show_whats_new = What's New
 ";
 
 /// The menus as on Linux and Windows, likewise.
@@ -395,4 +397,6 @@ Window
     pane.move_tab_right = Move Tab Right
     pane.move_tab_up = Move Tab Up
     pane.move_tab_down = Move Tab Down
+Help
+    app.show_whats_new = What's New
 ";

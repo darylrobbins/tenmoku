@@ -642,6 +642,13 @@ impl Workbench {
         crate::setup_launch::set_up(self, cx.window, cx.cx);
     }
 
+    /// What's New
+    #[command(id = "app.show_whats_new")]
+    fn show_whats_new(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.open_whats_new(cx.window, cx.cx);
+    }
+
     /// Install 'tenmoku' Command in PATH
     #[command(id = "app.install_shell_command")]
     fn install_shell_command(&mut self, cx: &mut Cx<Self>) {

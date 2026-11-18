@@ -57,7 +57,10 @@ fn ids(bar: &MenuBar, menu: &str) -> Vec<String> {
 fn default_menus_parse() {
     let bar = default_bar();
     let names: Vec<_> = bar.menus.iter().map(|menu| menu.name.as_str()).collect();
-    assert_eq!(names, ["Tenmoku", "File", "Edit", "View", "Go", "Window"]);
+    assert_eq!(
+        names,
+        ["Tenmoku", "File", "Edit", "View", "Go", "Window", "Help"]
+    );
 
     let edit = bar.menu("Edit").unwrap();
     let os_actions: Vec<_> = edit
@@ -306,7 +309,9 @@ fn hosts_extend_and_replace() {
     let names: Vec<_> = bar.menus.iter().map(|menu| menu.name.as_str()).collect();
     assert_eq!(
         names,
-        ["Tenmoku", "File", "Edit", "View", "Go", "Tools", "Window"]
+        [
+            "Tenmoku", "File", "Edit", "View", "Go", "Tools", "Window", "Help"
+        ]
     );
     assert_eq!(ids(&bar, "Tools"), ["tools.run_tests"]);
     assert_eq!(
@@ -471,7 +476,7 @@ fn linux_menus_are_the_macos_menus_without_the_app_menu() {
     assert_eq!(diagnostics, []);
     let linux = linux.expect("the Linux menus load");
     let names: Vec<_> = linux.menus.iter().map(|menu| menu.name.as_str()).collect();
-    assert_eq!(names, ["File", "Edit", "View", "Go", "Window"]);
+    assert_eq!(names, ["File", "Edit", "View", "Go", "Window", "Help"]);
 
     // macOS's, but for what only macOS has, with the app menu's Settings…,
     // Keyboard Shortcuts and Quit in File, before Close Tab and last.

@@ -20,6 +20,7 @@ command-ai_changes-reject_file = AI Changes: Reject Selected File
 command-app-check_for_updates = Check for Updates…
 command-app-install_shell_command = Install 'tenmoku' Command in PATH
 command-app-set_up = Set Up Tenmoku…
+command-app-show_whats_new = What's New
 command-app-uninstall_shell_command = Uninstall 'tenmoku' Command from PATH
 
 command-buffers-show = Show Buffers

@@ -644,3 +644,10 @@ command = "pane.move_tab_up"
 [[menus.items]]
 title_key = "keymap-menu-move-tab-down"
 command = "pane.move_tab_down"
+
+[[menus]]
+title_key = "keymap-menu-help"
+
+[[menus.items]]
+title_key = "keymap-menu-whats-new"
+command = "app.show_whats_new"

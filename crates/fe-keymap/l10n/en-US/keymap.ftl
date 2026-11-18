@@ -146,3 +146,8 @@ keymap-menu-move-tab-left = Move Tab Left
 keymap-menu-move-tab-right = Move Tab Right
 keymap-menu-move-tab-up = Move Tab Up
 keymap-menu-move-tab-down = Move Tab Down
+
+## Help
+
+keymap-menu-help = Help
+keymap-menu-whats-new = What's New
