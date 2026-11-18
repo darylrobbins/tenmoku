@@ -294,17 +294,26 @@ script now traps INT and TERM from its first lines: `spawn-loop` signalled at 1 
 `FAILED (SIGTERM, before the run)` with exit 143, and `FAILED (SIGINT, before the run)`
 with exit 130. Nothing was left, and its temporary state and config folders were removed.
 
-**Review round 4, F7, with the final script** (2026-11-18 01:20). `status-cases`:
+**Review round 4, F7, with the final script.** `status-cases` was rewritten after finish
+round 5's F8. It finds the run's processes by identity, never by name: while a case
+runs, a tracker records as pid and start time the script, its descendants, and the
+members of any group a recorded process leads (the anchor's). Every recorded process
+must be gone afterwards, in any state, the anchor included. Its 90 s failure path stops
+and kills only recorded processes that are still the ones recorded. A control, a
+`quick-child` and a `sleep 2592000` (the names the runs use) started beside the runs,
+must still be running at the end. Output, 2026-11-18:
 
 ```
-     stand-in: quick-exit left quick-child pid 72255 and exits
+     stand-in: quick-exit left quick-child pid 79751 and exits
      e2e-macos: timed out after 4s; stopping xcodebuild, the runner and the app
      e2e-macos: FAILED (timed out after 4s)
-ok   status write paused while the watchdog fires: exit 124; nothing left, nothing stopped
+ok   status write paused while the watchdog fires: exit 124; 152 processes recorded (8x e2e-macos.sh, 1x quick-child, 1x tail -f, ...), none left (any name or state)
      stand-in: bad-status blocked the status file and exits
      e2e-macos: the run's anchor wrote no exit status
      e2e-macos: FAILED (xcodebuild test exited 1)
-ok   status write fails: exit 1; nothing left, nothing stopped
+ok   status write fails: exit 1; 23 processes recorded (3x e2e-macos.sh, 1x sleep 2592000, 1x tail -f, ...), none left (any name or state)
+ok   control: pid 79086 (/bin/sh /Users/daryl/code/fastedit/.worktrees/n5krsav71f/tools/e2e-macos/standins/quick-child) still running [S]
+ok   control: pid 79089 (sleep 2592000) still running [S]
 status-cases: all passed
 ```
 

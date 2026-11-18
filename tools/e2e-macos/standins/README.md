@@ -41,8 +41,12 @@ stand-in run that makes them, and are inert.
     watchdog fires (`quick-exit`, `--timeout 4`): it must exit 124;
   - with `bad-status`: it must exit 1.
 
-  Either way no stand-in process may be left, running or stopped. Run it directly
-  (optionally with another script as `$1`); it exits 1 if a case fails.
+  It owns processes by identity, not by name (review F8). A tracker records each run's
+  processes as pid and start time: the script, its descendants, and the members of
+  groups their recorded leaders lead. Every recorded process must be gone afterwards,
+  whatever its name or state. The 90 s failure path kills only those, and a control
+  (a `quick-child` and a `sleep 2592000` started beside the runs) must survive. Run it
+  directly (optionally with another script as `$1`); it exits 1 if a case fails.
 - `no-identity/ps`: review r3 F6 (T1682): a `ps` that can't read the run anchor's start
   time. With its folder first on `PATH`, a run must fail ("can't read the identity of the
   run's anchor") without starting the stand-in it names.

@@ -2,29 +2,101 @@
 # Regression cases for review F7 (T1682): the run's wait must end whatever happens to
 # the anchor's status publication. Not a stand-in xcodebuild: run it directly. Each case
 # runs scripts/e2e-macos.sh --no-build (or the script given as $1) with a stand-in, for
-# at most 90 s, then checks the exit status and that no stand-in process is left,
-# running or stopped. Exits 1 if a case fails.
+# at most 90 s, and checks its exit status:
 #   - paused: E2E_ANCHOR_HOLD names a fifo nothing writes, so the anchor's status write
 #     waits while the watchdog fires (quick-exit, MODE=exit, --timeout 4): exit 124.
 #   - failed: bad-status makes the write fail: exit 1.
+# Ownership is by identity, never by name (review F8). While a case runs, a tracker
+# records every process of that run as "pid start-time": the script itself, its
+# descendants, and the members of any process group led by a recorded process that is
+# still the one recorded (the anchor's group, whose members outlive their parents). A
+# case passes only if every recorded process has gone afterwards, whatever its name or
+# state; on the 90 s failure path only recorded processes that are still the ones
+# recorded are killed. A control, a quick-child and a `sleep 2592000` started here
+# beside the runs (the names the runs use), must still be running, not stopped, at the
+# end. Exits 1 if a case fails.
 # Usage: tools/e2e-macos/standins/status-cases [SCRIPT]
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 script=${1:-"$here/../../../scripts/e2e-macos.sh"}
 work=$(mktemp -d "${TMPDIR:-/tmp}/e2e-status-cases.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+controls=""
+tracker=""
+cleanup() {
+	if [ -n "$tracker" ]; then kill "$tracker" 2>/dev/null || true; fi
+	if [ -n "$controls" ]; then
+		# shellcheck disable=SC2086 # a list of pids
+		{ kill -KILL $controls && wait $controls; } 2>/dev/null || true
+	fi
+	rm -rf "$work"
+}
+trap cleanup EXIT
 mkfifo "$work/hold"
 failures=0
-pattern='e2etest|standins/(quick-child|late-child|bad-status|quick-exit)'
+
+snapshot() { ps -A -o pid= -o ppid= -o pgid= -o stat= -o lstart= -o command= 2>/dev/null; }
+# Records in $work/ids, as "pid start-time", every process of the run rooted at
+# $work/ids already holds, that the snapshot on stdin shows, and its command in
+# $work/names.
+# shellcheck disable=SC2016 # an awk program
+track_awk='
+BEGIN { while ((getline line < ids) > 0) rec[line] = 1; close(ids) }
+{
+	pid = $1; ppid[pid] = $2; pgid[pid] = $3; start[pid] = $5 " " $6 " " $7 " " $8 " " $9
+	cmd[pid] = $0; sub(/^ *([^ ]+ +){9}/, "", cmd[pid])
+	n++; order[n] = pid
+	if ((pid " " start[pid]) in rec) own[pid] = 1
+}
+END {
+	for (i = 1; i <= n; i++) {
+		p = order[i]
+		if (p in own) lead[p] = 1
+	}
+	do {
+		changed = 0
+		for (i = 1; i <= n; i++) {
+			p = order[i]
+			if (!(p in own) && ((ppid[p] in own) || (pgid[p] in lead))) { own[p] = 1; changed = 1 }
+		}
+	} while (changed)
+	for (p in own) if (!((p " " start[p]) in rec)) {
+		print p " " start[p] >> ids
+		print p " " cmd[p] >> names
+	}
+}'
+track() { snapshot | awk -v ids="$work/ids" -v names="$work/names" "$track_awk"; }
+# Prints the recorded processes that are still the ones recorded, with their state.
+alive() {
+	snapshot | awk -v ids="$work/ids" '
+		BEGIN { while ((getline line < ids) > 0) rec[line] = 1; close(ids) }
+		(($1 " " $5 " " $6 " " $7 " " $8 " " $9) in rec) { print $1 "[" $4 "]" }'
+}
+started() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//'; }
+
+# The control: processes named as the runs' are, that no run owns.
+"$here/quick-child" &
+controls="$!"
+sleep 2592000 &
+controls="$controls $!"
 
 # run NAME EXPECTED-STATUS ENV...: runs the script with ENV, bounded at 90 s.
 run() {
 	name=$1 expected=$2
 	shift 2
+	: >"$work/ids"
+	: >"$work/names"
 	set -m
 	env "$@" "$script" --no-build --timeout 4 >"$work/out" 2>&1 &
 	pid=$!
 	set +m
+	echo "$pid $(started "$pid")" >"$work/ids"
+	(
+		while :; do
+			track
+			sleep 0.1
+		done
+	) &
+	tracker=$!
 	waited=0
 	while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 450 ]; do
 		sleep 0.2
@@ -32,23 +104,35 @@ run() {
 	done
 	if kill -0 "$pid" 2>/dev/null; then
 		got="still waiting after 90 s"
-		kill -KILL -- "-$pid" 2>/dev/null || true
+		kill "$tracker" 2>/dev/null || true
+		wait "$tracker" 2>/dev/null
+		tracker=""
+		track
+		# Only this run's processes, by identity (pid and start time).
+		# shellcheck disable=SC2046 # a list of pids
+		kill -STOP $(alive | sed 's/\[.*//') 2>/dev/null || true
+		# shellcheck disable=SC2046
+		kill -KILL $(alive | sed 's/\[.*//') 2>/dev/null || true
 		wait "$pid" 2>/dev/null
-		# What the hung run left: its anchor (a group of its own) and the stand-in's.
-		pkill -KILL -f "$pattern" 2>/dev/null || true
-		pkill -KILL -f 'sleep 2592000' 2>/dev/null || true
 	else
 		wait "$pid"
 		got=$?
 	fi
 	sleep 1
-	left=$(pgrep -fl "$pattern" | grep -v status-cases || true)
-	stopped=$(ps -A -o stat= -o command= | awk '$1 ~ /^T/' | grep -E "$pattern|sleep 2592000" || true)
+	if [ -n "$tracker" ]; then
+		kill "$tracker" 2>/dev/null || true
+		wait "$tracker" 2>/dev/null
+		tracker=""
+	fi
+	recorded=$(wc -l <"$work/ids" | tr -d ' ')
+	# The kinds of process recorded, by command (the anchor shows as its sleep).
+	kinds=$(sed -E 's/^[0-9]+ //' "$work/names" | grep -oE 'sleep 2592000|quick-child|quick-exit|bad-status|e2e-macos.sh|tail -f' | sort | uniq -c | awk '{ $1 = $1 "x"; print }' | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+	left=$(alive | tr '\n' ' ' | sed 's/ $//')
 	grep -E '^(stand-in|e2e-macos):' "$work/out" | sed 's/^/     /'
-	if [ "$got" = "$expected" ] && [ -z "$left" ] && [ -z "$stopped" ]; then
-		echo "ok   $name: exit $got; nothing left, nothing stopped"
+	if [ "$got" = "$expected" ] && [ -z "$left" ]; then
+		echo "ok   $name: exit $got; $recorded processes recorded ($kinds, ...), none left (any name or state)"
 	else
-		echo "FAIL $name: exit $got (expected $expected); left [${left}]; stopped [${stopped}]"
+		echo "FAIL $name: exit $got (expected $expected); of $recorded recorded, left: [$left]"
 		failures=$((failures + 1))
 	fi
 }
@@ -56,6 +140,17 @@ run() {
 run "status write paused while the watchdog fires" 124 \
 	MODE=exit E2E_XCODEBUILD="$here/quick-exit" E2E_ANCHOR_HOLD="$work/hold"
 run "status write fails" 1 E2E_XCODEBUILD="$here/bad-status"
+
+for c in $controls; do
+	st=$(ps -o stat= -p "$c" 2>/dev/null | tr -d ' ')
+	case "$st" in
+	"" | Z* | T*)
+		echo "FAIL control: pid $c ($(ps -o command= -p "$c" 2>/dev/null)) is [${st:-gone}], not running"
+		failures=$((failures + 1))
+		;;
+	*) echo "ok   control: pid $c ($(ps -o command= -p "$c")) still running [$st]" ;;
+	esac
+done
 
 if [ "$failures" -ne 0 ]; then
 	echo "status-cases: $failures failed"
