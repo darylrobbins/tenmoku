@@ -417,6 +417,11 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("debug.evaluate", "Debug: Evaluate Selection", "workbench"),
     ("debug.hover", "Debug: Show Value at Cursor", "workbench"),
     (
+        "debug.test_at_cursor",
+        "Debug: Debug Test at Cursor",
+        "workbench",
+    ),
+    (
         "workbench.untrust_folder",
         "Untrust This Folder",
         "workbench",

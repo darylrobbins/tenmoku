@@ -1,4 +1,4 @@
-//! The bundled `lazyvim` preset's `<leader>d` debug keys.
+//! The bundled `lazyvim` preset's `<leader>d` debug keys, and `<leader>td`.
 
 use std::sync::Arc;
 
@@ -65,4 +65,11 @@ fn leader_de_is_mapped_in_normal_and_visual() {
     assert_eq!(taken(&mut vim).as_deref(), Some("debug.evaluate"));
     vim.feed("v<Space>de").unwrap();
     assert_eq!(taken(&mut vim).as_deref(), Some("debug.evaluate"));
+}
+
+#[test]
+fn leader_td_dispatches_debug_test_at_cursor() {
+    let mut vim = vim();
+    vim.feed("<Space>td").unwrap();
+    assert_eq!(taken(&mut vim).as_deref(), Some("debug.test_at_cursor"));
 }

@@ -51,6 +51,7 @@ const TABLE: &[(&str, &str)] = &[
     ("<leader>tr", "tests.run_at_cursor"),
     ("<leader>tt", "tests.run_file"),
     ("<leader>tl", "tests.rerun_last"),
+    ("<leader>td", "debug.test_at_cursor"),
     ("<leader>xx", "problems.show"),
     ("<leader>xq", "quickfix.toggle"),
     ("<leader>xl", "location.toggle"),

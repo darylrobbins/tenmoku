@@ -279,7 +279,8 @@ fn the_test_lens_reads_run_test_in_ui_small_sans(cx: &mut TestAppContext) {
         (drawn, editor.theme().clone())
     });
     let texts: Vec<&str> = drawn.iter().map(|text| text.text.as_ref()).collect();
-    assert_eq!(texts, ["▷ Run tests", "▷ Run test"]);
+    // A test's lens has its Debug item after Run test (debug_test.rs).
+    assert_eq!(texts, ["▷ Run tests", "▷ Run test", " · ", "Debug"]);
     let ui = project.cx.update(|_, cx| fe_gpui::ui_font_family(cx));
     for text in &drawn {
         // The design's UI small: sans, 500, 11 px at the default 13.

@@ -77,6 +77,7 @@ mod debug_java;
 mod debug_panel;
 mod debug_runs;
 pub(crate) mod debug_session;
+mod debug_test;
 mod debug_toolbar;
 mod default_fonts;
 mod default_keymaps;

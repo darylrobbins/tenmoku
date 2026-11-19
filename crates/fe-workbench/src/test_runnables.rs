@@ -13,9 +13,14 @@
 //! - Python: a top-level `test*` function, a `Test*` class and the `test*`
 //!   methods in it (`TestAdd::test_one`), as pytest collects them.
 //!
-//! [`test_command`] makes a [`Task`] of one, or of a whole file, for
-//! [`crate::Workbench::run_task`]: `cargo test`, `go test` or `pytest`. It
-//! reads `Cargo.toml` and `go.mod` through [`ProjectFiles`], as
+//! [`resolve_test`] resolves one, or a whole file, to a [`ResolvedTest`]:
+//! the command that runs it (`cargo test`, `go test` or `pytest`), and,
+//! as its [`TestFramework`], what a debugger needs that a command line
+//! hides. `tests.run_at_cursor` runs its [`ResolvedTest::task`] with
+//! [`crate::Workbench::run_task`]; `debug.test_at_cursor`
+//! ([`crate::debug_test`]) debugs the same test from its framework, and
+//! never parses the command line back (docs/decisions/r1b9dw3g0g-debugger.md
+//! §7). It reads `Cargo.toml` and `go.mod` through [`ProjectFiles`], as
 //! [`crate::task_defs::load`] does, and never above the root.
 
 use std::{
@@ -353,14 +358,129 @@ pub fn no_runner(language: &str) -> String {
     tr!("workbench-lsp-tests-no-runner", language = language).into()
 }
 
-/// The task that runs `runnable`, of the file at `path`, in `language`, in the
-/// folder `root`: why not, in words, if it can't be told.
+/// A test resolved: what runs it, and what it is to its framework. Run
+/// consumes `program`, `args`, `cwd` and `env` ([`ResolvedTest::task`]);
+/// Debug consumes `framework` and `env`, and `cwd` for pytest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedTest {
+    /// Its task's label, "Test: adds", for tab names and reruns.
+    pub label: String,
+    /// What Run runs: `cargo`, `go`, `python`.
+    pub program: String,
+    pub args: Vec<String>,
+    /// Where Run runs it.
+    pub cwd: PathBuf,
+    /// What it adds to the environment it inherits.
+    pub env: BTreeMap<String, String>,
+    pub framework: TestFramework,
+}
+
+/// What a test is to its framework: what Debug needs that a command line
+/// hides.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TestFramework {
+    /// Run: `cargo test -p <package> … <name> -- [--exact] --nocapture`.
+    /// Debug builds the target's test binary with `--no-run` and launches it
+    /// with `[name, "--exact", "--nocapture"]` in its package's directory.
+    Cargo {
+        package: String,
+        /// The crate of the package it's in, if just one can hold it: a
+        /// module in `src` can be the library's or the binary's.
+        target: Option<CargoTarget>,
+        /// libtest's filter: the test's path in its crate, or a module's
+        /// with `::` after it; empty for a whole file that's a crate root.
+        name: String,
+        /// Whether `name` is the test itself, matched `--exact`.
+        exact: bool,
+    },
+    /// Run and Debug: `python -m pytest <node_id>`.
+    Pytest { node_id: String },
+    /// Run: `go test -run '^Name$' .` in its package's directory.
+    GoTest { package_dir: PathBuf, name: String },
+}
+
+/// A crate of a Cargo package's, as `cargo test`'s target options pick it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CargoTarget {
+    Lib,
+    Bin(String),
+    Test(String),
+    Bench(String),
+    Example(String),
+}
+
+impl CargoTarget {
+    fn of(target: &Target) -> Self {
+        let name = target.name.clone();
+        match target.kind {
+            TargetKind::Lib => Self::Lib,
+            TargetKind::Bin => Self::Bin(name),
+            TargetKind::Test => Self::Test(name),
+            TargetKind::Bench => Self::Bench(name),
+            TargetKind::Example => Self::Example(name),
+        }
+    }
+
+    /// The id of its tests' binary in `package`, as nextest names it and a
+    /// run's results record it: `p` for the library, `p::bin/x`,
+    /// `p::bench/x`, `p::example/x`, and `p::x` for an integration test.
+    pub fn binary_id(&self, package: &str) -> String {
+        let (kind, name) = match self {
+            Self::Lib => return package.to_owned(),
+            Self::Bin(name) => (verbatim!("::bin/"), name),
+            Self::Test(name) => ("::", name),
+            Self::Bench(name) => (verbatim!("::bench/"), name),
+            Self::Example(name) => (verbatim!("::example/"), name),
+        };
+        [package, kind, name].concat()
+    }
+
+    /// The options of `cargo test` that pick it alone in its package.
+    pub fn options(&self) -> Vec<String> {
+        let (flag, name) = match self {
+            Self::Lib => (TargetKind::Lib.flag(), None),
+            Self::Bin(name) => (TargetKind::Bin.flag(), Some(name)),
+            Self::Test(name) => (TargetKind::Test.flag(), Some(name)),
+            Self::Bench(name) => (TargetKind::Bench.flag(), Some(name)),
+            Self::Example(name) => (TargetKind::Example.flag(), Some(name)),
+        };
+        std::iter::once(flag.to_owned())
+            .chain(name.cloned())
+            .collect()
+    }
+}
+
+impl ResolvedTest {
+    /// The task Run runs: its program and arguments in its directory, its
+    /// failures into the Problems panel by its framework's matcher.
+    pub fn task(&self) -> Task {
+        let (source, matcher) = match &self.framework {
+            TestFramework::Cargo { .. } => (Source::Cargo, None),
+            TestFramework::GoTest { .. } => (Source::File, Some("go")),
+            TestFramework::Pytest { .. } => (Source::File, Some("python")),
+        };
+        let argv = std::iter::once(self.program.clone())
+            .chain(self.args.iter().cloned())
+            .collect();
+        Task {
+            label: self.label.clone(),
+            command: TaskCommand::Argv(argv),
+            cwd: self.cwd.clone(),
+            env: self.env.clone(),
+            group: Some(Group::Test),
+            default: false,
+            source,
+            problem_matcher: matcher.map(str::to_owned),
+        }
+    }
+}
+
+/// The task that runs `runnable`, of the file at `path`, in `language`, in
+/// the folder `root`: [`resolve_test`]'s [`ResolvedTest::task`].
 ///
 /// # Errors
 ///
-/// When `language` has no runner, `path` isn't under `root`, or no package
-/// above it in the folder holds it (a Rust file needs a `Cargo.toml` with a
-/// `[package]`, a Go file a `go.mod`).
+/// As [`resolve_test`].
 pub fn test_command(
     files: &dyn ProjectFiles,
     language: &str,
@@ -368,6 +488,24 @@ pub fn test_command(
     path: &Path,
     root: &Path,
 ) -> Result<Task, String> {
+    resolve_test(files, language, runnable, path, root).map(|test| test.task())
+}
+
+/// `runnable`, of the file at `path`, in `language`, in the folder `root`,
+/// resolved: why not, in words, if it can't be told.
+///
+/// # Errors
+///
+/// When `language` has no runner, `path` isn't under `root`, or no package
+/// above it in the folder holds it (a Rust file needs a `Cargo.toml` with a
+/// `[package]`, a Go file a `go.mod`).
+pub fn resolve_test(
+    files: &dyn ProjectFiles,
+    language: &str,
+    runnable: &Runnable,
+    path: &Path,
+    root: &Path,
+) -> Result<ResolvedTest, String> {
     if !TEST_LANGUAGES.contains(&language) {
         return Err(no_runner(language));
     }
@@ -375,31 +513,23 @@ pub fn test_command(
         let path = path.display().to_string();
         return Err(tr!("workbench-lsp-tests-not-in-folder", path = path).into());
     };
-    let (argv, cwd, source, matcher) = match language {
-        "rust" => {
-            let (dir, argv) = cargo_test(files, runnable, path, root, relative)?;
-            (argv, dir, Source::Cargo, None)
+    let (argv, cwd, framework) = match language {
+        "rust" => cargo_test(files, runnable, path, root, relative)?,
+        "go" => go_test(files, runnable, path, root, relative)?,
+        _ => {
+            let (argv, node_id) = pytest(runnable, relative);
+            (argv, root.to_owned(), TestFramework::Pytest { node_id })
         }
-        "go" => {
-            let (dir, argv) = go_test(files, runnable, path, root, relative)?;
-            (argv, dir, Source::File, Some("go"))
-        }
-        _ => (
-            pytest(runnable, relative),
-            root.to_owned(),
-            Source::File,
-            Some("python"),
-        ),
     };
-    Ok(Task {
+    let mut argv = argv.into_iter();
+    let program = argv.next().unwrap_or_default();
+    Ok(ResolvedTest {
         label: tr!("workbench-lsp-tests-task-label", name = &runnable.name).into(),
-        command: TaskCommand::Argv(argv),
+        program,
+        args: argv.collect(),
         cwd,
         env: BTreeMap::new(),
-        group: Some(Group::Test),
-        default: false,
-        source,
-        problem_matcher: matcher.map(str::to_owned),
+        framework,
     })
 }
 
@@ -724,16 +854,16 @@ fn module_path(mut words: Vec<String>) -> Vec<String> {
     words
 }
 
-/// `cargo test` of `runnable` in the file at `path`, `relative` to `root`, and
-/// where it runs: the workspace's directory, as the paths in its output are
-/// from there, else the package's.
+/// `cargo test` of `runnable` in the file at `path`, `relative` to `root`,
+/// where it runs (the workspace's directory, as the paths in its output are
+/// from there, else the package's), and what it is to Cargo.
 fn cargo_test(
     files: &dyn ProjectFiles,
     runnable: &Runnable,
     path: &Path,
     root: &Path,
     relative: &Path,
-) -> Result<(PathBuf, Vec<String>), String> {
+) -> Result<(Vec<String>, PathBuf, TestFramework), String> {
     let shown = slashed(relative);
     let (dir, package) = nearest(files, path, root, CARGO_TOML, package)
         .ok_or_else(|| tr!("workbench-lsp-tests-no-cargo-package", path = &shown).to_string())?;
@@ -760,11 +890,14 @@ fn cargo_test(
     }
     let filter = modules.join("::");
     let exact = runnable.kind == RunnableKind::Test && runnable.exact;
-    match runnable.kind {
-        RunnableKind::Test => argv.push(filter),
+    let name = match runnable.kind {
+        RunnableKind::Test => filter,
         // What's under it, and not `tests_more` beside it.
-        _ if !filter.is_empty() => argv.push(format!("{filter}::")),
-        _ => {}
+        _ if !filter.is_empty() => format!("{filter}::"),
+        _ => String::new(),
+    };
+    if !name.is_empty() {
+        argv.push(name.clone());
     }
     argv.push("--".to_owned());
     if exact {
@@ -775,18 +908,26 @@ fn cargo_test(
     let workspace = nearest(files, &manifest, root, CARGO_TOML, |manifest| {
         is_workspace(manifest).then_some(())
     });
-    Ok((workspace.map_or(dir, |(workspace, ())| workspace), argv))
+    let framework = TestFramework::Cargo {
+        package: package.name,
+        target: place.target.map(CargoTarget::of),
+        name,
+        exact,
+    };
+    let cwd = workspace.map_or(dir, |(workspace, ())| workspace);
+    Ok((argv, cwd, framework))
 }
 
 /// `go test` of `runnable` in the file at `path`, run in its package's
-/// directory, as a failing test's lines name its files from there.
+/// directory, as a failing test's lines name its files from there, that
+/// directory, and what it is to Go.
 fn go_test(
     files: &dyn ProjectFiles,
     runnable: &Runnable,
     path: &Path,
     root: &Path,
     relative: &Path,
-) -> Result<(PathBuf, Vec<String>), String> {
+) -> Result<(Vec<String>, PathBuf, TestFramework), String> {
     nearest(files, path, root, "go.mod", |_| Some(())).ok_or_else(|| {
         tr!("workbench-lsp-tests-no-go-mod", path = slashed(relative)).to_string()
     })?;
@@ -795,19 +936,28 @@ fn go_test(
         argv.extend(["-run".to_owned(), format!("^{}$", runnable.selector)]);
     }
     argv.push(".".to_owned());
-    let package = path.parent().unwrap_or(root);
-    Ok((package.to_owned(), argv))
+    let package = path.parent().unwrap_or(root).to_owned();
+    let framework = TestFramework::GoTest {
+        package_dir: package.clone(),
+        name: match runnable.kind {
+            RunnableKind::File => String::new(),
+            _ => runnable.selector.clone(),
+        },
+    };
+    Ok((argv, package, framework))
 }
 
 /// pytest of `runnable` in the file `relative` to the root, where it runs,
-/// its failures as Python's own tracebacks, which the matcher reads.
-fn pytest(runnable: &Runnable, relative: &Path) -> Vec<String> {
+/// its failures as Python's own tracebacks, which the matcher reads; and
+/// its node id.
+fn pytest(runnable: &Runnable, relative: &Path) -> (Vec<String>, String) {
     let file = slashed(relative);
-    let target = match runnable.kind {
+    let node_id = match runnable.kind {
         RunnableKind::File => file,
         _ => format!("{file}::{}", runnable.selector),
     };
-    ["python", "-m", "pytest", "--tb=native", &target]
+    let argv = ["python", "-m", "pytest", "--tb=native", &node_id]
         .map(str::to_owned)
-        .into()
+        .into();
+    (argv, node_id)
 }

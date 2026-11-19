@@ -1700,6 +1700,19 @@ impl Workbench {
         self.toggle_debug_console(cx.window, cx.cx);
     }
 
+    /// Debug: Debug Test at Cursor
+    ///
+    /// The test `tests.run_at_cursor` would run, resolved the same way,
+    /// debugged (`debug_test.rs`). With args `row`, as the test lens's
+    /// Debug item sends it, the test at that row, wherever the caret is.
+    #[command(id = "debug.test_at_cursor")]
+    fn debug_test_at_cursor_command(&mut self, cx: &mut Cx<Self>) {
+        let row = (kiln::current_invocation(cx.cx))
+            .and_then(|invocation| invocation.args.get("row")?.as_u64())
+            .and_then(|row| u32::try_from(row).ok());
+        self.debug_test(row, cx.window, cx.cx);
+    }
+
     /// Quickfix: Next Item
     #[command(id = "quickfix.next")]
     fn quickfix_next(&mut self, cx: &mut Cx<Self>) {

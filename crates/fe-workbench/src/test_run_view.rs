@@ -38,7 +38,9 @@
 //!   the flaky note, and the action row after it has `Ask an agent`
 //!   ([`failure_ask`]: the chat's composer prefilled, unsent, with the
 //!   assertion and the end of the output attached, and the test's function
-//!   when its file is in the root), and `Open test` jumps to the test's
+//!   when its file is in the root), `Debug this test` debugs it as
+//!   `debug.test_at_cursor` would at its function (`debug_test.rs`), and
+//!   `Open test` jumps to the test's
 //!   function ([`test_source`] finds it with the runnables of
 //!   `test_runnables.rs`). `runs.ask_agent_about_failure` does the same
 //!   from the palette.
@@ -131,6 +133,7 @@ pub(crate) const FLAKY_SELECTOR: &str = "test-run-flaky";
 pub(crate) const ACTIONS_SELECTOR: &str = "test-run-actions";
 pub(crate) const OPEN_TEST_SELECTOR: &str = "test-run-open-test";
 pub(crate) const ASK_AGENT_SELECTOR: &str = "test-run-ask-agent";
+pub(crate) const DEBUG_TEST_SELECTOR: &str = "test-run-debug-test";
 
 /// The tallest the failure's detail gets, the output scrolling in it.
 const FAILURE_MAX_HEIGHT: Pixels = px(280.);
@@ -710,10 +713,23 @@ const SOURCE_FILES_LIMIT: usize = 20_000;
 /// the test's name, and whose module path before it, if any, names the file
 /// or a folder above it.
 pub(crate) fn test_source(root: &Path, id: &TestId) -> Option<(PathBuf, u32)> {
+    test_sources(root, id, 1).into_iter().next()
+}
+
+/// As [`test_source`], every place under `root` that could have the test
+/// `id`, up to `most` of them, in the order they're found: each file's
+/// tests whose selector ends its name and whose module path names the file
+/// or a folder above it. A test's name doesn't say its package or target,
+/// so two packages' `tests::adds` are both places: the caller tells them
+/// apart (`debug_test.rs`).
+pub(crate) fn test_sources(root: &Path, id: &TestId, most: usize) -> Vec<(PathBuf, u32)> {
+    let mut found = Vec::new();
     if id.binary.starts_with("Doc-tests") {
-        return None;
+        return found;
     }
-    let leaf = id.name.rsplit("::").next()?;
+    let Some(leaf) = id.name.rsplit("::").next() else {
+        return found;
+    };
     let needle = leaf;
     let mut dirs = vec![root.to_owned()];
     let mut seen = 0;
@@ -737,7 +753,7 @@ pub(crate) fn test_source(root: &Path, id: &TestId) -> Option<(PathBuf, u32)> {
             } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
                 seen += 1;
                 if seen > SOURCE_FILES_LIMIT {
-                    return None;
+                    return found;
                 }
                 let Ok(text) = fs::read_to_string(&path) else {
                     continue;
@@ -745,19 +761,26 @@ pub(crate) fn test_source(root: &Path, id: &TestId) -> Option<(PathBuf, u32)> {
                 if !text.contains(needle) {
                     continue;
                 }
-                if let Some(row) = test_row_in(&text, &path, &id.name, needle) {
-                    return Some((path, row));
+                for row in test_rows_in(&text, &path, &id.name, needle) {
+                    if found.len() == most {
+                        return found;
+                    }
+                    found.push((path.clone(), row));
                 }
             }
         }
     }
-    None
+    found
 }
 
-/// The row of the test `name`'s function in `text`, the Rust file at `path`.
-fn test_row_in(text: &str, path: &Path, name: &str, needle: &str) -> Option<u32> {
+/// The row of the function of each test in `text`, the Rust file at
+/// `path`, that could be the test `name`.
+fn test_rows_in(text: &str, path: &Path, name: &str, needle: &str) -> Vec<u32> {
     let buffer = fe_buffer::Buffer::new(text);
-    let mut syntax = fe_syntax::Syntax::new(fe_syntax::language_by_name("rust")?, buffer.current());
+    let Some(rust) = fe_syntax::language_by_name("rust") else {
+        return Vec::new();
+    };
+    let mut syntax = fe_syntax::Syntax::new(rust, buffer.current());
     syntax.finish(syntax.parse_job().run());
     let found = runnables("rust", &syntax, buffer.text());
     let words: Vec<String> = path
@@ -767,7 +790,7 @@ fn test_row_in(text: &str, path: &Path, name: &str, needle: &str) -> Option<u32>
             part.strip_suffix(".rs").unwrap_or(&part).to_owned()
         })
         .collect();
-    let runnable = found.iter().find(|runnable| {
+    let candidates = found.iter().filter(|runnable| {
         let Some(module) = name.strip_suffix(runnable.selector.as_str()) else {
             return false;
         };
@@ -779,15 +802,19 @@ fn test_row_in(text: &str, path: &Path, name: &str, needle: &str) -> Option<u32>
         runnable.kind == RunnableKind::Test
             && (module.split("::").filter(|word| !word.is_empty()))
                 .all(|word| words.contains(&word.to_owned()))
-    })?;
+    });
     let lines: Vec<&str> = text.lines().collect();
-    (runnable.rows.clone())
-        .find(|row| {
-            lines
-                .get(*row as usize)
-                .is_some_and(|line| line.contains(needle))
+    candidates
+        .map(|runnable| {
+            (runnable.rows.clone())
+                .find(|row| {
+                    lines
+                        .get(*row as usize)
+                        .is_some_and(|line| line.contains(needle))
+                })
+                .unwrap_or(runnable.rows.start)
         })
-        .or(Some(runnable.rows.start))
+        .collect()
 }
 
 /// The most rows of a test's function the chat is given.
@@ -1278,6 +1305,22 @@ impl TestRunView {
                                     cx.listener(|view, _, window, cx| view.ask_agent(window, cx)),
                                 ),
                             ),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .debug_selector(|| DEBUG_TEST_SELECTOR.into())
+                            .child(
+                                Button::new(
+                                    verbatim!("test-run-debug-test"),
+                                    text!("workbench-debug-test-failure"),
+                                )
+                                .small()
+                                .disabled(!ready)
+                                .on_click(
+                                    cx.listener(|view, _, window, cx| view.debug_test(window, cx)),
+                                ),
+                            ),
                     );
                 Self::failure(&failure, c, code, diff)
                     .children(note)
@@ -1403,6 +1446,23 @@ impl TestRunView {
                 .ok();
         })
         .detach();
+    }
+
+    /// Debug this test: debugs the selected failed test, as
+    /// `debug.test_at_cursor` would at its function (`debug_test.rs`).
+    pub(crate) fn debug_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(test) = self.selected_test() else {
+            return;
+        };
+        if test.outcome != TestOutcome::Failed {
+            return;
+        }
+        let id = test.id.clone();
+        if let Some(workbench) = self.workbench.upgrade() {
+            workbench.update(cx, |workbench, cx| {
+                workbench.debug_failed_test(id, window, cx)
+            });
+        }
     }
 
     /// Opens the selected test's function in the file that has it, if it's

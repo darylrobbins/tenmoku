@@ -258,6 +258,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "debug.step_out",
     "debug.step_over",
     "debug.stop",
+    "debug.test_at_cursor",
     "debug.toggle_breakpoint",
     "debug.toggle_breakpoint_enabled",
     "diagnostics.next",

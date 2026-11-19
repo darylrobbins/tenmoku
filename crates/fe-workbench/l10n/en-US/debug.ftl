@@ -410,3 +410,29 @@ workbench-debug-hover-nothing = No identifier here to evaluate
 workbench-debug-hover-no-frame = The stopped thread has no frame in this file
 # $error is the adapter's message.
 workbench-debug-hover-failed = Couldn't evaluate: { $error }
+
+## Debug Test at Cursor (debug_test.rs, card D13): the command, the test
+## lens's item and the failure detail's button that start it, and why one
+## can't.
+
+command-debug-test_at_cursor = Debug: Debug Test at Cursor
+# The test lens's item after Run test: a click debugs the test under it.
+workbench-debug-test-lens = Debug
+# The test failure detail's button, beside Ask an agent.
+workbench-debug-test-failure = Debug this test
+# A Go test, which only delve's test mode can debug, not yet supported.
+workbench-debug-test-go-needs-delve = Go tests need delve
+# A Rust test in a module both the package's library and its binary could
+# hold, so which test binary to debug can't be told: $name is the test's
+# name, such as adds.
+workbench-debug-test-which-target = Can't tell whether { $name } is in the library or a binary, so there's no one test binary to debug
+# The test build exited 0 without naming the test's executable: $name is
+# the test's name, such as tests::adds.
+workbench-debug-test-no-artifact = The build named no test executable for { $name }
+# The failed test's function wasn't found under the folder, in the
+# package and target its run recorded: $name is the test's name, such as
+# tests::adds; $binary its test binary's, such as p or p::api.
+workbench-debug-test-not-found = Can't find { $binary }'s test { $name } in this folder
+# More than one place in the folder is the failed test: $name and $binary
+# as above.
+workbench-debug-test-ambiguous = More than one test in this folder could be { $binary }'s { $name }, so it can't be told which to debug

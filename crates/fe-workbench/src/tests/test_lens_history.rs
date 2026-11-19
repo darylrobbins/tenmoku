@@ -1,4 +1,4 @@
-//! The test history on a test's lens: plain text after Run test, from the
+//! The test history on a test's lens: plain text after Run test and Debug, from the
 //! root's `fe-runlog` history, read again when a run's results are saved.
 
 use std::fs;
@@ -57,6 +57,15 @@ fn run_test() -> (String, bool) {
     (tr!("workbench-lens-run-test").to_string(), true)
 }
 
+/// The Debug item after Run test (debug_test.rs).
+fn debug() -> (String, bool) {
+    (tr!("workbench-debug-test-lens").to_string(), true)
+}
+
+/// Where the history's text is among a test lens's items: after Run test
+/// and Debug.
+const HISTORY: usize = 2;
+
 #[gpui::test]
 fn passed_in_the_last_8_runs(cx: &mut TestAppContext) {
     let mut this = with_runs(cx, &[Outcome::Passed; 8]);
@@ -64,6 +73,7 @@ fn passed_in_the_last_8_runs(cx: &mut TestAppContext) {
         items(&mut this.0),
         [
             run_test(),
+            debug(),
             (tr!("workbench-lens-passed", count = 8).to_string(), false)
         ]
     );
@@ -82,16 +92,19 @@ fn failed_in_3_of_the_last_8_runs(cx: &mut TestAppContext) {
     let mut this = with_runs(cx, &[P, P, F, P, F, P, P, F]);
     let shown = items(&mut this.0);
     assert_eq!(
-        shown[1],
+        shown[HISTORY],
         (
             tr!("workbench-lens-failed-some", failed = 3, count = 8).to_string(),
             false
         )
     );
-    assert_eq!(shown[1].0, "failed in 3 of the last 8 runs");
+    assert_eq!(shown[HISTORY].0, "failed in 3 of the last 8 runs");
     // More than 8 runs: only the last 8 count.
     record(&mut this, &[F, P, P, P, P, P, P, F]);
-    assert_eq!(items(&mut this.0)[1].0, "failed in 2 of the last 8 runs");
+    assert_eq!(
+        items(&mut this.0)[HISTORY].0,
+        "failed in 2 of the last 8 runs"
+    );
 }
 
 #[gpui::test]
@@ -101,9 +114,9 @@ fn flaky_is_kiseto(cx: &mut TestAppContext) {
     // colour, as the lens row draws it.
     let mut this = with_runs(cx, &[F, P]);
     let flaky = tr!("workbench-lens-flaky").to_string();
-    assert_eq!(items(&mut this.0)[1].0, flaky);
+    assert_eq!(items(&mut this.0)[HISTORY].0, flaky);
     assert_eq!(flaky, "flaky");
-    assert!(this.0.lenses()[1].items[1].warning);
+    assert!(this.0.lenses()[1].items[HISTORY].warning);
     assert!(!this.0.lenses()[1].items[0].warning);
     let (drawn, warning) = this.0.editor.read_with(this.0.cx, |editor, _| {
         let drawn = editor.drawn_annotations().expect("drawn").lenses.clone();
@@ -115,7 +128,7 @@ fn flaky_is_kiseto(cx: &mut TestAppContext) {
     assert_ne!(run.color, warning);
     // Every one of its results a failure: not "of".
     record(&mut this, &[F; 8]);
-    assert_eq!(items(&mut this.0)[1].0, "failed in the last 8 runs");
+    assert_eq!(items(&mut this.0)[HISTORY].0, "failed in the last 8 runs");
 }
 
 #[gpui::test]
@@ -123,16 +136,19 @@ fn no_results_shows_nothing(cx: &mut TestAppContext) {
     let state = tempfile::tempdir().unwrap();
     cx.update(|cx| set_history_dir(cx, state.path().to_owned()));
     let mut project = project(cx, "src/lib.rs", LIB, true);
-    assert_eq!(items(&mut project), [run_test()]);
+    assert_eq!(items(&mut project), [run_test(), debug()]);
     fs::remove_dir_all(state.path()).ok();
 }
 
 #[gpui::test]
 fn it_updates_when_a_run_finishes(cx: &mut TestAppContext) {
     let mut this = with_runs(cx, &[Outcome::Passed]);
-    assert_eq!(items(&mut this.0)[1].0, "passed in the last run");
+    assert_eq!(items(&mut this.0)[HISTORY].0, "passed in the last run");
     record(&mut this, &[Outcome::Failed]);
-    assert_eq!(items(&mut this.0)[1].0, "failed in 1 of the last 2 runs");
+    assert_eq!(
+        items(&mut this.0)[HISTORY].0,
+        "failed in 1 of the last 2 runs"
+    );
 }
 
 #[gpui::test]
@@ -153,8 +169,8 @@ fn another_modules_or_packages_test_of_the_same_name_is_not_this_one(cx: &mut Te
         history.record(&[(id, Outcome::Passed)]).unwrap();
     }
     this.0.cx.update(|_, cx| cx.set_global(HistorySaved(1)));
-    assert_eq!(items(&mut this.0), [run_test()]);
+    assert_eq!(items(&mut this.0), [run_test(), debug()]);
     // Its own, once it has run.
     record(&mut this, &[Outcome::Passed]);
-    assert_eq!(items(&mut this.0).len(), 2);
+    assert_eq!(items(&mut this.0).len(), HISTORY + 1);
 }

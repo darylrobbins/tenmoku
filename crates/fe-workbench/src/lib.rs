@@ -40,6 +40,7 @@ pub mod debug_java;
 mod debug_panel;
 mod debug_runs;
 pub mod debug_session;
+mod debug_test;
 mod debug_toolbar;
 mod diagnostic_owner;
 mod disk_sync;

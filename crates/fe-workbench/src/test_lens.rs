@@ -8,6 +8,8 @@
 //! The provider is asked each frame for a snapshot but has no tree, so it
 //! shows what [`sync`] read off the editor's parse: the rows, anchored to
 //! the text, so an edit moves them at once and a new parse corrects them.
+//! A test's lens reads `▷ Run test · Debug`: its Debug item sends
+//! `debug.test_at_cursor` the row (`debug_test.rs`).
 //! What it read is of a version and a language: a parse in another language
 //! of the same text (the editor's language changed) is read again, and an
 //! editor in no language with runnables shows none.
@@ -42,6 +44,8 @@ use crate::{
 
 /// What a click on a test's lens runs.
 const RUN_ROW: &str = "tests.run_row";
+/// What a click on a test's Debug item runs (`debug_test.rs`).
+const DEBUG_ROW: &str = "debug.test_at_cursor";
 
 /// One lens row: where it sits, what it runs, and for a test the name the
 /// history records it under.
@@ -270,8 +274,16 @@ impl LensProvider for Shown {
                 let mut items = vec![LensItem {
                     title: title(*kind),
                     warning: false,
-                    invocation: Some(click(row)),
+                    invocation: Some(click(RUN_ROW, row)),
                 }];
+                // A test's lens reads `▷ Run test · Debug`.
+                if *kind == RunnableKind::Test {
+                    items.push(LensItem {
+                        title: tr!("workbench-debug-test-lens"),
+                        warning: false,
+                        invocation: Some(click(DEBUG_ROW, row)),
+                    });
+                }
                 let results = path.as_deref().and_then(|path| self.results(path));
                 items.extend(results.map(|(title, warning)| LensItem {
                     title,
@@ -284,10 +296,10 @@ impl LensProvider for Shown {
     }
 }
 
-/// The click on the lens over `row`.
-fn click(row: u32) -> Invocation {
-    Invocation::of(RUN_ROW)
-        .expect("tests.run_row is registered")
+/// The click on the lens over `row` that runs `command`.
+fn click(command: &str, row: u32) -> Invocation {
+    Invocation::of(command)
+        .expect("the lens's commands are registered")
         .args(Value::Object(
             [("row".to_owned(), row.into())].into_iter().collect(),
         ))

@@ -58,6 +58,7 @@ nnoremap <leader>ghr <Cmd>fe:git.revert_hunk<CR>
 nnoremap <leader>tr <Cmd>fe:tests.run_at_cursor<CR>
 nnoremap <leader>tt <Cmd>fe:tests.run_file<CR>
 nnoremap <leader>tl <Cmd>fe:tests.rerun_last<CR>
+nnoremap <leader>td <Cmd>fe:debug.test_at_cursor<CR>
 
 " diagnostics/quickfix
 nnoremap <leader>xx <Cmd>fe:problems.show<CR>

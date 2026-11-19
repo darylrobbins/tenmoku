@@ -8,9 +8,12 @@
 //!   root, apart from `tasks.rerun_last`'s task.
 //!
 //! Each saves the window's files first, as VS Code's tasks do: a test runs
-//! what's on disk, and a file that won't save stops it. Then it builds a
-//! task, reading the package it's in off the main thread, and runs it with [`Workbench::run_task`]: in a terminal tab, its failures in
-//! the Problems panel, and only in a trusted root.
+//! what's on disk, and a file that won't save stops it. Then it resolves
+//! the test ([`Workbench::resolve_test_then`]), reading the package it's in
+//! off the main thread, and runs its task with [`Workbench::run_task`]: in a
+//! terminal tab, its failures in the Problems panel, and only in a trusted
+//! root. `debug.test_at_cursor` ([`crate::debug_test`]) resolves the test
+//! the same way and debugs it.
 //!
 //! `Workbench`'s one `#[kiln::command]` block is `workbench_commands.rs`'s,
 //! so the commands are declared on [`TestCommands`], which no element
@@ -31,7 +34,9 @@ use crate::{
     status_bar::{language_label, plain_text},
     task_commands::project_files,
     task_defs::Task,
-    test_runnables::{Runnable, TEST_LANGUAGES, no_runner, runnable_at, runnables, test_command},
+    test_runnables::{
+        ResolvedTest, Runnable, TEST_LANGUAGES, no_runner, resolve_test, runnable_at, runnables,
+    },
     workbench::toast::{self, Toast},
 };
 
@@ -119,11 +124,27 @@ pub(crate) struct TestFile {
 }
 
 impl Workbench {
-    /// `tests.run_at_cursor`, `tests.run_row` and `tests.run_file` (`target`): saves the
-    /// window's files, as a test runs what's on disk, then builds the test's
-    /// task off the main thread, and runs it if the root is still the one it
-    /// was built for.
+    /// `tests.run_at_cursor`, `tests.run_row` and `tests.run_file` (`target`):
+    /// resolves the test, then runs its task.
     fn run_test(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        self.resolve_test_then(target, window, cx, |workbench, test, window, cx| {
+            #[cfg(test)]
+            consumed(cx, "run", &test);
+            workbench.run_test_task(test.task(), window, cx)
+        });
+    }
+
+    /// Saves the window's files, as a test runs what's on disk, then
+    /// resolves `target`'s test off the main thread, and hands it to `then`
+    /// if the root is still the one it was resolved in: what Run and Debug
+    /// both consume. Why there's none goes in a toast.
+    pub(crate) fn resolve_test_then(
+        &mut self,
+        target: Target,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, ResolvedTest, &mut Window, &mut Context<Self>) + 'static,
+    ) {
         let Some(root) = self.root().map(Path::to_owned) else {
             return toast::show(cx, Toast::info(no_folder()));
         };
@@ -137,6 +158,10 @@ impl Workbench {
         };
         let saving = self.save_all(window, cx);
         let files = project_files(cx);
+        #[cfg(test)]
+        let gate = (cx.has_global::<ResolveGates>())
+            .then(|| cx.global_mut::<ResolveGates>().0.pop_front())
+            .flatten();
         cx.spawn_in(window, async move |workbench, cx| {
             saving.await;
             let saved = workbench.update(cx, |workbench, cx| {
@@ -145,17 +170,21 @@ impl Workbench {
             if !saved.unwrap_or(false) {
                 return;
             }
-            let building = cx.background_spawn({
+            let resolving = cx.background_spawn({
                 let root = root.clone();
-                async move { test_command(&*files, language, &runnable, &path, &root) }
+                async move { resolve_test(&*files, language, &runnable, &path, &root) }
             });
-            let built = building.await;
+            let resolved = resolving.await;
+            #[cfg(test)]
+            if let Some(gate) = gate {
+                gate.recv().await.ok();
+            }
             let ran = workbench.update_in(cx, |workbench, window, cx| {
                 if workbench.root() != Some(root.as_path()) {
                     return;
                 }
-                match built {
-                    Ok(task) => workbench.run_test_task(task, window, cx),
+                match resolved {
+                    Ok(test) => then(workbench, test, window, cx),
                     Err(message) => toast::show(cx, Toast::info(message)),
                 }
             });
@@ -264,6 +293,30 @@ impl Workbench {
         let (root, task) = cx.try_global::<LastTests>()?.0.get(&cx.entity_id())?;
         (self.root() == Some(root.as_path())).then(|| task.clone())
     }
+}
+
+/// The resolved tests Run (`"run"`) and Debug (`"debug"`) consumed, in
+/// order, for tests.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct ConsumedTests(pub(crate) Vec<(&'static str, ResolvedTest)>);
+
+#[cfg(test)]
+impl Global for ConsumedTests {}
+
+/// The gates the next resolutions wait on before they're handed over, one
+/// each, in turn: for tests that need resolutions to come in an order.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct ResolveGates(pub(crate) std::collections::VecDeque<async_channel::Receiver<()>>);
+
+#[cfg(test)]
+impl Global for ResolveGates {}
+
+/// Notes that `by` consumed `test`.
+#[cfg(test)]
+pub(crate) fn consumed(cx: &mut App, by: &'static str, test: &ResolvedTest) {
+    (cx.default_global::<ConsumedTests>().0).push((by, test.clone()));
 }
 
 /// Runs `run` on the workbench of the window the command was dispatched in,
