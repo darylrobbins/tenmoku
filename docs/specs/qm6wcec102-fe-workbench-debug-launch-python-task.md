@@ -38,3 +38,9 @@ GH CI 44405849017 on 8ba6f008c, windows Test. Production is consistent in every 
 - project_new_menu.rs:367: `fs::canonicalize(dir.path())` gives `\\?\`, so `reveal` finds no row ("src expanded: [(0, "src"), (0, "Cargo.toml")]"). Use `dunce::canonicalize`.
 
 If one of these turns out to be a production mismatch that users see, note it in the decision file for a separate card; don't change production here.
+
+## Implementation notes
+
+- `${file}` and `${fileDirname}` expand through `Path::join` of the root, so on Windows they come out with mixed separators (`/project\src/pkg/tool.py`, `/project\src/pkg`). The tests pin that form (built from `root().join(..)`); production is unchanged and no respec was made. Whether users see this mix is left for a separate card.
+- The debug log stores the launch request as JSON, so the tests look for the JSON-escaped program path.
+- The read-run test passes the artifact line by environment variable: Windows argument quoting strips the quotes from a JSON argv word.
