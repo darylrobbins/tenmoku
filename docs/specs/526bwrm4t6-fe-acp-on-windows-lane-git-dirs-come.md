@@ -1,7 +1,7 @@
 ---
 task_uid: "01m7reb1ze9jv2zy526bwrm4t6"
 task: "T1967"
-rev: 2
+rev: 3
 type: "bugfix"
 complexity: "m"
 criteria:
@@ -48,3 +48,11 @@ The dunce fix alone leaves C1 and C2 failing on Windows. `GLOB_SYNTAX` included 
 
 - claude.rs, Windows only (`cfg(windows)`): `path_text` writes Claude Code's POSIX form. A drive path `C:\Users\me` (or verbatim `\\?\C:\…`) becomes `/c/Users/me`, so deny rules read `Read(//c/Users/…/**/.env*)`, and a UNC path becomes `//server/share/…`. `denyWrite` and `allowWrite` use the same form. `GLOB_SYNTAX` leaves out `\`, which is the separator there. The lane glob check runs on `path_text`. `resolve` doesn't canonicalize a bare drive prefix. On macOS and Linux, `path_text` and `GLOB_SYNTAX` are unchanged, so the profile is byte-identical.
 - tests/claude_profile.rs: `profile_text`, which is `path_text` off Windows and the POSIX form on Windows, replaces `path_text` where an expectation reads a profile path (deny rules, `denyWrite`, `allowWrite`). `outside_dir()`, which is `/var/tmp` off Windows and the temp dir on Windows, replaces the literal `/var/tmp`. The `re\po` entry of `sandbox_allow_write_refuses_glob_patterns` is `cfg(not(windows))`. Off Windows, each of these gives the same strings as before.
+
+## Self-respec (rev 3): the fake agent's hang-up on Windows
+
+The first windows CI run (draft PR #4) left 3 C2 tests failing:
+
+- `state_sandbox_loosened_names_the_file_and_key`: the fixture's `home/.claude` joins differently from how the settings check joins `settings.json`, so the separators in the path didn't match the message. The fixture now joins by component. The strings off Windows are unchanged.
+- `state_claude_not_installed`: Windows has no execute bit, so the "not executable" file case now runs on Unix only.
+- `a_transport_failure_with_the_adapter_alive_is_disconnected`: the fake agent's `hang_up` was `exit(9)` off Unix. On Windows it now closes the stdout handle (std `OwnedHandle`), so the adapter stays alive as the test expects. This adds `crates/fe-acp/src/bin/fe-acp-fake-agent.rs` to the scope.
