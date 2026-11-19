@@ -252,13 +252,14 @@ fn state_adapter_not_installed() {
 #[test]
 fn state_claude_not_installed() {
     let fixture = Fixture::new();
-    let not_executable = fixture.base.join("claude");
-    std::fs::write(&not_executable, "#!/bin/sh\n").unwrap();
-    for claude in [
-        None,
-        Some(fixture.base.join("no-such-claude")),
-        Some(not_executable.clone()),
-    ] {
+    let mut missing = vec![None, Some(fixture.base.join("no-such-claude"))];
+    // A file without an execute bit; Windows has none, so any file runs.
+    if cfg!(unix) {
+        let not_executable = fixture.base.join("claude");
+        std::fs::write(&not_executable, "#!/bin/sh\n").unwrap();
+        missing.push(Some(not_executable));
+    }
+    for claude in missing {
         let mut spec = fixture.spec(json!({}));
         spec.claude = claude;
         assert_eq!(

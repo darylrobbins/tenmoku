@@ -107,7 +107,10 @@ impl Fixture {
         Environment {
             managed_dirs: vec![base.join("managed")],
             managed_preferences: vec![base.join("prefs")],
-            user_config_dir: Some(base.join("home/.claude")),
+            // Joined by component, as the settings check joins
+            // `settings.json`, so its message names the path as
+            // `user_settings` writes it on Windows too.
+            user_config_dir: Some(base.join("home").join(".claude")),
             uninspectable_platform: None,
         }
     }
@@ -117,7 +120,10 @@ impl Fixture {
     }
 
     fn user_settings(&self) -> PathBuf {
-        self.base().join("home/.claude/settings.json")
+        self.base()
+            .join("home")
+            .join(".claude")
+            .join("settings.json")
     }
 
     fn drop_in(&self, name: &str) -> PathBuf {
