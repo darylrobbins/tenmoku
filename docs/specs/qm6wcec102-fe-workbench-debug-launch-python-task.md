@@ -44,3 +44,4 @@ If one of these turns out to be a production mismatch that users see, note it in
 - `${file}` and `${fileDirname}` expand through `Path::join` of the root, so on Windows they come out with mixed separators (`/project\src/pkg/tool.py`, `/project\src/pkg`). The tests pin that form (built from `root().join(..)`); production is unchanged and no respec was made. Whether users see this mix is left for a separate card.
 - The debug log stores the launch request as JSON, so the tests look for the JSON-escaped program path.
 - The read-run test passes the artifact line by environment variable: Windows argument quoting strips the quotes from a JSON argv word.
+- On Windows the read-run test's artifact line is kept short (20-character `src_path`): CI run 2 showed a 3000-character line coming back cut after ~230 characters through the terminal path. That cut may be a production limit on long cargo JSON lines under ConPTY; not investigated here, for a separate card.

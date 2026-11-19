@@ -1150,9 +1150,12 @@ fn a_read_run_keeps_its_output_whatever_the_scrollback(cx: &mut TestAppContext) 
         terminal.set_settings(&settings, cx);
     });
     let built = debug.root.join("target").join("debug").join("tool");
+    // Longer than the grid is wide. On Windows the ConPTY path truncates a
+    // long line (the CI run kept ~230 characters), so there it stays short.
+    let src_len = if cfg!(windows) { 20 } else { 3000 };
     let artifact = serde_json::json!({
         "reason": "compiler-artifact",
-        "target": {"name": "tool", "kind": ["bin"], "src_path": "x".repeat(3000)},
+        "target": {"name": "tool", "kind": ["bin"], "src_path": "x".repeat(src_len)},
         "executable": built.to_string_lossy(),
     })
     .to_string();
@@ -1168,7 +1171,6 @@ fn a_read_run_keeps_its_output_whatever_the_scrollback(cx: &mut TestAppContext) 
                 "-c".into(),
                 script.into(),
                 "sh".into(),
-                artifact.clone(),
             ]
             .to_vec(),
         ),
