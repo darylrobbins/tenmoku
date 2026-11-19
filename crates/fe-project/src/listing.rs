@@ -8,6 +8,7 @@
 //! listing or [`crate::FileTree::apply`] outside the project, whenever the
 //! swap happens.
 
+use crate::fs_ops::EntryId;
 use kiln_l10n::tr;
 use std::{
     cmp::Ordering,
@@ -881,6 +882,80 @@ pub(crate) fn ignores_case(_: &File) -> bool {
 #[cfg(windows)]
 pub(crate) fn ignores_case(_: &File) -> bool {
     true
+}
+
+/// What `metadata` says an entry is, birth time included where there is one.
+#[cfg(unix)]
+pub(crate) fn entry_of(metadata: &std::fs::Metadata) -> EntryId {
+    // `created` is the file system's birth time (statx), where it has one.
+    #[cfg(target_os = "linux")]
+    let born = metadata.created().ok().map(|at| {
+        match at.duration_since(std::time::UNIX_EPOCH) {
+            Ok(since) => (since.as_secs() as i64, since.subsec_nanos()),
+            // Before the epoch: whole seconds rounded down and the
+            // nanoseconds after them, as statx has it.
+            Err(before) => {
+                let before = before.duration();
+                match before.subsec_nanos() {
+                    0 => (-(before.as_secs() as i64), 0),
+                    nanos => (-(before.as_secs() as i64) - 1, 1_000_000_000 - nanos),
+                }
+            }
+        }
+    });
+    #[cfg(not(target_os = "linux"))]
+    let born = None;
+    EntryId {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        born,
+    }
+}
+
+/// The entry `name` in `dir` as [`EntryId`] has it, without following a
+/// symlink: [`stat_at`], with the birth time where Linux gives one.
+#[cfg(target_os = "linux")]
+pub(crate) fn entry_at(dir: &File, name: &OsStr) -> io::Result<EntryId> {
+    let c_name = CString::new(name.as_bytes())?;
+    let mut stat = std::mem::MaybeUninit::<libc::statx>::uninit();
+    // SAFETY: `dir` is an open descriptor, `c_name` is NUL-terminated and
+    // `stat` is valid for writes of a `libc::statx`.
+    let result = unsafe {
+        libc::statx(
+            dir.as_raw_fd(),
+            c_name.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+            libc::STATX_INO | libc::STATX_BTIME,
+            stat.as_mut_ptr(),
+        )
+    };
+    if result != 0 {
+        let error = io::Error::last_os_error();
+        // A sandbox that filters `statx`, or a kernel without it: no birth
+        // time, as `Metadata::created` has there.
+        return match error.raw_os_error() {
+            Some(libc::ENOSYS | libc::EPERM) => {
+                stat_at(dir, name).map(|s| EntryId::without_born(s.id))
+            }
+            _ => Err(error),
+        };
+    }
+    // SAFETY: `statx` succeeded, so it filled `stat`.
+    let stat = unsafe { stat.assume_init() };
+    let born = (stat.stx_mask & libc::STATX_BTIME != 0)
+        .then_some((stat.stx_btime.tv_sec, stat.stx_btime.tv_nsec));
+    Ok(EntryId {
+        dev: libc::makedev(stat.stx_dev_major, stat.stx_dev_minor),
+        ino: stat.stx_ino,
+        born,
+    })
+}
+
+/// The entry `name` in `dir`, without following a symlink: no birth time
+/// off Linux.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn entry_at(dir: &File, name: &OsStr) -> io::Result<EntryId> {
+    stat_at(dir, name).map(|stat| EntryId::without_born(stat.id))
 }
 
 /// The identity of an open file.

@@ -128,7 +128,7 @@ struct Move {
     rel: PathBuf,
     /// The entry's device and inode when it was asked about
     /// ([`ops::entry_identity`]).
-    identity: Option<(u64, u64)>,
+    identity: Option<fe_project::fs_ops::EntryId>,
     root: PathBuf,
     from: PathBuf,
     dir: PathBuf,

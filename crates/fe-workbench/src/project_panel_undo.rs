@@ -272,7 +272,7 @@ pub(super) enum Probe {
 /// What the entry at `path` is now, a symlink itself rather than its
 /// target.
 pub(super) fn probe(path: &Path) -> Probe {
-    match kiln::core::platform::path_identity(path, false) {
+    match ops::entry_identity_of(path) {
         Ok(id) => Probe::Is(id),
         Err(err)
             if matches!(
@@ -760,14 +760,14 @@ mod history_tests {
     fn made(name: &str, id: u64) -> Step {
         Step::Made(vec![Made {
             path: PathBuf::from(name),
-            identity: (0, id),
+            identity: fe_project::fs_ops::EntryId::without_born((0, id)),
         }])
     }
 
     /// The identities of each stack's steps, bottom first.
     fn ids(history: &History) -> (Vec<u64>, Vec<u64>) {
         let id = |step: &Step| match step {
-            Step::Made(made) => made[0].identity.1,
+            Step::Made(made) => made[0].identity.ino,
             _ => unreachable!(),
         };
         (

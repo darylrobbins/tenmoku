@@ -179,7 +179,7 @@ impl From<Text> for FieldError {
 struct Waiting {
     naming: Naming,
     /// The entry asked about ([`entry_identity`]).
-    entry: Option<(u64, u64)>,
+    entry: Option<fs_ops::EntryId>,
     /// Sent to stop waiting: the rename is made without the edits.
     skip: async_channel::Sender<()>,
 }
@@ -568,7 +568,7 @@ impl ProjectPanel {
     fn rename_answered(
         &mut self,
         naming: Naming,
-        entry: Option<(u64, u64)>,
+        entry: Option<fs_ops::EntryId>,
         edits: Vec<FileEdits>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1194,7 +1194,7 @@ struct Asked {
     path: PathBuf,
     name: String,
     shown: PathBuf,
-    identity: Option<(u64, u64)>,
+    identity: Option<fs_ops::EntryId>,
     folder: bool,
 }
 
@@ -1336,10 +1336,22 @@ fn restorable(trashed: Vec<fs_ops::Trashed>) -> Vec<fs_ops::Trashed> {
         .collect()
 }
 
-/// The device and inode of the entry at `path`, a symlink itself rather
+/// The device, inode and birth time of the entry at `path`, a symlink itself rather
 /// than its target; `None` if there's none.
-pub(super) fn entry_identity(path: &std::path::Path) -> Option<(u64, u64)> {
-    kiln::core::platform::path_identity(path, false).ok()
+pub(super) fn entry_identity(path: &std::path::Path) -> Option<fs_ops::EntryId> {
+    entry_identity_of(path).ok()
+}
+
+/// [`entry_identity`], saying why there's none.
+pub(super) fn entry_identity_of(path: &std::path::Path) -> std::io::Result<fs_ops::EntryId> {
+    #[cfg(unix)]
+    {
+        fs_ops::entry_identity(path)
+    }
+    #[cfg(windows)]
+    {
+        kiln::core::platform::path_identity(path, false).map(fs_ops::EntryId::without_born)
+    }
 }
 
 /// The paths the panel's operations running in the background work in, in

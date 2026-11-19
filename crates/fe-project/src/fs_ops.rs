@@ -151,9 +151,65 @@ pub fn create_dir(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
 }
 
 /// What an entry is: its device and inode (on Windows, its volume's serial
-/// number and its file index), as `kiln::core::platform::path_identity`
-/// gives it.
-pub type EntryId = (u64, u64);
+/// number and its file index) and, on Linux where the file system reports
+/// one, its birth time. The fields compare as they are, never folded: where
+/// `born` is `None` on both sides two entries are the same when their device
+/// and inode are, as before.
+///
+/// ext4 and xfs hand a freed inode straight to the next file made, so a file
+/// deleted and re-created at a path can have the same device and inode; its
+/// birth time differs. Two entries made within one kernel clock tick (a few
+/// milliseconds) share a birth time, and a file system that reports none
+/// can't tell them apart at all (docs/decisions/1f6gnnmvk4-entry-identity-reuse.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EntryId {
+    pub dev: u64,
+    pub ino: u64,
+    /// The birth time as seconds and nanoseconds since the Unix epoch.
+    pub born: Option<(i64, u32)>,
+}
+
+impl EntryId {
+    /// An entry whose birth time isn't known.
+    pub fn without_born((dev, ino): (u64, u64)) -> Self {
+        EntryId {
+            dev,
+            ino,
+            born: None,
+        }
+    }
+}
+
+/// Test builds compare an id with a bare (device, inode), ignoring the birth
+/// time.
+#[cfg(any(test, feature = "test-support"))]
+impl PartialEq<(u64, u64)> for EntryId {
+    fn eq(&self, other: &(u64, u64)) -> bool {
+        (self.dev, self.ino) == *other
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl PartialEq<EntryId> for (u64, u64) {
+    fn eq(&self, other: &EntryId) -> bool {
+        other == self
+    }
+}
+
+/// What the entry at `path` is now, a symlink itself rather than its target.
+#[cfg(unix)]
+pub fn entry_identity(path: &Path) -> io::Result<EntryId> {
+    std::fs::symlink_metadata(path).map(|meta| listing::entry_of(&meta))
+}
+
+/// `id`'s entry `name` in `dir` with its birth time, if it is still the entry
+/// `id` says; else `id` as it is.
+fn entry_with(dir: &File, name: &OsStr, id: Identity) -> EntryId {
+    match listing::entry_at(dir, name) {
+        Ok(entry) if (entry.dev, entry.ino) == id => entry,
+        _ => EntryId::without_born(id),
+    }
+}
 
 /// An entry an operation made: its path, absolute under the root, and what
 /// it is.
@@ -270,12 +326,14 @@ fn create(
         if folder {
             mkdir_at(&parent, last, 0o777)?;
             reach(Point::Recording)?;
-            confirm_made_dir(&parent, last).map(|(id, _)| id)
+            let (id, _) = confirm_made_dir(&parent, last)?;
+            Ok((id, entry_with(&parent, last, id)))
         } else {
             let mut file = create_new_file(&parent, last, 0o666)?;
             let id = listing::identity(&file)?;
+            let entry = entry_with(&parent, last, id);
             if contents.is_empty() {
-                return Ok(id);
+                return Ok((id, entry));
             }
             file.write_all(contents)
                 .inspect_err(|_| {
@@ -285,7 +343,7 @@ fn create(
                         remove_at(&parent, last, false).ok();
                     }
                 })
-                .map(|()| id)
+                .map(|()| (id, entry))
         }
     })();
     if result.is_err() {
@@ -296,17 +354,21 @@ fn create(
             discard(parent, name, &owned);
         }
     }
-    let id = result?;
+    let (_, entry) = result?;
     // The first folder made, below those that were there.
     let first = match first_made {
         Some((at, id)) => {
             let mut first = root.path.clone();
             first.extend(dir_names.iter().chain(&names[..=at]));
+            let id = match made.first() {
+                Some((above, name, _)) => entry_with(above, name, id),
+                None => EntryId::without_born(id),
+            };
             Placed { path: first, id }
         }
         None => Placed {
             path: path.clone(),
-            id,
+            id: entry,
         },
     };
     Ok(Created { path, first })
@@ -430,6 +492,8 @@ pub struct Trashed {
     at: Option<PathBuf>,
     /// What it is, so another entry found there isn't taken for it.
     id: Identity,
+    /// The same with its birth time, as [`Trashed::id`] gives it.
+    entry: EntryId,
 }
 
 impl Trashed {
@@ -447,7 +511,7 @@ impl Trashed {
 
     /// What the entry is, as it is in the Trash and once it's put back.
     pub fn id(&self) -> EntryId {
-        self.id
+        self.entry
     }
 
     /// Whether the entry is still where the record says in the Trash, as
@@ -501,10 +565,16 @@ pub fn trash_recorded(root: &Path, paths: &[impl AsRef<Path>]) -> io::Result<Vec
     for path in full {
         let target = root.resolve(&path)?;
         let id = listing::stat_at(&target.parent, target.name)?.id;
+        let entry = entry_with(&target.parent, target.name, id);
         let at = trash_target(&target)?;
         #[cfg(any(test, feature = "test-support"))]
         let at = at.or_else(|| in_test_trash(&target, id));
-        trashed.push(Trashed { path, at, id });
+        trashed.push(Trashed {
+            path,
+            at,
+            id,
+            entry,
+        });
     }
     Ok(trashed)
 }
@@ -1272,6 +1342,7 @@ pub fn duplicate_recorded(root: &Path, path: &Path) -> io::Result<Placed> {
     let target = root.resolve(path)?;
     let kind = listing::stat_at(&target.parent, target.name)?.kind;
     let (name, id) = copy_first_free(&target, kind, &target.parent, 1)?;
+    let id = entry_with(&target.parent, &name, id);
     Ok(Placed {
         path: target.path.with_file_name(name),
         id,
@@ -1310,6 +1381,7 @@ pub fn copy_into_recorded(root: &Path, path: &Path, dir: &Path) -> io::Result<Pl
     let (name, id) = copy_first_free(&target, source.kind, &to, 0)?;
     let mut copy = root.path.clone();
     copy.extend(&dir_names);
+    let id = entry_with(&to, &name, id);
     copy.push(name);
     Ok(Placed { path: copy, id })
 }

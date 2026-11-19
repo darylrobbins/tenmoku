@@ -113,10 +113,6 @@ fn another_entry_in_its_place_in_the_trash_is_not_taken() {
     fs::write(&file, "trashed\n").unwrap();
     let mut trashed = trash_one(&root, &file);
     let at = trashed.location().unwrap().to_owned();
-    // Keep the old entry linked while the new one is written, so the new
-    // one cannot be handed its freed inode (ext4 and tmpfs reuse it at once).
-    let keep = root.join("kept-link");
-    fs::hard_link(&at, &keep).unwrap();
     fs::remove_file(&at).unwrap();
     fs::write(&at, "another\n").unwrap();
 
@@ -151,7 +147,7 @@ fn a_folder_gone_since_fails() {
 /// What the entry at `path` is, as the project tree looks it up (its
 /// device and inode).
 #[cfg(unix)]
-fn identity(path: &Path) -> fs_ops::EntryId {
+fn identity(path: &Path) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
     let meta = fs::symlink_metadata(path).unwrap();
     (meta.dev(), meta.ino())
