@@ -2199,8 +2199,13 @@ impl Element for EditorElement {
             .then(|| build_a11y_text(&mut layout, view, window.scale_factor()));
         view.a11y_text.borrow_mut().text = a11y;
         let targets = breakpoint_targets(&layout, view);
-        self.view
-            .update(cx, |view, _| view.breakpoints.targets = targets);
+        // The lens items, for the view's accessibility layer after this
+        // element.
+        let lens_targets = host_blocks::lens_targets(&layout.lens_rows);
+        self.view.update(cx, |view, _| {
+            view.breakpoints.targets = targets;
+            view.lens_targets = lens_targets;
+        });
         layout.prepaint_took = started.elapsed();
         Some(layout)
     }

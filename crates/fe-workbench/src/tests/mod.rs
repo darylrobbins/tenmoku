@@ -104,6 +104,7 @@ mod icon_theme_install;
 mod language_remembered;
 mod launch;
 mod launch_defs;
+mod lens_a11y;
 pub(crate) mod lsp;
 mod lsp_aliases;
 mod lsp_aliases_language;

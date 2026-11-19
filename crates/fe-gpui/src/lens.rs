@@ -73,3 +73,38 @@ pub(crate) struct PaintedRow {
     #[cfg(test)]
     pub(crate) shaped: Vec<usize>,
 }
+
+/// A lens item a frame laid out, for assistive technology
+/// (`view/lens_targets.rs`): its row, its place in the row's items, and
+/// the part of it in view, in window coordinates, which its pointer hitbox
+/// covers too.
+#[derive(Clone, Debug)]
+pub(crate) struct LensTarget {
+    /// The buffer row the lens sits above.
+    pub(crate) row: u32,
+    /// Its index in the row's items, from 0.
+    pub(crate) index: usize,
+    pub(crate) item: LensItem,
+    pub(crate) bounds: Bounds<Pixels>,
+}
+
+/// What a screen reader calls a lens button: its title without a leading
+/// decorative glyph, such as the test lens's "▷ Run test", and the space
+/// after it. A glyph is a first character that is neither a letter, a
+/// digit nor ASCII, with any variation selectors after it ("▶\u{fe0e}"),
+/// followed by white space. A title that is only that is left whole.
+pub(crate) fn accessible_name(title: &SharedString) -> SharedString {
+    let Some(first) = title.chars().next() else {
+        return title.clone();
+    };
+    if first.is_ascii() || first.is_alphanumeric() {
+        return title.clone();
+    }
+    let rest = &title[first.len_utf8()..];
+    let rest = rest.trim_start_matches(|ch| matches!(ch, '\u{fe00}'..='\u{fe0f}'));
+    let name = rest.trim_start();
+    match name.len() < rest.len() && !name.is_empty() {
+        true => SharedString::new(name),
+        false => title.clone(),
+    }
+}

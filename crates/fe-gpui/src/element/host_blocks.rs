@@ -33,7 +33,7 @@ use super::{
 };
 use crate::{
     DrawnText, EditorTheme, EditorView,
-    lens::{self, Lens, LensItem, PaintedRow},
+    lens::{self, Lens, LensItem, LensTarget, PaintedRow},
     view::{HostBlockKind, ReservedBlock},
 };
 
@@ -112,6 +112,8 @@ pub(super) fn lens_blocks<'a>(
 
 /// A lens row laid out in a frame, to paint.
 pub(super) struct PlacedLens {
+    /// The buffer row it sits above.
+    row: u32,
     /// In the frame.
     rect: Rect,
     /// What its text is shaped in, and at what size.
@@ -194,6 +196,7 @@ pub(super) fn lens_layout(
         let mut x = frame.view_x(f64::from(columns as f32 * space));
         let y = laid.rect.y;
         let mut placed = PlacedLens {
+            row: lens.row,
             rect: laid.rect,
             font: (small.font().clone(), small.font_size()),
             items: Vec::new(),
@@ -264,6 +267,26 @@ pub(super) fn insert_lens_hitboxes(
         item.hitbox =
             (item.shown).map(|rect| window.insert_hitbox(to_window(rect), HitboxBehavior::Normal));
     }
+}
+
+/// Each lens item in view, from [`insert_lens_hitboxes`]'s hitboxes, which
+/// the view's accessibility layer places its nodes over
+/// (`view/lens_targets.rs`).
+pub(super) fn lens_targets(placed: &[PlacedLens]) -> Vec<LensTarget> {
+    let mut out = Vec::new();
+    for lens in placed {
+        for (index, item) in lens.items.iter().enumerate() {
+            if let Some(hitbox) = &item.hitbox {
+                out.push(LensTarget {
+                    row: lens.row,
+                    index,
+                    item: item.item.clone(),
+                    bounds: hitbox.bounds,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Whether the pointer is over `hitbox`: not once it has left the window,

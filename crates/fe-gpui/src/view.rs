@@ -318,6 +318,9 @@ pub struct EditorView {
     /// of each of its items, in window coordinates. A click on an item runs
     /// its command; elsewhere on the row, nothing.
     pub(crate) lens_rows: Vec<crate::lens::PaintedRow>,
+    /// The lens items the last frame laid out in view, for their
+    /// accessibility nodes ([`lens_targets`]).
+    pub(crate) lens_targets: Vec<crate::lens::LensTarget>,
     /// The suggestion shown at the caret ([`ghost_text`]).
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
     /// The host's fold ranges, if it gave any ([`crate::server_folds`]).
@@ -559,6 +562,7 @@ impl EditorView {
             proposal_buttons: Vec::new(),
             lens_providers: Vec::new(),
             lens_rows: Vec::new(),
+            lens_targets: Vec::new(),
             ghost_text: None,
             server_folds: None,
             inlay_hints: Default::default(),
@@ -1385,20 +1389,14 @@ impl EditorView {
     /// A click on a lens row the last frame painted: on an item, runs its
     /// command from the view once this listener is done, as a bound
     /// click's; elsewhere on the row, nothing. False off the lens rows.
-    fn press_lens(&self, event: &MouseDownEvent, window: &mut Window, cx: &mut App) -> bool {
+    fn press_lens(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut App) -> bool {
         let position = event.position;
         let Some(row) = (self.lens_rows.iter()).find(|row| row.bounds.contains(&position)) else {
             return false;
         };
         let item = (row.items.iter()).find(|(_, bounds)| bounds.contains(&position));
-        if let Some((item, _)) = item
-            && let Some(invocation) = &item.invocation
-        {
-            let action = RunCommand(invocation.clone().source(Source::Mouse));
-            let focus = self.focus.clone();
-            window.defer(cx, move |window, cx| {
-                focus.dispatch_action(&action, window, cx)
-            });
+        if let Some(invocation) = item.and_then(|(item, _)| item.invocation.clone()) {
+            self.run_lens(&invocation, window, cx);
         }
         true
     }
@@ -2132,6 +2130,7 @@ impl Render for EditorView {
             .child(crate::signature_help::popover_layer(cx))
             .child(overlay_layer(cx))
             .child(breakpoint_targets_layer(cx))
+            .child(lens_targets_layer(cx))
             .children(self.breakpoint_menu_layer(window, cx))
             .children(self.editor_menu_layer(window, cx))
             .children(crate::vim::which_key::popup_layer(self, cx))
@@ -2225,6 +2224,7 @@ mod find;
 pub(crate) mod ghost_text;
 mod host;
 mod ime;
+mod lens_targets;
 mod menu_focus;
 mod minimap;
 mod proposal;
@@ -2394,6 +2394,9 @@ mod ime_tests;
 
 #[cfg(test)]
 mod lens_bounds_tests;
+
+#[cfg(test)]
+mod lens_a11y_tests;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 #[path = "view/overlay_tests.rs"]
@@ -2617,6 +2620,26 @@ fn breakpoint_targets_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
         move |_, window, cx| {
             view.update(cx, |view, cx| {
                 view.layout_breakpoint_targets(cx.entity().downgrade(), window, cx)
+            })
+            .ok()?
+        },
+        |_, targets, window, cx| {
+            if let Some(mut targets) = targets {
+                targets.paint(window, cx);
+            }
+        },
+    );
+    layer.absolute()
+}
+
+/// The lens items the frame laid out, as nodes for assistive technology
+/// ([`lens_targets`]).
+fn lens_targets_layer(cx: &mut Context<EditorView>) -> impl IntoElement {
+    let view = cx.entity().downgrade();
+    let layer = canvas(
+        move |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.layout_lens_targets(cx.entity().downgrade(), window, cx)
             })
             .ok()?
         },
