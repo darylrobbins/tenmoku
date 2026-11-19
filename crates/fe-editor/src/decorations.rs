@@ -70,6 +70,23 @@ pub enum GutterMark {
     /// The agent lane: dots down every display row covered, in the agent's
     /// colour whatever the tint, in place of any bar on those rows.
     Dotted,
+    /// A test-coverage mark on every display row covered: a thin strip in
+    /// the change lane's gap, right of any bar, never over it, in the
+    /// theme's colour for the mark whatever the tint.
+    Coverage(CoverageMark),
+}
+
+/// What a test run's coverage report says of a row, for
+/// [`GutterMark::Coverage`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CoverageMark {
+    /// Every line, or branch, on the row ran.
+    Covered,
+    /// None of it ran.
+    Uncovered,
+    /// Some of its branches ran and some didn't: drawn as two stacked
+    /// dashes rather than one strip, so it reads without its colour.
+    Partial,
 }
 
 /// How a decoration is drawn.

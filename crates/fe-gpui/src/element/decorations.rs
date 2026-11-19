@@ -10,7 +10,7 @@ use fe_display::{
     CharWidth as _,
     layout::{MeasuredLine as _, Rect, RowLayout},
 };
-use fe_editor::decorations::{Decoration, DecorationKind, GutterMark, Tint};
+use fe_editor::decorations::{CoverageMark, Decoration, DecorationKind, GutterMark, Tint};
 use gpui::{App, Bounds, DecorationRun, Hsla, Pixels, TextRun, UnderlineStyle, Window, fill, px};
 
 use super::{FrameLayout, Line};
@@ -39,6 +39,15 @@ const NOTCH_HEIGHT: f32 = 2. / 3.;
 const BAR_INSET: f32 = 1.;
 /// An underline's thickness, in pixels.
 const UNDERLINE: f32 = 1.;
+/// A test-coverage strip ([`GutterMark::Coverage`]) is as wide as
+/// [`super::coverage_strip_width`] says, rounded to device pixels, and sits
+/// in the change lane's gap, right of the bar, [`BAND_EDGE`] short of the
+/// code, so a debugger band's edge there never covers it; a partly covered
+/// row's is two dashes, one above the other, [`COVERAGE_DASH_GAP`] strips
+/// apart.
+///
+/// The gap between a partly covered row's two dashes, in strip widths.
+const COVERAGE_DASH_GAP: f32 = 1.;
 
 /// The providers' decorations already asked for in a frame, by the range
 /// asked for, so the highlight spans and the painted decorations share a query.
@@ -56,6 +65,16 @@ impl Queried {
             self.0.borrow_mut().push((range, decorations.clone()));
             decorations
         })
+    }
+}
+
+/// A test-coverage mark's colour: the theme's for the mark, whatever the
+/// decoration's tint.
+pub(super) fn coverage_color(theme: &EditorTheme, mark: CoverageMark) -> Hsla {
+    match mark {
+        CoverageMark::Covered => theme.coverage_covered,
+        CoverageMark::Uncovered => theme.coverage_uncovered,
+        CoverageMark::Partial => theme.coverage_partial,
     }
 }
 
@@ -203,6 +222,14 @@ impl Decorations {
             .max(1.)
             / scale;
         let notch = (bar * NOTCH_HEIGHT * scale).round().max(1.) / scale;
+        let snap = |x: f32| (x * scale).round() / scale;
+        let strip = (super::coverage_strip_width(lane.width) * scale)
+            .round()
+            .max(1.)
+            / scale;
+        // The strip's left edge: in the lane's gap, never left of the bar's
+        // right edge.
+        let strip_x = snap(lane.x + lane.width - BAND_EDGE - strip).max(lane.x + bar);
         let space = glyph_widths.char_width(' ');
         // Where the next after-line text goes on each display row.
         let mut after: HashMap<u32, f32> = HashMap::new();
@@ -277,6 +304,32 @@ impl Decorations {
                         at += run;
                         let top = frame.row_top(first.row);
                         out.dotted.push((top, top + run as f32 * line_height));
+                    }
+                }
+                DecorationKind::Gutter(GutterMark::Coverage(mark)) => {
+                    // A strip down every display row covered, each piece of
+                    // a soft-wrapped row too, inset as a bar's run is.
+                    let color = coverage_color(theme, *mark);
+                    for row in rows {
+                        let top = frame.row_top(row.row) + BAR_INSET;
+                        let height = line_height - 2. * BAR_INSET;
+                        let piece = |y: f32, height: f32| Rect {
+                            x: strip_x,
+                            y,
+                            width: strip,
+                            height,
+                        };
+                        match mark {
+                            CoverageMark::Partial => {
+                                let gap = snap(strip * COVERAGE_DASH_GAP).max(1. / scale);
+                                let dash = (height - gap) / 2.;
+                                place(piece(top, dash), color, None);
+                                place(piece(top + dash + gap, dash), color, None);
+                            }
+                            CoverageMark::Covered | CoverageMark::Uncovered => {
+                                place(piece(top, height), color, None);
+                            }
+                        }
                     }
                 }
                 DecorationKind::Gutter(GutterMark::Deletion) => {
@@ -523,6 +576,15 @@ impl Decorations {
             }
             Layer::Gutter => {
                 for placed in of(|kind| *kind == DecorationKind::Gutter(GutterMark::Bar)) {
+                    let quad = fill(placed.bounds, placed.color).corner_radii(placed.corner_radius);
+                    window.paint_quad(quad);
+                    painted = true;
+                }
+                // Beside the bars, in the lane's gap.
+                let coverage = |kind: &DecorationKind| {
+                    matches!(kind, DecorationKind::Gutter(GutterMark::Coverage(_)))
+                };
+                for placed in of(coverage) {
                     let quad = fill(placed.bounds, placed.color).corner_radii(placed.corner_radius);
                     window.paint_quad(quad);
                     painted = true;

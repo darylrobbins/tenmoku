@@ -167,6 +167,11 @@ debug_frame_line = "#2a2b3c"
 debug_breakpoint = "#f38ba8"
 debug_breakpoint_disabled = "#7f849c"
 debug_frame_arrow = "#CBA6F7"
+# Test coverage beside the change bar: teal, red, peach; covered is
+# not the git green, and each clears 3:1 on the editor.
+coverage_covered = "#94E2D5"
+coverage_uncovered = "#F38BA8"
+coverage_partial = "#FAB387"
 # The minimap. The slider is the theme's minimapSlider.* and the selection
 # mark its minimap.selectionHighlight. The rest are VS Code's defaults:
 # minimap.background is the editor's, minimap.errorHighlight #FF1212B3,

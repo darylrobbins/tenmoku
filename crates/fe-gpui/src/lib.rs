@@ -271,6 +271,13 @@ pub struct EditorTheme {
     /// Behind the rows an agent's pending hunk replaces: the agent's soft
     /// ground, [`Tint::Agent`](fe_editor::decorations::Tint::Agent)'s band.
     pub agent_row: Hsla,
+    /// The gutter's test-coverage marks
+    /// ([`GutterMark::Coverage`](fe_editor::decorations::GutterMark::Coverage)):
+    /// rows a test run covered, rows none ran, and rows only some of whose
+    /// branches ran.
+    pub coverage_covered: Hsla,
+    pub coverage_uncovered: Hsla,
+    pub coverage_partial: Hsla,
     /// Behind the fold chevron under the pointer.
     pub fold_hover: Hsla,
     /// Behind the minimap.

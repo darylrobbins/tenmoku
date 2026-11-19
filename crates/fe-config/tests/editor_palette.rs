@@ -183,6 +183,11 @@ keyword = "#d00000"
     expected.editor.debug_breakpoint = light.editor.error;
     expected.editor.debug_breakpoint_disabled = light.editor.gutter_foreground;
     expected.editor.debug_frame_arrow = light.editor.cursor;
+    // And its test-coverage marks its information, removed and warning
+    // colours (crates/fe-config/tests/coverage_colors.rs).
+    expected.editor.coverage_covered = light.editor.information;
+    expected.editor.coverage_uncovered = light.editor.change_deleted;
+    expected.editor.coverage_partial = light.editor.warning;
     expected
         .syntax
         .retain(|(name, _)| !BADGES.contains(&name.as_str()));

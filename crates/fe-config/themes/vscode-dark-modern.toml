@@ -168,6 +168,11 @@ debug_frame_line = "#282828"
 debug_breakpoint = "#f14c4c"
 debug_breakpoint_disabled = "#abb0b6"
 debug_frame_arrow = "#0078D4"
+# Test coverage beside the change bar: the type teal, the error red, the warning yellow; covered is
+# not the git green, and each clears 3:1 on the editor.
+coverage_covered = "#4EC9B0"
+coverage_uncovered = "#F14C4C"
+coverage_partial = "#CCA700"
 # The minimap. dark_modern.json and its includes set no minimap or scrollbar
 # slider colour, so these are VS Code's dark defaults: minimap.background is
 # the editor's, minimapSlider.* scrollbarSlider.* at half alpha,

@@ -416,6 +416,11 @@ mod tests {
         expected.editor.debug_breakpoint = dark.editor.error;
         expected.editor.debug_breakpoint_disabled = dark.editor.gutter_foreground;
         expected.editor.debug_frame_arrow = dark.editor.cursor;
+        // Its test-coverage marks follow its information, removed and
+        // warning colours (crates/fe-config/tests/coverage_colors.rs).
+        expected.editor.coverage_covered = dark.editor.information;
+        expected.editor.coverage_uncovered = dark.editor.change_deleted;
+        expected.editor.coverage_partial = dark.editor.warning;
         expected.syntax.retain(|(name, _)| {
             !matches!(
                 name.as_str(),

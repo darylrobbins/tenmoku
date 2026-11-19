@@ -91,6 +91,11 @@ debug_frame_line = "#f5f5f5"
 debug_breakpoint = "#cb3b47"
 debug_breakpoint_disabled = "#535458"
 debug_frame_arrow = "#3a6dd0"
+# Test coverage beside the change bar: cyan, the error red, the warning ochre; covered is
+# not the git green, and each clears 3:1 on the editor.
+coverage_covered = "#0184bc"
+coverage_uncovered = "#d93f4c"
+coverage_partial = "#b8760f"
 # The minimap: its background, the slider over the visible rows (at rest,
 # hovered and dragged), and the marks for the selection, find matches,
 # error and warning diagnostics and git changes. VS Code's default light

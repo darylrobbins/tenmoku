@@ -17,7 +17,7 @@ use fe_display::{
     },
 };
 use fe_editor::{
-    decorations::DecorationKind,
+    decorations::{CoverageMark, DecorationKind},
     diagnostics::{DiagnosticTag, Severity},
 };
 use fe_syntax::{Syntax, SyntaxDriver};
@@ -3441,6 +3441,8 @@ const GUTTER_FOLD: f32 = 16.;
 const GUTTER_BAR: f32 = 3.;
 /// Clear room between the change bar and the code.
 const GUTTER_GAP: f32 = 10.;
+/// A test-coverage strip, in the change lane's gap.
+const GUTTER_COVERAGE: f32 = 2.;
 /// A chevron's hover tile, centred in the fold column.
 const GUTTER_CHEVRON: f32 = 14.;
 /// The room left of a line number whose digits outgrow [`GUTTER_NUMBERS`].
@@ -3547,6 +3549,10 @@ pub struct DrawnGutter {
     pub bars: Vec<(Bounds<Pixels>, Hsla)>,
     /// The notches marking removed lines.
     pub notches: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The test-coverage marks, in the change lane's gap right of the bars,
+    /// top to bottom: one strip for each display row covered or uncovered,
+    /// two dashes, one above the other, for each partly covered one.
+    pub coverage: Vec<(Bounds<Pixels>, CoverageMark, Hsla)>,
     /// The indent guides, and whether each is a step brighter.
     pub indent_guides: Vec<(Bounds<Pixels>, bool)>,
     /// The debugger's glyphs over the line numbers ([`EditorView::set_breakpoints`]).
@@ -3834,11 +3840,27 @@ fn drawn_gutter(
         agent_dot_color: agent_lane_color(theme),
         bars: marks_of(GutterMark::Bar),
         notches: marks_of(GutterMark::Deletion),
+        coverage: (layout.decorations.placed.iter())
+            .filter_map(|placed| match placed.kind {
+                DecorationKind::Gutter(GutterMark::Coverage(mark)) => {
+                    Some((placed.bounds, mark, placed.color))
+                }
+                _ => None,
+            })
+            .collect(),
         indent_guides: (layout.indent_guides.iter())
             .map(|guide| (guide.bounds, guide.color == theme.indent_guide_active))
             .collect(),
         ..DrawnGutter::default()
     }
+}
+
+/// How wide a test-coverage strip is in a change lane `lane` wide, before
+/// it's rounded to device pixels: the design's [`GUTTER_COVERAGE`] of the
+/// lane's [`GUTTER_BAR`] and [`GUTTER_GAP`], so it scales with the font as
+/// the bar does.
+pub(crate) fn coverage_strip_width(lane: f32) -> f32 {
+    lane * GUTTER_COVERAGE / (GUTTER_BAR + GUTTER_GAP)
 }
 
 /// How wide a change bar is in a change lane `lane` wide: the design's

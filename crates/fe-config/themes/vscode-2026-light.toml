@@ -159,6 +159,11 @@ debug_frame_line = "#fafafa"
 debug_breakpoint = "#ad0707"
 debug_breakpoint_disabled = "#787878"
 debug_frame_arrow = "#0069CC"
+# Test coverage beside the change bar: the type teal, the error red, the warning yellow darkened to 3:1; covered is
+# not the git green, and each clears 3:1 on the editor.
+coverage_covered = "#267F99"
+coverage_uncovered = "#AD0707"
+coverage_partial = "#A07D00"
 # The minimap. The slider is 2026-light.json's minimapSlider.*, and the
 # selection mark its editor.selectionBackground (minimap.selectionHighlight's
 # default). The rest are VS Code's defaults: minimap.background is the

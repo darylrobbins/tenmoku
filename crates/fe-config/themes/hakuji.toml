@@ -198,6 +198,11 @@ debug_frame_line = "#f6f7f9"
 debug_breakpoint = "#a1100e"
 debug_breakpoint_disabled = "#7c828a"
 debug_frame_arrow = "#a84a16"
+# Test coverage beside the change bar: seiji (the type colour), shinsha, kiseto; covered is
+# not the git green, and each clears 3:1 on the editor.
+coverage_covered = "#0d6e66"
+coverage_uncovered = "#a1100e"
+coverage_partial = "#776a00"
 # The minimap: the editor's ground; the slider in faint text at rising
 # strength; the selection the focused selection's rust tint; marks in the
 # signals (find matches kiseto, errors shinsha, warnings kiseto) and the

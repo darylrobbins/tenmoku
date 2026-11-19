@@ -233,6 +233,16 @@ colors! {
         /// Behind the rows an agent's pending hunk replaces: the agent's soft
         /// ground.
         agent_row,
+        /// The gutter's test-coverage strip beside rows a test run covered:
+        /// not the git green (`change_added`), so a covered row doesn't read
+        /// as an added one. A theme without it draws it in its
+        /// `information` colour ([`COVERAGE_FALLBACKS`]).
+        coverage_covered,
+        /// The strip beside rows no test ran. Falls back to `change_deleted`.
+        coverage_uncovered,
+        /// The two dashes beside rows only some of whose branches ran.
+        /// Falls back to `warning`.
+        coverage_partial,
         /// Behind the fold chevron under the pointer.
         fold_hover,
         /// A stopped debug session's current line, the top frame's row: an
@@ -287,6 +297,19 @@ pub const DEBUG_FALLBACKS: &[(&str, &str)] = &[
     ("debug_breakpoint", "error"),
     ("debug_breakpoint_disabled", "gutter_foreground"),
     ("debug_frame_arrow", "cursor"),
+];
+
+/// The test-coverage `[editor]` keys, each with the key whose colour a
+/// theme that has an `[editor]` table without it draws it in, as
+/// [`DEBUG_FALLBACKS`]: uncovered rows in its removed colour and partly
+/// covered ones in its warning colour, as the design's failed and flaky
+/// (`docs/design/design-system.md`, Signals). Covered rows take its
+/// information colour, not its added one: the strip sits beside the git
+/// bar, and a covered row must not read as an added one.
+pub const COVERAGE_FALLBACKS: &[(&str, &str)] = &[
+    ("coverage_covered", "information"),
+    ("coverage_uncovered", "change_deleted"),
+    ("coverage_partial", "warning"),
 ];
 
 /// The `[syntax]` names of the TODO-comment badges, each a keyword's
@@ -543,9 +566,10 @@ impl EditorPalette {
     /// the warnings don't either. A theme at [`Contrast::High`] gets the
     /// palette's high-contrast pass ([`EditorPalette::high_contrast`]).
     ///
-    /// A theme with an `[editor]` table of its own has two kinds of colour
+    /// A theme with an `[editor]` table of its own has three kinds of colour
     /// follow its own rather than the bundled palette's when it leaves them
     /// out: the debugger's keys take its colours [`DEBUG_FALLBACKS`] names,
+    /// the test-coverage keys those [`COVERAGE_FALLBACKS`] names,
     /// and a TODO-comment badge ([`BADGE_NAMES`]) its `[syntax]` table
     /// doesn't name is left unlisted, so it's drawn in its kind's
     /// diagnostic tint, the theme's. A theme without the table, as Kiln's
@@ -572,7 +596,7 @@ impl EditorPalette {
         if theme.contrast == Contrast::High {
             palette.high_contrast();
         }
-        for (key, fallback) in DEBUG_FALLBACKS {
+        for (key, fallback) in DEBUG_FALLBACKS.iter().chain(COVERAGE_FALLBACKS) {
             if editor.is_some_and(|editor| !editor.contains_key(*key))
                 && let Some(color) = palette.editor.get(fallback)
                 && let Some(slot) = palette.editor.get_mut(key)
