@@ -57,7 +57,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        let base = std::fs::canonicalize(dir.path()).unwrap();
+        // Without Windows' verbatim `\\?\` prefix, where git can't add a
+        // worktree.
+        let base = dunce::canonicalize(dir.path()).unwrap();
         let repo = base.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
@@ -250,13 +252,14 @@ fn state_adapter_not_installed() {
 #[test]
 fn state_claude_not_installed() {
     let fixture = Fixture::new();
-    let not_executable = fixture.base.join("claude");
-    std::fs::write(&not_executable, "#!/bin/sh\n").unwrap();
-    for claude in [
-        None,
-        Some(fixture.base.join("no-such-claude")),
-        Some(not_executable.clone()),
-    ] {
+    let mut missing = vec![None, Some(fixture.base.join("no-such-claude"))];
+    // A file without an execute bit; Windows has none, so any file runs.
+    if cfg!(unix) {
+        let not_executable = fixture.base.join("claude");
+        std::fs::write(&not_executable, "#!/bin/sh\n").unwrap();
+        missing.push(Some(not_executable));
+    }
+    for claude in missing {
         let mut spec = fixture.spec(json!({}));
         spec.claude = claude;
         assert_eq!(

@@ -293,7 +293,17 @@ fn hang_up() {
     drop(unsafe { std::os::fd::OwnedFd::from_raw_fd(1) });
 }
 
-#[cfg(not(unix))]
+/// Closes stdout, so the client's side of the transport ends.
+#[cfg(windows)]
+fn hang_up() {
+    use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
+    // SAFETY: this is the process's stdout handle, open since it started.
+    // Owning and dropping it closes it. Nothing writes to stdout after: the
+    // turn that hangs up never answers, and the client's side has ended.
+    drop(unsafe { OwnedHandle::from_raw_handle(std::io::stdout().as_raw_handle()) });
+}
+
+#[cfg(not(any(unix, windows)))]
 fn hang_up() {
     std::process::exit(9);
 }

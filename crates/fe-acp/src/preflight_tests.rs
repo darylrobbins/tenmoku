@@ -116,7 +116,18 @@ fn found_on_login_path() {
 
 #[test]
 fn relative_path_entries_are_skipped() {
+    #[cfg(not(windows))]
     let dir = tempfile::tempdir().unwrap();
+    // The temp dir can be on another drive than the cwd (C: and D: on CI),
+    // with no relative path between them: the workspace's target dir is on
+    // the cwd's.
+    #[cfg(windows)]
+    let dir = {
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/fe-acp-tests");
+        fs::create_dir_all(&parent).unwrap();
+        // Without the `..`, which `pathdiff` doesn't follow.
+        tempfile::tempdir_in(dunce::canonicalize(parent).unwrap()).unwrap()
+    };
     let cwd = std::env::current_dir().unwrap();
     // A relative entry that would resolve to a real file from the cwd.
     let rel = pathdiff(dir.path(), &cwd);
@@ -130,12 +141,21 @@ fn relative_path_entries_are_skipped() {
     );
 }
 
+/// `target` relative to `base`, both absolute and on one drive: up from
+/// `base` to the root, then down to `target`.
 fn pathdiff(target: &Path, base: &Path) -> PathBuf {
+    use std::path::Component;
+    let names = |path: &Path| {
+        path.components()
+            .filter(|component| matches!(component, Component::Normal(_)))
+            .map(|component| component.as_os_str().to_owned())
+            .collect::<Vec<_>>()
+    };
     let mut up = PathBuf::new();
-    for _ in base.components().skip(1) {
+    for _ in names(base) {
         up.push("..");
     }
-    up.join(target.strip_prefix("/").unwrap())
+    up.join(names(target).into_iter().collect::<PathBuf>())
 }
 
 #[test]
