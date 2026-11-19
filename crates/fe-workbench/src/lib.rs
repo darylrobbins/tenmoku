@@ -82,6 +82,8 @@ mod lsp_rename;
 pub mod memory_report;
 mod nav;
 mod nav_picker;
+pub mod notebook_cells;
+pub mod notebook_kernel;
 mod open;
 mod open_at;
 pub mod operations;
