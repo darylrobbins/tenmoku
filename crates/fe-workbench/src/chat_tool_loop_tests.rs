@@ -39,7 +39,7 @@ use crate::{
     Launch, Workbench,
     agent_audit::{AuditLog, file_for},
     chat_panel::{ChatPanel, ChatStateDir, KeySource},
-    tests::open,
+    tests::{open, posix_sh},
 };
 
 /// What every call of the withdrawn round is answered with.
@@ -91,8 +91,19 @@ fn saying(text: &str) -> Vec<ChatEvent> {
         .stop(StopReason::EndTurn)
 }
 
+/// The `PATH` the tests' `sh` commands resolve and run on: `/usr/bin:/bin`,
+/// or on Windows the folder of [`posix_sh`] (Git for Windows' `sh.exe`).
+fn sh_path() -> OsString {
+    if cfg!(windows) {
+        let sh = posix_sh();
+        std::env::join_paths([sh.parent().expect("sh.exe is in a folder")]).unwrap()
+    } else {
+        OsString::from("/usr/bin:/bin")
+    }
+}
+
 /// The chat's panel in a trusted `root`, its audit trail in `state`, its
-/// provider `provider`, its commands resolved on the system's `PATH`.
+/// provider `provider`, its commands resolved on [`sh_path`].
 fn ready<'a>(
     root: &Path,
     state: &Path,
@@ -107,7 +118,7 @@ fn ready<'a>(
     let provider = provider.clone();
     cx.update(|_, cx| {
         cx.set_global(ChatStateDir(Some(state.to_owned())));
-        cx.set_global(CommandPath(OsString::from("/usr/bin:/bin")));
+        cx.set_global(CommandPath(sh_path()));
         cx.set_global(KeySource {
             env: Some("key".to_owned()),
             store: Arc::new(MemoryStore::new()),

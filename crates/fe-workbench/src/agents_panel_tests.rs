@@ -811,7 +811,15 @@ fn stop_ends_lane_1s_turn_with_a_permission_prompt_waiting(cx: &mut TestAppConte
     .stop(StopReason::ToolUse)]));
     cx.update(|_, cx| {
         cx.set_global(ChatStateDir(Some(state.path().to_owned())));
-        cx.set_global(crate::chat_tool_loop::CommandPath("/usr/bin:/bin".into()));
+        // `sh` resolves on `/usr/bin:/bin`, or on Windows in Git for
+        // Windows' folder.
+        let path = if cfg!(windows) {
+            let sh = crate::tests::posix_sh();
+            std::env::join_paths([sh.parent().expect("sh.exe is in a folder")]).unwrap()
+        } else {
+            "/usr/bin:/bin".into()
+        };
+        cx.set_global(crate::chat_tool_loop::CommandPath(path));
         cx.set_global(KeySource {
             env: Some("key".to_owned()),
             store: Arc::new(MemoryStore::new()),
