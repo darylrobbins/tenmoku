@@ -39,6 +39,8 @@ fn child() {
     };
     use std::io::Write as _;
     let mut out = std::io::stdout().lock();
+    // libtest has printed `test child ... ` without a newline.
+    writeln!(out).unwrap();
     if mode == "flood" {
         for i in 0..BEFORE {
             writeln!(out, "before {i}").unwrap();

@@ -21,7 +21,7 @@ use alacritty_terminal::tty;
 #[cfg(unix)]
 use rustix_openpty::rustix::termios::Winsize;
 
-use crate::pty_loop::{LoopSender, Msg, PtyLoop, lock};
+use crate::pty_loop::{GridTap, LoopSender, Msg, PtyLoop, lock};
 use crate::search::{self, QueryError, TerminalMatch, TerminalQuery};
 use crate::shell::{CommandBlock, CommandStatus, ShellState, UNBOUNDED_HISTORY};
 use crate::snapshot::{self, Snapshot};
@@ -30,7 +30,18 @@ use crate::vi;
 /// Hears the child's output as the pty reads it, every byte, before the
 /// grid parses it ([`Terminal::spawn_tapped`]): on the pty's thread, so it
 /// should be quick.
+///
+/// On Windows it hears the grid's text instead, each logical line with a
+/// `\n` as its rows go above the screen and the screen's last lines as the
+/// session ends: ConPTY's bytes are its own rendering of the child's output,
+/// which breaks a long line at every row it scrolls (`GRID_TAP`). So there
+/// it hears no escapes, a line's trailing blanks are trimmed, and a resize
+/// that ConPTY answers by drawing the screen again may repeat its lines.
 pub type OutputTap = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
+/// Whether a session's [`OutputTap`] hears the grid's lines rather than
+/// the pty's bytes: where the pty is ConPTY.
+pub(crate) const GRID_TAP: bool = cfg!(windows);
 
 /// What to run and how much history to keep.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -357,6 +368,9 @@ pub struct Terminal {
     size: Arc<Mutex<WindowSize>>,
     pid: u32,
     event_loop: Option<JoinHandle<()>>,
+    /// The output tap, where it hears the grid ([`GRID_TAP`]). Locked after
+    /// `shell`.
+    grid_tap: Option<Arc<Mutex<GridTap>>>,
 }
 
 impl Terminal {
@@ -476,7 +490,11 @@ impl Terminal {
 
         let (event_loop, sender) =
             PtyLoop::new(term.clone(), shell.clone(), listener.clone(), pty)?;
-        let event_loop = event_loop.with_tap(tap);
+        let (tap, grid_tap) = match tap {
+            Some(tap) if GRID_TAP => (None, Some(Arc::new(Mutex::new(GridTap::new(tap))))),
+            tap => (tap, None),
+        };
+        let event_loop = event_loop.with_tap(tap).with_grid_tap(grid_tap.clone());
         let _ = listener.pty.set(sender.clone());
         let handle = event_loop.spawn()?;
         // `PtyLoop::spawn` hands the pty back through the join handle, so the
@@ -507,6 +525,7 @@ impl Terminal {
             size: listener.size,
             pid,
             event_loop: Some(event_loop),
+            grid_tap,
         };
         Ok((terminal, receiver))
     }
@@ -547,6 +566,7 @@ impl Terminal {
         *self.size.lock().unwrap_or_else(|e| e.into_inner()) = window_size;
         let mut term = self.term.lock();
         let mut shell = lock(&self.shell);
+        let mut grid_tap = self.grid_tap.as_deref().map(lock);
         let offset = term.grid().display_offset();
         let size = TermSize::from(size);
         // Rows, then columns, as alacritty does them, but one at a time: a
@@ -562,6 +582,9 @@ impl Terminal {
                 continue;
             }
             let anchors = shell.before_resize(&term);
+            if let Some(grid_tap) = &mut grid_tap {
+                grid_tap.before_resize(&term);
+            }
             if term.mode().contains(TermMode::ALT_SCREEN) {
                 // Until the primary grid shows again and is trimmed.
                 term.set_options(self.unbounded.clone());
@@ -569,12 +592,16 @@ impl Terminal {
                 term.grid_mut().update_history(UNBOUNDED_HISTORY);
             }
             term.resize(step);
+            // Before the shell state trims what the reflow put in history.
+            if let Some(grid_tap) = &mut grid_tap {
+                grid_tap.after_resize(&term);
+            }
             shell.after_resize(&mut term, anchors);
         }
         shell.view_moved(offset, &term);
         // Trimming history back may have taken the vi cursor's text.
         vi::keep_in_view(&mut term);
-        drop((shell, term));
+        drop((grid_tap, shell, term));
         let _ = self.pty.send(Msg::Resize(window_size));
     }
 
