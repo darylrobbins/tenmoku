@@ -796,11 +796,12 @@ fn variables_expand_from_the_active_editor_and_the_environment() {
         .join("src/pkg/tool.py")
         .to_string_lossy()
         .into_owned();
+    let dirname = root().join("src/pkg").to_string_lossy().into_owned();
     let cases = [
         ("${workspaceFolder}/bin", "/project/bin"),
         ("${workspaceFolderBasename}", "project"),
         ("${file}", file.as_str()),
-        ("${fileDirname}", "/project/src/pkg"),
+        ("${fileDirname}", dirname.as_str()),
         ("${fileBasename}", "tool.py"),
         ("${fileBasenameNoExtension}", "tool"),
         ("${relativeFile}", "src/pkg/tool.py"),

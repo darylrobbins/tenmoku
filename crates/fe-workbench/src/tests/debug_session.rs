@@ -797,7 +797,9 @@ fn changing_log_payloads_applies_to_the_next_session(cx: &mut TestAppContext) {
     debug.start("main");
     debug.fake(1);
     debug.wait_state("running again", |state| *state == SessionState::Running);
-    assert!(debug.log().contains(&program), "{}", debug.log());
+    let escaped = serde_json::to_string(&program).unwrap();
+    let escaped = &escaped[1..escaped.len() - 1];
+    assert!(debug.log().contains(escaped), "{}", debug.log());
 }
 
 /// C6 (§5 "Sending"): a file's breakpoints go again when the set changes
@@ -1088,7 +1090,8 @@ fn a_new_window_takes_the_debug_settings_already_loaded(cx: &mut TestAppContext)
     debug.fake(0);
     debug.wait_state("running", |state| *state == SessionState::Running);
     let program = format!("{}/target/debug/main", debug.root.display());
-    assert!(debug.log().contains(&program));
+    let escaped = serde_json::to_string(&program).unwrap();
+    assert!(debug.log().contains(&escaped[1..escaped.len() - 1]));
 }
 
 /// R1 F3: a rerun is a start from the moment it's asked for: Stop gives
@@ -1155,7 +1158,7 @@ fn a_read_run_keeps_its_output_whatever_the_scrollback(cx: &mut TestAppContext) 
     .to_string();
     // The artifact, then far more output than the grid keeps.
     let script = "i=0; while [ $i -lt 300 ]; do echo line $i; i=$((i+1)); done; \
-        printf '%s\\n' \"$1\"; \
+        printf '%s\\n' \"$ARTIFACT\"; \
         i=0; while [ $i -lt 20000 ]; do echo after $i; i=$((i+1)); done";
     let task = Task {
         label: "build".to_owned(),
@@ -1170,7 +1173,7 @@ fn a_read_run_keeps_its_output_whatever_the_scrollback(cx: &mut TestAppContext) 
             .to_vec(),
         ),
         cwd: debug.root.clone(),
-        env: Default::default(),
+        env: [("ARTIFACT".to_owned(), artifact.clone())].into(),
         group: None,
         default: false,
         source: Source::File,
