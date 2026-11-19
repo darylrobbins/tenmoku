@@ -203,6 +203,7 @@ fn denied_files_are_refused_as_attachments(cx: &mut TestAppContext) {
     let root = dunce::canonicalize(dir.path()).unwrap();
     std::fs::write(root.join("ok.txt"), "fine").unwrap();
     std::fs::write(root.join(".env"), "x").unwrap();
+    std::fs::write(root.join("id_ed25519"), "x").unwrap();
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(root.join(".env"), root.join("link.txt")).unwrap();
@@ -219,8 +220,6 @@ fn denied_files_are_refused_as_attachments(cx: &mut TestAppContext) {
         label: path.to_owned(),
         text: "hunter2".to_owned(),
     };
-    // `mut` is only used by the unix-only extend below.
-    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut items = vec![
         file(".env"),
         whole(".env"),
@@ -229,6 +228,10 @@ fn denied_files_are_refused_as_attachments(cx: &mut TestAppContext) {
     ];
     #[cfg(unix)]
     items.extend([file("link.txt"), whole("link.txt"), whole("out.txt")]);
+    // The two `.env` refusals are one toast, counted twice: without the
+    // links, this is the third. Last, so where links are made it's past
+    // the three shown.
+    items.push(whole("id_ed25519"));
     let panel = ask(&workbench, the_ask(false, items), cx);
     assert_eq!(attached(&panel, cx), vec![ok]);
     let said = toasts(&workbench, cx);
