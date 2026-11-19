@@ -31,6 +31,7 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_l10n::tr;
 use serde_json::Value;
 
+use super::posix_sh;
 #[cfg(unix)]
 use crate::launch_defs::LaunchConfig;
 #[cfg(unix)]
@@ -561,11 +562,7 @@ fn a_failing_pre_launch_task_starts_no_session(cx: &mut TestAppContext) {
     let launch = requests(&fake, "launch");
     assert_eq!(
         launch[0]["program"],
-        debug
-            .root
-            .join("target/debug/main")
-            .to_string_lossy()
-            .as_ref()
+        format!("{}/target/debug/main", debug.root.display())
     );
 }
 
@@ -784,8 +781,7 @@ fn changing_log_payloads_applies_to_the_next_session(cx: &mut TestAppContext) {
     debug.start("main");
     debug.fake(0);
     debug.wait_state("running", |state| *state == SessionState::Running);
-    let program = debug.root.join("target/debug/main");
-    let program = program.to_string_lossy().into_owned();
+    let program = format!("{}/target/debug/main", debug.root.display());
     assert!(!debug.log().contains(&program), "metadata only");
 
     debug.set_log_payloads(true);
@@ -1091,8 +1087,8 @@ fn a_new_window_takes_the_debug_settings_already_loaded(cx: &mut TestAppContext)
     debug.start("main");
     debug.fake(0);
     debug.wait_state("running", |state| *state == SessionState::Running);
-    let program = debug.root.join("target/debug/main");
-    assert!(debug.log().contains(program.to_string_lossy().as_ref()));
+    let program = format!("{}/target/debug/main", debug.root.display());
+    assert!(debug.log().contains(&program));
 }
 
 /// R1 F3: a rerun is a start from the moment it's asked for: Stop gives
@@ -1164,9 +1160,14 @@ fn a_read_run_keeps_its_output_whatever_the_scrollback(cx: &mut TestAppContext) 
     let task = Task {
         label: "build".to_owned(),
         command: TaskCommand::Argv(
-            ["/bin/sh", "-c", script, "sh", &artifact]
-                .map(str::to_owned)
-                .to_vec(),
+            [
+                posix_sh().to_string_lossy().into_owned(),
+                "-c".into(),
+                script.into(),
+                "sh".into(),
+                artifact.clone(),
+            ]
+            .to_vec(),
         ),
         cwd: debug.root.clone(),
         env: Default::default(),

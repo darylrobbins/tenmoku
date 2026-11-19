@@ -792,10 +792,14 @@ fn variables_expand_from_the_active_editor_and_the_environment() {
         user_home: Some(PathBuf::from("/home/me")),
         env: BTreeMap::from([("NAME".to_owned(), "value".to_owned())]),
     };
+    let file = root()
+        .join("src/pkg/tool.py")
+        .to_string_lossy()
+        .into_owned();
     let cases = [
         ("${workspaceFolder}/bin", "/project/bin"),
         ("${workspaceFolderBasename}", "project"),
-        ("${file}", "/project/src/pkg/tool.py"),
+        ("${file}", file.as_str()),
         ("${fileDirname}", "/project/src/pkg"),
         ("${fileBasename}", "tool.py"),
         ("${fileBasenameNoExtension}", "tool"),
