@@ -184,6 +184,49 @@ pub(crate) struct Listener {
     /// the child's last output.
     exit_code: Arc<Mutex<Option<i32>>>,
     exited: Arc<AtomicBool>,
+    /// The session's console title, kept to relabel when the prefix is learned.
+    title: Arc<Mutex<TitleSlot>>,
+}
+
+/// A session's last raw console title and the label sent for it.
+struct TitleSlot {
+    events: async_channel::Sender<TerminalEvent>,
+    raw: Option<String>,
+    sent: String,
+}
+
+/// Every live session's title slot, for relabelling when [`TITLE_PREFIX`]
+/// changes.
+static TITLE_SLOTS: Mutex<Vec<std::sync::Weak<Mutex<TitleSlot>>>> = Mutex::new(Vec::new());
+
+fn register_title_slot(slot: &Arc<Mutex<TitleSlot>>) {
+    let mut slots = TITLE_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+    slots.retain(|w| w.strong_count() > 0);
+    slots.push(Arc::downgrade(slot));
+}
+
+/// Reruns every live session's raw title through the current prefix, sending
+/// the ones whose label changed. Lock order: slot, then prefix.
+fn relabel_titles() {
+    let slots: Vec<_> = {
+        let slots = TITLE_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+        slots.iter().filter_map(std::sync::Weak::upgrade).collect()
+    };
+    for slot in slots {
+        let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(raw) = slot.raw.clone() else {
+            continue;
+        };
+        let mut prefix = TITLE_PREFIX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let label = program_title(raw, &mut prefix);
+        if label != slot.sent {
+            slot.sent.clone_from(&label);
+            let _ = slot.events.try_send(TerminalEvent::Title(label));
+        }
+    }
 }
 
 /// What Windows' console host puts before each title, learned from a
@@ -258,12 +301,26 @@ impl EventListener for Listener {
         match event {
             Event::Wakeup => self.send(TerminalEvent::Wakeup),
             Event::Title(title) => {
+                let mut slot = self.title.lock().unwrap_or_else(|e| e.into_inner());
                 let mut prefix = TITLE_PREFIX.lock().unwrap_or_else(|e| e.into_inner());
-                let title = program_title(title, &mut prefix);
+                let before = prefix.clone();
+                let label = program_title(title.clone(), &mut prefix);
+                let learned = *prefix != before;
                 drop(prefix);
-                self.send(TerminalEvent::Title(title));
+                slot.raw = Some(title);
+                slot.sent.clone_from(&label);
+                self.send(TerminalEvent::Title(label));
+                drop(slot);
+                if learned {
+                    relabel_titles();
+                }
             }
-            Event::ResetTitle => self.send(TerminalEvent::Title(String::new())),
+            Event::ResetTitle => {
+                let mut slot = self.title.lock().unwrap_or_else(|e| e.into_inner());
+                slot.raw = None;
+                slot.sent.clear();
+                self.send(TerminalEvent::Title(String::new()));
+            }
             Event::Bell => self.send(TerminalEvent::Bell),
             Event::ClipboardStore(_, text) => self.send(TerminalEvent::ClipboardStore(text)),
             Event::PtyWrite(text) => self.write(text),
@@ -320,8 +377,15 @@ impl Terminal {
     ) -> io::Result<(Terminal, async_channel::Receiver<TerminalEvent>)> {
         let (events, receiver) = async_channel::unbounded();
         let window_size = size.window_size();
+        let title = Arc::new(Mutex::new(TitleSlot {
+            events: events.clone(),
+            raw: None,
+            sent: String::new(),
+        }));
+        register_title_slot(&title);
         let listener = Listener {
             events,
+            title,
             pty: Arc::new(OnceLock::new()),
             size: Arc::new(Mutex::new(window_size)),
             exit_code: Arc::new(Mutex::new(None)),
@@ -708,6 +772,55 @@ mod console_title_tests {
         // Not elevated, a title keeps its own colon.
         let titles = [r"C:\WINDOWS\system32\cmd.exe", "build: x"];
         assert_eq!(program_titles(&titles), ["", "build: x"]);
+    }
+
+    /// A listener with no pty, and its events.
+    #[cfg(windows)]
+    fn listener() -> (
+        super::Listener,
+        async_channel::Receiver<super::TerminalEvent>,
+    ) {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::{Arc, Mutex, OnceLock};
+        let (events, rx) = async_channel::unbounded();
+        let title = Arc::new(Mutex::new(super::TitleSlot {
+            events: events.clone(),
+            raw: None,
+            sent: String::new(),
+        }));
+        super::register_title_slot(&title);
+        let size = alacritty_terminal::event::WindowSize {
+            num_lines: 1,
+            num_cols: 1,
+            cell_width: 1,
+            cell_height: 1,
+        };
+        let listener = super::Listener {
+            events,
+            pty: Arc::new(OnceLock::new()),
+            size: Arc::new(Mutex::new(size)),
+            exit_code: Arc::new(Mutex::new(None)),
+            exited: Arc::new(AtomicBool::new(false)),
+            title,
+        };
+        (listener, rx)
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_title_before_any_default_loses_the_prefix_once_learned() {
+        use alacritty_terminal::event::{Event, EventListener};
+        let (a, a_rx) = listener();
+        let (b, _b_rx) = listener();
+        a.send_event(Event::Title("Administrator:  build".into()));
+        b.send_event(Event::Title(
+            r"Administrator: C:\Windows\system32\cmd.exe".into(),
+        ));
+        let mut last = None;
+        while let Ok(super::TerminalEvent::Title(t)) = a_rx.try_recv() {
+            last = Some(t);
+        }
+        assert_eq!(last.as_deref(), Some("build"));
     }
 
     #[test]
