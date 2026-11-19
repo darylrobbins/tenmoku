@@ -36,3 +36,28 @@ Fix (tests only):
 - Build `RunnerPath` with `std::env::join_paths` from the bin dir plus the sh's folder on Windows, not `/usr/bin` and `/bin`.
 - Encode fail-marker names (e.g. `::` → `__`) in both the test and the script.
 - If the lookup itself is wrong on Windows (e.g. it ignores PATHEXT), stop and report it for a bugfix card.
+
+## Implementation notes
+
+- Why the real cargo ran: `RunProcess` runs `Command::new("cargo")` with the
+  run's `PATH`. On Windows std looks a bare name up as `<name>.exe` only
+  (no `PATHEXT`): the child's `PATH`, then the app's folder, the system
+  folders and the parent's `PATH`, where the real `cargo.exe` was. A
+  `cargo.cmd` shim would be skipped the same way. This isn't treated as a
+  lookup bug: cargo and cargo-nextest only ship as `.exe`s, and
+  `nextest_on_path` already looks for `cargo-nextest.exe`.
+- So the shim is an `.exe`: `tests/fixtures/fake_cargo_shim.rs`, built with
+  `rustc` once per source version beside the test binary
+  (`target/*/deps/fake_cargo_shim-<hash>.exe`, moved in whole so parallel
+  nextest processes don't race), copied to `<bin>/cargo.exe`. It runs the
+  same `<bin>/cargo` script the other platforms run with the `sh` on
+  `PATH`. `install_fake_cargo` (tests/test_runner.rs) does this for all
+  four modules; on macOS/Linux it writes the script and the old
+  `bin:/usr/bin:/bin` `PATH`, as before.
+- The fakes print their folder (manifest paths, package ids, `Compiling`
+  lines), which MSYS's `pwd` gives as `/c/…`, unreadable to the workbench.
+  The shim passes the Windows form (with `/`s) as `FAKE_CARGO_PWD`; the
+  scripts use it when set, else `pwd` as before.
+- The fake `cargo-nextest` is only checked for, never run (the fake cargo
+  answers `cargo nextest`): on Windows it's named `cargo-nextest.exe`
+  (`nextest_in`).
