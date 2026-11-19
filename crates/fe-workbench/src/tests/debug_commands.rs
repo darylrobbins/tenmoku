@@ -751,7 +751,7 @@ fn toggle_breakpoint_enabled_at_the_caret(cx: &mut TestAppContext) {
 fn remove_all_breakpoints_clears_every_file(cx: &mut TestAppContext) {
     let mut debug = trusted(cx, script);
     let main = main_path(&debug.root);
-    let other = debug.root.join("src/other.rs");
+    let other = debug.root.join("src").join("other.rs");
     fs::write(&other, "fn other() {}\n").unwrap();
     debug.toggle(&main, 0);
     debug.toggle(&main, 2);
@@ -960,7 +960,7 @@ fn a_rejected_removal_holds_the_next_run_to_cursor(cx: &mut TestAppContext) {
         ..script(root)
     });
     let main = main_path(&debug.root);
-    let other = debug.root.join("src/other.rs");
+    let other = debug.root.join("src").join("other.rs");
     fs::write(&other, "fn other() {}\n").unwrap();
     debug.toggle(&main, 0);
     debug.toggle(&main, 2);
@@ -1013,7 +1013,7 @@ fn a_delayed_removal_holds_the_continue(cx: &mut TestAppContext) {
         ..script(root)
     });
     let main = main_path(&debug.root);
-    let other = debug.root.join("src/other.rs");
+    let other = debug.root.join("src").join("other.rs");
     fs::write(&other, "fn other() {}\n").unwrap();
     debug.open_at(&other, 0);
     debug.run("debug.run_to_cursor");

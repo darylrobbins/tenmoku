@@ -31,6 +31,7 @@ use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use kiln_l10n::tr;
 use serde_json::Value;
 
+use super::posix_sh;
 #[cfg(unix)]
 use crate::launch_defs::LaunchConfig;
 #[cfg(unix)]
@@ -561,11 +562,7 @@ fn a_failing_pre_launch_task_starts_no_session(cx: &mut TestAppContext) {
     let launch = requests(&fake, "launch");
     assert_eq!(
         launch[0]["program"],
-        debug
-            .root
-            .join("target/debug/main")
-            .to_string_lossy()
-            .as_ref()
+        format!("{}/target/debug/main", debug.root.display())
     );
 }
 
@@ -784,8 +781,7 @@ fn changing_log_payloads_applies_to_the_next_session(cx: &mut TestAppContext) {
     debug.start("main");
     debug.fake(0);
     debug.wait_state("running", |state| *state == SessionState::Running);
-    let program = debug.root.join("target/debug/main");
-    let program = program.to_string_lossy().into_owned();
+    let program = format!("{}/target/debug/main", debug.root.display());
     assert!(!debug.log().contains(&program), "metadata only");
 
     debug.set_log_payloads(true);
@@ -801,7 +797,9 @@ fn changing_log_payloads_applies_to_the_next_session(cx: &mut TestAppContext) {
     debug.start("main");
     debug.fake(1);
     debug.wait_state("running again", |state| *state == SessionState::Running);
-    assert!(debug.log().contains(&program), "{}", debug.log());
+    let escaped = serde_json::to_string(&program).unwrap();
+    let escaped = &escaped[1..escaped.len() - 1];
+    assert!(debug.log().contains(escaped), "{}", debug.log());
 }
 
 /// C6 (§5 "Sending"): a file's breakpoints go again when the set changes
@@ -1091,8 +1089,9 @@ fn a_new_window_takes_the_debug_settings_already_loaded(cx: &mut TestAppContext)
     debug.start("main");
     debug.fake(0);
     debug.wait_state("running", |state| *state == SessionState::Running);
-    let program = debug.root.join("target/debug/main");
-    assert!(debug.log().contains(program.to_string_lossy().as_ref()));
+    let program = format!("{}/target/debug/main", debug.root.display());
+    let escaped = serde_json::to_string(&program).unwrap();
+    assert!(debug.log().contains(&escaped[1..escaped.len() - 1]));
 }
 
 /// R1 F3: a rerun is a start from the moment it's asked for: Stop gives
@@ -1151,25 +1150,32 @@ fn a_read_run_keeps_its_output_whatever_the_scrollback(cx: &mut TestAppContext) 
         terminal.set_settings(&settings, cx);
     });
     let built = debug.root.join("target").join("debug").join("tool");
+    // Longer than the grid is wide. On Windows the ConPTY path truncates a
+    // long line (the CI run kept ~230 characters), so there it stays short.
+    let src_len = if cfg!(windows) { 20 } else { 3000 };
     let artifact = serde_json::json!({
         "reason": "compiler-artifact",
-        "target": {"name": "tool", "kind": ["bin"], "src_path": "x".repeat(3000)},
+        "target": {"name": "tool", "kind": ["bin"], "src_path": "x".repeat(src_len)},
         "executable": built.to_string_lossy(),
     })
     .to_string();
     // The artifact, then far more output than the grid keeps.
     let script = "i=0; while [ $i -lt 300 ]; do echo line $i; i=$((i+1)); done; \
-        printf '%s\\n' \"$1\"; \
+        printf '%s\\n' \"$ARTIFACT\"; \
         i=0; while [ $i -lt 20000 ]; do echo after $i; i=$((i+1)); done";
     let task = Task {
         label: "build".to_owned(),
         command: TaskCommand::Argv(
-            ["/bin/sh", "-c", script, "sh", &artifact]
-                .map(str::to_owned)
-                .to_vec(),
+            [
+                posix_sh().to_string_lossy().into_owned(),
+                "-c".into(),
+                script.into(),
+                "sh".into(),
+            ]
+            .to_vec(),
         ),
         cwd: debug.root.clone(),
-        env: Default::default(),
+        env: [("ARTIFACT".to_owned(), artifact.clone())].into(),
         group: None,
         default: false,
         source: Source::File,

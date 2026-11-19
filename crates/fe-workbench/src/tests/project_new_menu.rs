@@ -365,7 +365,7 @@ fn name_field_keeps_extension(cx: &mut TestAppContext) {
 fn target_is_the_selected_folder(cx: &mut TestAppContext) {
     let dir = project(&[("Cargo.toml", ""), ("src/main.rs", "fn main() {}\n")]);
     let (_workbench, panel, cx) = workbench(cx, &dir);
-    let root = fs::canonicalize(dir.path()).unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
 
     // The selected folder.
     panel.update(cx, |panel, cx| panel.reveal(root.join("src"), cx));

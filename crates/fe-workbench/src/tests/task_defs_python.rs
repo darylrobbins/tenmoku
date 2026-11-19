@@ -83,13 +83,17 @@ fn bare_python() -> &'static str {
     if cfg!(windows) { "python" } else { "python3" }
 }
 
+/// `rel` under the root, joined a component at a time as production does
+/// (one `join("a/b")` would mix separators on Windows).
+fn by_components(rel: &str) -> String {
+    let mut path = PathBuf::from(ROOT);
+    path.extend(rel.split('/'));
+    path.to_str().unwrap().to_owned()
+}
+
 /// The `.venv`'s interpreter, on its full path.
 fn venv_python_path() -> String {
-    Path::new(ROOT)
-        .join(venv_python())
-        .to_str()
-        .unwrap()
-        .to_owned()
+    by_components(venv_python())
 }
 
 /// Where a `.venv` holds the script `name`, under the root.
@@ -285,13 +289,7 @@ fn project_scripts_and_uv() {
         (&venv_script("serve"), ""),
         (&venv_script("not-a-string"), ""),
     ]);
-    let script = |name: &str| {
-        Path::new(ROOT)
-            .join(venv_script(name))
-            .to_str()
-            .unwrap()
-            .to_owned()
-    };
+    let script = |name: &str| by_components(&venv_script(name));
     assert_eq!(venv.labels(), [script("zeta"), script("serve")]);
     let tasks = venv.python_tasks();
     let zeta = only(&tasks, &script("zeta"));

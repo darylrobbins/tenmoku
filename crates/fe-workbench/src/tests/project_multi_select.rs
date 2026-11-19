@@ -406,7 +406,11 @@ fn copy_path_joins_lines(cx: &mut TestAppContext) {
     run("project_panel.copy_path", cx);
     let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
     let absolute = |rel: &str| root.join(rel).to_string_lossy().into_owned();
-    let lines = [absolute("d"), absolute("d/e.txt"), absolute("c.txt")];
+    let lines = [
+        absolute("d"),
+        root.join("d").join("e.txt").to_string_lossy().into_owned(),
+        absolute("c.txt"),
+    ];
     assert_eq!(clipboard, Some(lines.join("\n")));
     run("project_panel.copy_relative_path", cx);
     let clipboard = cx.read_from_clipboard().and_then(|item| item.text());

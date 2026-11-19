@@ -741,7 +741,9 @@ fn rows_and_controls_have_accessible_names(cx: &mut TestAppContext) {
             Role::TreeItem,
             tr!(
                 "workbench-debug-panel-file-name",
-                path = "src/main.rs",
+                path = std::path::Path::new("src")
+                    .join("main.rs")
+                    .to_string_lossy(),
                 count = 1
             ),
         ),
@@ -778,7 +780,9 @@ fn breakpoints_are_grouped_by_file_and_enabled_from_their_row(cx: &mut TestAppCo
             tr!("workbench-debug-panel-no-filters").to_string(),
             tr!(
                 "workbench-debug-panel-file-name",
-                path = "src/main.rs",
+                path = std::path::Path::new("src")
+                    .join("main.rs")
+                    .to_string_lossy(),
                 count = 2
             )
             .to_string(),
