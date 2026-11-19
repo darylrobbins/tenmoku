@@ -36,7 +36,7 @@ use crate::{
     task_commands::TestFiles,
     task_defs::ProjectFiles,
     test_runner::RunnerPath,
-    tests::open,
+    tests::{open, test_runner::install_fake_cargo},
 };
 
 fn ms(n: u64) -> Duration {
@@ -142,11 +142,7 @@ fn project<'a>(cx: &'a mut TestAppContext, script: &str) -> Project<'a> {
     fs::write(settings, "[lsp.servers.rust-analyzer]\nenabled = false\n").unwrap();
 
     let bin = tempfile::tempdir().unwrap();
-    let cargo = bin.path().join("cargo");
-    fs::write(&cargo, script).unwrap();
-    executable(&cargo);
-    let path_dirs = [bin.path(), Path::new("/usr/bin"), Path::new("/bin")];
-    let runner_path = std::env::join_paths(path_dirs).unwrap();
+    let runner_path = install_fake_cargo(bin.path(), script);
     cx.update(|cx| {
         cx.set_global(TestFiles(Arc::new(Disk)));
         cx.set_global(RunnerPath(runner_path));
@@ -169,15 +165,6 @@ fn project<'a>(cx: &'a mut TestAppContext, script: &str) -> Project<'a> {
     project.run("runs.show");
     project
 }
-
-#[cfg(unix)]
-fn executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt as _;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(not(unix))]
-fn executable(_: &Path) {}
 
 fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
@@ -588,7 +575,7 @@ fn a_crate_row_selects_its_messages_in_problems(cx: &mut TestAppContext) {
 /// `itoa`, fresh, then waits for `go` beside it before `app`'s artifact.
 const GATED: &str = r#"#!/bin/sh
 bin=$(dirname "$0")
-here=$(pwd)
+here=${FAKE_CARGO_PWD:-$(pwd)}
 printf '%s\n' '{"reason":"compiler-artifact","package_id":"registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.11","fresh":true}'
 echo "   Compiling app v0.1.0 ($here)" >&2
 while [ ! -e "$bin/go" ]; do sleep 0.01; done

@@ -28,7 +28,7 @@ use crate::{
     task_defs::ProjectFiles,
     task_run::untrusted_message,
     test_runner::RunnerPath,
-    tests::open,
+    tests::{open, test_runner::install_fake_cargo},
     workbench::toast::Level,
 };
 
@@ -87,11 +87,7 @@ fn untrusted(cx: &mut TestAppContext) -> Project<'_> {
 
     let bin = tempfile::tempdir().unwrap();
     let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_cargo_build.sh");
-    let cargo = bin.path().join("cargo");
-    fs::copy(fake, &cargo).unwrap();
-    executable(&cargo);
-    let path_dirs = [bin.path(), Path::new("/usr/bin"), Path::new("/bin")];
-    let runner_path = std::env::join_paths(path_dirs).unwrap();
+    let runner_path = install_fake_cargo(bin.path(), &fs::read_to_string(fake).unwrap());
     let files = Disk(dir.path().to_owned());
     cx.update(|cx| {
         cx.set_global(TestFiles(Arc::new(files)));
@@ -122,15 +118,6 @@ fn trusted(cx: &mut TestAppContext) -> Project<'_> {
     draw(project.cx);
     project
 }
-
-#[cfg(unix)]
-fn executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt as _;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(not(unix))]
-fn executable(_: &Path) {}
 
 fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();

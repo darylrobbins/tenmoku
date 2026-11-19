@@ -25,7 +25,8 @@ wait_for_go() {
 }
 
 registry='registry+https://github.com/rust-lang/crates.io-index'
-here=$(pwd)
+# Its folder as Windows writes it, there (see fake_cargo_shim.rs).
+here=${FAKE_CARGO_PWD:-$(pwd)}
 
 printf '%s\n' '{"reason":"compiler-artifact","package_id":"'"$registry"'#itoa@1.0.11","manifest_path":"/cargo/registry/src/itoa-1.0.11/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"itoa","src_path":"/cargo/registry/src/itoa-1.0.11/src/lib.rs","edition":"2018","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"0","debuginfo":2,"debug_assertions":true,"overflow_checks":true,"test":false},"features":[],"filenames":["/p/target/debug/deps/libitoa-0123456789abcdef.rlib"],"executable":null,"fresh":true}'
 echo '   Compiling ryu v1.0.18' >&2

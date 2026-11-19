@@ -34,7 +34,10 @@ use crate::{
     },
     test_runner::{CargoBinaries, CargoTarget, filterset, reruns, unknown_target},
     test_runner::{RunnerPath, TestOutcome, TestResult, TestTrack, Tracks, set_history_dir},
-    tests::open,
+    tests::{
+        open,
+        test_runner::{install_fake_cargo, nextest_in},
+    },
 };
 
 /// The disk.
@@ -107,13 +110,16 @@ const UTIL: &str = "#[cfg(test)]\nmod tests {}\n";
 /// Under nextest, `-E` picks the tests its `(binary_id(=…) & test(=…))`
 /// terms name. With `--message-format json-render-diagnostics` it prints a
 /// `compiler-artifact` message for each test executable first. A test
-/// fails if `fail/<executable> <name>` is beside it, its captured output
-/// `output` beside it, if that's there. With `color` beside
-/// it, its `Running` lines are coloured; with `gate`, it waits for `go`
-/// after a binary's first result.
+/// fails if `fail/<executable> <name>` is beside it (`::` written `__`, as
+/// Windows' file names can't have a `:`), its captured output `output`
+/// beside it, if that's there. With `color` beside it, its `Running` lines
+/// are coloured; with `gate`, it waits for `go` after a binary's first
+/// result. It writes its folder as `FAKE_CARGO_PWD` says, if that's set
+/// (see `tests/fixtures/fake_cargo_shim.rs`).
 const FILTERING: &str = r#"#!/bin/sh
 bin=$(dirname "$0")
 echo "$*" >> "$bin/args"
+here=${FAKE_CARGO_PWD:-$PWD}
 nextest=; [ "$1" = "nextest" ] && nextest=1
 root=; grep -q '^\[package\]' Cargo.toml 2>/dev/null && root=1
 color=; [ -e "$bin/color" ] && color=1
@@ -143,6 +149,17 @@ picked() {
     else [ "$1" = root ]
     fi
 }
+# $1 with its `::`s as `__`, in $encoded: a fail marker's name, as Windows'
+# file names can't have a `:`.
+encode() {
+    rest=$1; encoded=
+    while :; do
+        case "$rest" in
+        *::*) encoded="$encoded${rest%%::*}__"; rest=${rest#*::};;
+        *) encoded="$encoded$rest"; return;;
+        esac
+    done
+}
 aimed() { [ -z "$targets" ] || case "$targets" in *"<$1>"*) return 0;; *) return 1;; esac; }
 # Whether name filter list $1 (`<a><b>`) picks test $2, exactly if $3.
 picks() {
@@ -171,10 +188,10 @@ wanted() {
 artifact() { # package, target, executable
     picked "$1" || return 0
     aimed "$2" || return 0
-    manifest="$PWD/$1/Cargo.toml"; package_id="path+file://$PWD/$1#0.1.0"
-    if [ "$1" = root ]; then manifest="$PWD/Cargo.toml"; package_id="path+file://$PWD#root@0.1.0"; fi
+    manifest="$here/$1/Cargo.toml"; package_id="path+file://$here/$1#0.1.0"
+    if [ "$1" = root ]; then manifest="$here/Cargo.toml"; package_id="path+file://$here#root@0.1.0"; fi
     kind=${2%%:*}; name=${2#*:}; [ "$kind" = lib ] && name=$1
-    printf '{"reason":"compiler-artifact","package_id":"%s","manifest_path":"%s","target":{"kind":["%s"],"name":"%s","test":true},"profile":{"test":true},"executable":"%s/target/debug/deps/%s","fresh":true}\n' "$package_id" "$manifest" "$kind" "$name" "$PWD" "$3"
+    printf '{"reason":"compiler-artifact","package_id":"%s","manifest_path":"%s","target":{"kind":["%s"],"name":"%s","test":true},"profile":{"test":true},"executable":"%s/target/debug/deps/%s","fresh":true}\n' "$package_id" "$manifest" "$kind" "$name" "$here" "$3"
 }
 failed=
 binary() { # package, target, executable, nextest id, source, tests…
@@ -195,7 +212,8 @@ binary() { # package, target, executable, nextest id, source, tests…
     for test in "$@"; do
         wanted "$id" "$test" || continue
         outcome=ok
-        if [ -e "$bin/fail/$exe $test" ]; then
+        encode "$exe $test"
+        if [ -e "$bin/fail/$encoded" ]; then
             outcome=FAILED; failed=1; failed_here="$failed_here $test"
         fi
         if [ -n "$nextest" ]; then
@@ -278,15 +296,12 @@ fn project_with(cx: &mut TestAppContext, layout: Layout) -> Project<'_> {
 
     let bin = tempfile::tempdir().unwrap();
     let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_cargo_test.sh");
-    let cargo = bin.path().join("cargo");
-    match layout {
-        Layout::Workspace { .. } => fs::write(&cargo, FILTERING).unwrap(),
-        Layout::Single => drop(fs::copy(fake, &cargo).unwrap()),
-    }
-    executable(&cargo);
+    let script = match layout {
+        Layout::Workspace { .. } => FILTERING.to_owned(),
+        Layout::Single => fs::read_to_string(fake).unwrap(),
+    };
+    let runner_path = install_fake_cargo(bin.path(), &script);
     fs::create_dir(bin.path().join("fail")).unwrap();
-    let path_dirs = [bin.path(), Path::new("/usr/bin"), Path::new("/bin")];
-    let runner_path = std::env::join_paths(path_dirs).unwrap();
     let state = tempfile::tempdir().unwrap();
     cx.update(|cx| {
         cx.set_global(TestFiles(Arc::new(Disk)));
@@ -725,7 +740,7 @@ impl Project<'_> {
             .bin
             .path()
             .join("fail")
-            .join(format!("{executable} {name}"));
+            .join(format!("{executable} {}", name.replace("::", "__")));
         fs::write(fail, "").unwrap();
     }
 
@@ -1009,7 +1024,7 @@ fn a_filtered_nextest_run_reruns_only_its_failed_test(cx: &mut TestAppContext) {
     let config = project.dir.path().join(".config");
     fs::create_dir(&config).unwrap();
     fs::write(config.join("nextest.toml"), "[profile.default]\n").unwrap();
-    let nextest = project.bin.path().join("cargo-nextest");
+    let nextest = nextest_in(project.bin.path());
     fs::write(&nextest, "#!/bin/sh\n").unwrap();
     executable(&nextest);
     project.fail(P_LIB, SHARED);

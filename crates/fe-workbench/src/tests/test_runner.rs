@@ -6,8 +6,11 @@
 
 use std::{
     ffi::OsString,
-    fs, io,
+    fs,
+    hash::{DefaultHasher, Hash as _, Hasher as _},
+    io,
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
     thread,
     time::{Duration, Instant},
@@ -33,7 +36,7 @@ use crate::{
         DelayHistoryWrites, RunnerPath, Scope, TestOutcome, TestResult, no_cargo_project, plan,
         rust_only, set_history_dir,
     },
-    tests::open,
+    tests::{open, posix_sh},
     workbench::toast::Level,
 };
 
@@ -99,13 +102,7 @@ fn untrusted(cx: &mut TestAppContext) -> Project<'_> {
 
     let bin = tempfile::tempdir().unwrap();
     let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_cargo_test.sh");
-    let cargo = bin.path().join("cargo");
-    fs::copy(fake, &cargo).unwrap();
-    executable(&cargo);
-    // The fake, then the system's tools it runs: not the `cargo-nextest` a
-    // developer has installed.
-    let path_dirs = [bin.path(), Path::new("/usr/bin"), Path::new("/bin")];
-    let runner_path = std::env::join_paths(path_dirs).unwrap();
+    let runner_path = install_fake_cargo(bin.path(), &fs::read_to_string(fake).unwrap());
     let state = tempfile::tempdir().unwrap();
     cx.update(|cx| {
         cx.set_global(TestFiles(Arc::new(Disk)));
@@ -147,6 +144,64 @@ fn executable(path: &Path) {
 
 #[cfg(not(unix))]
 fn executable(_: &Path) {}
+
+/// Makes `script` the fake `cargo` in `bin`, and gives the `PATH` the runs
+/// are to find it on: `bin`, then the system's tools it runs, not the
+/// `cargo-nextest` a developer has installed. A bare `cargo` is run on
+/// Windows only as `cargo.exe` (`PATHEXT` isn't read), so there
+/// `cargo.exe` beside the script is [`fake_cargo_shim`], which runs it with
+/// the `sh` on that `PATH`: [`posix_sh`], whose folder has MSYS's tools.
+pub(super) fn install_fake_cargo(bin: &Path, script: &str) -> OsString {
+    let cargo = bin.join("cargo");
+    fs::write(&cargo, script).unwrap();
+    executable(&cargo);
+    if cfg!(windows) {
+        fs::copy(fake_cargo_shim(), bin.join("cargo.exe")).unwrap();
+        let sh = posix_sh();
+        std::env::join_paths([bin, sh.parent().unwrap()]).unwrap()
+    } else {
+        std::env::join_paths([bin, Path::new("/usr/bin"), Path::new("/bin")]).unwrap()
+    }
+}
+
+/// The `cargo-nextest` the runs look for in `dir`: `cargo-nextest.exe` on
+/// Windows.
+pub(super) fn nextest_in(dir: &Path) -> PathBuf {
+    dir.join(format!("cargo-nextest{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// `tests/fixtures/fake_cargo_shim.rs` built, for [`install_fake_cargo`]:
+/// once beside the test binary for each version of its source, as each
+/// test may be a process of its own.
+fn fake_cargo_shim() -> PathBuf {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_cargo_shim.rs");
+    let mut hasher = DefaultHasher::new();
+    fs::read(&source).unwrap().hash(&mut hasher);
+    let exe = std::env::consts::EXE_SUFFIX;
+    let current = std::env::current_exe().unwrap();
+    let deps = current.parent().unwrap();
+    let shim = deps.join(format!("fake_cargo_shim-{:016x}{exe}", hasher.finish()));
+    if shim.is_file() {
+        return shim;
+    }
+    // Built under a name of its own, then moved in whole: another test may
+    // be building it too.
+    let built = deps.join(format!("fake_cargo_shim-{}{exe}", std::process::id()));
+    let rustc = Command::new("rustc")
+        .args(["--edition=2024", "-Cdebuginfo=0", "-o"])
+        .arg(&built)
+        .arg(&source)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&rustc.stderr);
+    assert!(rustc.status.success(), "the fake's shim didn't build: {stderr}");
+    if fs::rename(&built, &shim).is_err() {
+        // Another test's moved in, and is running or copying it.
+        assert!(shim.is_file(), "the fake's shim couldn't be kept");
+        fs::remove_file(&built).ok();
+    }
+    shim
+}
 
 fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
@@ -374,7 +429,7 @@ fn results_are_recorded_in_the_history(cx: &mut TestAppContext) {
 #[gpui::test]
 fn nextest_is_used_when_the_root_configures_it(cx: &mut TestAppContext) {
     let mut project = trusted(cx);
-    let nextest = project.bin.path().join("cargo-nextest");
+    let nextest = nextest_in(project.bin.path());
 
     // Configured, but not on the PATH: cargo test.
     let config = project.dir.path().join(".config");
@@ -608,7 +663,7 @@ fn an_aborted_binary_still_counts_its_failure(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_failure_longer_than_a_line_is_read_whole(cx: &mut TestAppContext) {
     let mut project = trusted(cx);
-    let nextest = project.bin.path().join("cargo-nextest");
+    let nextest = nextest_in(project.bin.path());
     fs::write(&nextest, "#!/bin/sh\n").unwrap();
     executable(&nextest);
     let config = project.dir.path().join(".config");
@@ -710,7 +765,7 @@ fn nextest_is_found_as_programs_are_run() {
     fs::write(root.join(".config/nextest.toml"), "").unwrap();
     let tools = root.join("tools");
     fs::create_dir(&tools).unwrap();
-    let nextest = tools.join("cargo-nextest");
+    let nextest = nextest_in(&tools);
     let uses = |path: Option<&str>, inherited: Option<&Path>| {
         let path = path.map(OsString::from);
         let inherited = inherited.map(|dir| dir.as_os_str().to_owned());
