@@ -16,9 +16,11 @@
 //!     pane. Off the main thread, the path is resolved a part at a time
 //!     ([`real_path`]): every symlink followed, a dangling one's target
 //!     too, and each `..` taken from what's resolved, and must land inside
-//!     the root, resolved too, whether the file is there yet or not
-//!     ([`locate`]); an editor already on that file, by whatever path,
-//!     is the one opened, so its buffer is matched. A whole-file
+//!     the root, resolved too, whether the file is there yet or not, both
+//!     spelled as the file system names them, so a short name or another
+//!     letter case still matches ([`canonical_spelling`], [`locate`]); an
+//!     editor already on that file, by whatever path, is the one opened, so
+//!     its buffer is matched. A whole-file
 //!     replacement is diffed against the whole text
 //!     ([`ProposedChange::from_text`]), and sections are made at each
 //!     SEARCH text's one exact match ([`ProposedChange::from_edits`]).
@@ -422,6 +424,31 @@ fn real_path(path: &Path) -> Option<PathBuf> {
     real.is_absolute().then_some(real)
 }
 
+/// `real`, which [`real_path`] resolved, spelled as the file system names
+/// it, as `dunce::canonicalize` spells the root: the deepest part of it
+/// that's there canonicalized, the rest joined on as named. `real_path`
+/// keeps each part as written, so an 8.3 short name or a part in another
+/// letter case (Windows, case-insensitive APFS) would otherwise never start
+/// with the canonical root. Any link swapped in since is followed too, and
+/// the result is what's checked. `None` if a part can't be read.
+fn canonical_spelling(real: &Path) -> Option<PathBuf> {
+    for there in real.ancestors() {
+        match dunce::canonicalize(there) {
+            Ok(canonical) => {
+                let rest = real.strip_prefix(there).ok()?;
+                return Some(if rest.as_os_str().is_empty() {
+                    canonical
+                } else {
+                    canonical.join(rest)
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// Where `rel` is under `root`, really, unless that's outside it; opened
 /// by the path of an editor already on the same file, of `open`, so its
 /// buffer, unsaved edits and all, is the one used. Reads the disk.
@@ -432,8 +459,9 @@ pub(crate) fn locate(root: &Path, rel: &str, open: &[PathBuf]) -> Result<Located
     let full = root.join(rel);
     let real_root = dunce::canonicalize(root)
         .map_err(|_| tr!("workbench-chat-why-folder-unreadable").to_string())?;
-    let real =
-        real_path(&full).ok_or_else(|| tr!("workbench-chat-why-unresolvable").to_string())?;
+    let real = real_path(&full)
+        .and_then(|real| canonical_spelling(&real))
+        .ok_or_else(|| tr!("workbench-chat-why-unresolvable").to_string())?;
     if !real.starts_with(&real_root) {
         return Err(tr!("workbench-chat-why-outside").to_string());
     }

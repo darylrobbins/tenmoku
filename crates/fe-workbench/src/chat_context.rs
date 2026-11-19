@@ -255,10 +255,35 @@ pub(crate) enum Walked {
     Missing,
 }
 
+/// `root` as the file system names it (`dunce::canonicalize`: links
+/// followed, an 8.3 short name or a part in another letter case as stored),
+/// and `path` spelled alike: if it's under `root` as given, under that
+/// spelling instead, the rest as written. A root that can't be resolved
+/// stays as given. So both a path joined to the root as it was opened and
+/// one in the canonical spelling open editors are keyed by (an edit's,
+/// `crate::open::file_identity`) are checked against the same root, and
+/// [`walk`], which keeps names as written, walks both from one spelling.
+/// The names under the root are untouched, so the deny list still reads
+/// them as written. Reads the disk.
+fn spelled_alike(root: &Path, path: &Path) -> (PathBuf, PathBuf) {
+    let Ok(canonical) = dunce::canonicalize(root) else {
+        return (root.to_owned(), path.to_owned());
+    };
+    let path = match path.strip_prefix(root) {
+        Ok(rest) if rest.as_os_str().is_empty() => canonical.clone(),
+        Ok(rest) => canonical.join(rest),
+        Err(_) => path.to_owned(),
+    };
+    (canonical, path)
+}
+
 /// The file at `path`, opened, and where it really is, if both it and that
 /// pass [`refusal`] under `root`, which is walked too: so a link can't reach
-/// past the deny list. A folder refuses.
+/// past the deny list. Both are first spelled alike ([`spelled_alike`]). A
+/// folder refuses.
 pub(crate) fn open_vetted(root: &Path, path: &Path) -> Result<(PathBuf, Walked), String> {
+    let (root, path) = spelled_alike(root, path);
+    let (root, path) = (root.as_path(), path.as_path());
     if let Some(reason) = refusal(Some(root), path) {
         return Err(reason);
     }
@@ -740,7 +765,14 @@ impl ChatPanel {
         let workbench = workbench.read(cx);
         let root = workbench.root().map(Path::to_owned);
         let shown = shown_path(root.as_deref(), Some(&path));
-        if let Some(reason) = refusal(root.as_deref(), &path) {
+        // A path spelled other than the root (an editor's, canonical, under
+        // a root opened by a short name, another letter case or a link) is
+        // left to the vetting, which spells both alike ([`open_vetted`]).
+        let written = match root.as_deref() {
+            Some(root) if !path.starts_with(root) => None,
+            root => refusal(root, &path),
+        };
+        if let Some(reason) = written {
             return refused(&shown, &reason, cx);
         }
         let Some(root) = root else {

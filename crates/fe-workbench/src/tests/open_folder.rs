@@ -384,3 +384,5 @@ fn a_failed_open_panel_says_why() {
 
 #[path = "lsp_single_file.rs"]
 mod single_file;
+
+mod chat_root_spelling;
