@@ -13,6 +13,21 @@ pub(crate) fn rooted(command: impl AsRef<std::path::Path>) -> std::path::PathBuf
     }
 }
 
+/// The POSIX shell to run a test's `sh -c` scripts with: `/bin/sh`, or on
+/// Windows the `sh.exe` on `PATH` (Git for Windows'), whose MSYS tools the
+/// scripts use. Panics if there's none: a test that needs it can't pass.
+pub(crate) fn posix_sh() -> std::path::PathBuf {
+    if cfg!(windows) {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("sh.exe"))
+            .find(|sh| sh.is_file())
+            .expect("no sh.exe on PATH: these tests need Git for Windows' sh")
+    } else {
+        "/bin/sh".into()
+    }
+}
+
 /// Terminal settings for a shell that prints `word` (if any), then runs until
 /// [`SHELL_END`] is typed: `sh` running `cat`, or on Windows `cmd`.
 pub(crate) fn printing_shell(word: &str) -> fe_config::TerminalSettings {

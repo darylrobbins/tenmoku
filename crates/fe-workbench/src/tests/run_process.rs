@@ -22,6 +22,7 @@ use crate::{
     },
     runs::{Run, RunEnd, RunKind, RunStatus, RunSummary, Runs},
     task_run,
+    tests::posix_sh,
 };
 
 /// What a [`Recorder`] has seen.
@@ -123,13 +124,13 @@ fn trust(folder: &Path, trusted: bool, cx: &mut TestAppContext) {
     cx.update(|cx| kiln_shell::trust::decide(&folder, trusted, cx));
 }
 
-/// `sh -c script` in `cwd`, with this process's `PATH`.
+/// `sh -c script` in `cwd`, with this process's `PATH`: [`posix_sh`].
 fn sh(script: &str, cwd: &Path) -> RunSpec {
     let path = std::env::var_os("PATH").unwrap_or_default();
     RunSpec {
         kind: RunKind::Test,
         title: "sh".to_owned(),
-        program: "/bin/sh".into(),
+        program: posix_sh().into(),
         args: vec!["-c".into(), script.into()],
         cwd: cwd.to_owned(),
         env: vec![(OsString::from("PATH"), path)],
@@ -280,6 +281,7 @@ async fn a_nonzero_exit_finishes_the_run_failed_with_its_code(cx: &mut TestAppCo
 }
 
 /// Whether process `pid` is gone: no longer there, or a zombie.
+#[cfg(unix)]
 fn gone(pid: &str) -> bool {
     let ps = Command::new("ps")
         .args(["-o", "stat=", "-p", pid])
@@ -289,13 +291,25 @@ fn gone(pid: &str) -> bool {
     stat.trim().is_empty() || stat.trim().starts_with('Z')
 }
 
+/// Whether process `pid` is gone. A script's `$$` and `$!` are MSYS pids,
+/// not Windows ones, so the same sh asks after it.
+#[cfg(windows)]
+fn gone(pid: &str) -> bool {
+    let kill = Command::new(posix_sh())
+        .args(["-c", "kill -0 \"$1\" 2>/dev/null", "sh", pid])
+        .status()
+        .unwrap();
+    !kill.success()
+}
+
 #[gpui::test]
 async fn cancel_kills_the_whole_process_group(cx: &mut TestAppContext) {
     let (runs, dir) = setup(cx);
     trust(dir.path(), true, cx);
     let sink = Recorder::new();
     // Both the shell and its child ignore SIGTERM, which the child inherits:
-    // only the SIGKILL that follows ends them.
+    // only the SIGKILL that follows ends them. Windows has no SIGTERM: the
+    // tree is terminated at once.
     let script = "trap '' TERM; sleep 30 & echo $!; wait";
     let process = start(sh(script, dir.path()), &sink, &runs, cx)
         .await
@@ -553,7 +567,11 @@ async fn a_cancel_kills_on_time_while_the_sink_is_blocked(cx: &mut TestAppContex
         );
         thread::sleep(Duration::from_millis(20));
     }
+    // Windows has no SIGTERM to ignore: the tree is terminated at once.
+    #[cfg(unix)]
     assert!(cancelled_at.elapsed() >= GRACE, "killed before its grace");
+    #[cfg(windows)]
+    assert!(cancelled_at.elapsed() < GRACE, "not killed at once");
     gate.store(true, Ordering::SeqCst);
     cx.run_until_parked();
     assert_eq!(run_of(&process, &runs, cx).status, RunStatus::Cancelled);
