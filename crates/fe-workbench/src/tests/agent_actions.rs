@@ -202,9 +202,9 @@ fn denied_files_are_refused_as_attachments(cx: &mut TestAppContext) {
     let (workbench, cx, _provider, dir) = setup(cx, true, true);
     let root = dunce::canonicalize(dir.path()).unwrap();
     std::fs::write(root.join("ok.txt"), "fine").unwrap();
+    std::fs::write(root.join(".env"), "x").unwrap();
     #[cfg(unix)]
     {
-        std::fs::write(root.join(".env"), "x").unwrap();
         std::os::unix::fs::symlink(root.join(".env"), root.join("link.txt")).unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("o.txt"), "x").unwrap();

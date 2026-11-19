@@ -33,3 +33,11 @@ GH CI 44405849017 on 8ba6f008c, windows Test:
 - tests/agent_actions.rs:205 creates `.env` only inside `#[cfg(unix)]` (next to the symlinks), so on Windows `file(".env")` refuses nothing and only 2 toasts show (:236, `left: 2 right: 3`). Write `.env` on every platform and keep only the symlinks unix-only.
 
 chat_tool_loop's a_hand_in_under_way_ends_only_its_own_turn and edits_run_in_the_calls_order_whatever_is_answered_first aren't covered here; the "outside the folder" card covers them.
+
+## Implementation notes
+
+- chat_tool_loop_tests.rs: `ready()` sets `CommandPath(sh_path())`: `/usr/bin:/bin` on unix, on Windows `join_paths` of the folder holding `tests::posix_sh()` (Git for Windows' `sh.exe`). `resolve_program` tries `sh.exe` there, and the command runs with that `PATH`; Git's `bin\sh.exe` adds its MSYS `usr\bin` (`touch`, `sleep`) itself, and `usr\bin\sh.exe` sits beside them.
+- agents_panel_tests.rs: the same `PATH`, inline in `stop_ends_lane_1s_turn_with_a_permission_prompt_waiting` (src/tests/mod.rs is outside this card's scope, so no shared helper).
+- terminal_lane_tests.rs: the lane session's shell is `posix_sh()`, same script. The spinner needs ConPTY to pass the OSC 133;C through; GH CI is the only check of that.
+- tests/agent_actions.rs: `.env` is written on every platform; only the symlinks stay `cfg(unix)`. On Windows the items are `.env` twice and `.git/config`, so three toasts.
+- Not built locally on Windows; GH CI's windows Test (draft PR from the lead) is the evidence for C1–C3.

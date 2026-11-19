@@ -9,13 +9,14 @@ use fe_ui::{ActiveTheme as _, IconRef, Theme, ThemeData};
 use gpui::{Entity, Focusable as _, Hsla, TestAppContext, VisualTestContext};
 
 use super::terminal_tabs_tests::{draw, opened, sessions, started, terminal, toggle, until};
-use crate::Workbench;
+use crate::{Workbench, tests::posix_sh};
 
 fn lane(number: u32) -> LaneId {
     LaneId::from_number(number).unwrap()
 }
 
-/// Opens a session of `lane`, which runs `/bin/sh`, and waits for it.
+/// Opens a session of `lane`, which runs [`posix_sh`] (`/bin/sh`, or Git
+/// for Windows' `sh.exe`), and waits for it.
 fn add_lane_session(
     workbench: &Entity<Workbench>,
     lane: LaneId,
@@ -27,7 +28,7 @@ fn add_lane_session(
         // OSC 133;C marks a command running: the tab's spinner. It then
         // answers each line it reads.
         shell: Some((
-            "/bin/sh".to_owned(),
+            posix_sh().to_string_lossy().into_owned(),
             vec![
                 "-c".to_owned(),
                 r"printf '\033]133;C\007ready\n'; while read l; do echo got:$l; done".to_owned(),
