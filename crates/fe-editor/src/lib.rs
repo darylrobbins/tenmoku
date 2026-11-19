@@ -1593,6 +1593,7 @@ impl EditorModel {
             .borrow_mut()
             .redo_selections
             .insert(id, selections);
+        self.prune_picks();
     }
 
     /// For a transaction [`EditorModel::put_carets_at_change_start`] named,
@@ -1631,6 +1632,13 @@ impl EditorModel {
     /// other of its buffer, put one caret, as `pick` says.
     pub(crate) fn pick_caret(&mut self, id: TransactionId, pick: CaretPick) {
         self.history.borrow_mut().caret_picks.insert(id, pick);
+        self.prune_picks();
+    }
+
+    /// [`History::prune`] against this model's buffer.
+    fn prune_picks(&mut self) {
+        let buffer = self.buffer.borrow();
+        self.history.borrow_mut().prune_picks(&buffer);
     }
 
     /// Runs `f` with edits, undo and redo acting as `origin` rather than
@@ -2075,12 +2083,16 @@ struct History {
     /// The version each model is caught up to; dropped models' go dead.
     models: Vec<Weak<Cell<Version>>>,
     /// Where undoing and redoing a transaction puts the caret, for those
-    /// given one: accepted completions. Kept while the buffer lives, a few
-    /// words each: fe-buffer doesn't say when it drops a transaction.
+    /// given one: accepted completions. Pruned to the transactions undo and
+    /// redo can still reach when the buffer's history revision has changed
+    /// ([`EditorModel::prune_picks`]), as an entry is added.
     caret_picks: HashMap<TransactionId, CaretPick>,
     /// The selections redoing a transaction restores, for those given
-    /// them: row insertions. Kept as `caret_picks` is.
+    /// them: row insertions. Pruned as `caret_picks` is.
     redo_selections: HashMap<TransactionId, RedoSelections>,
+    /// The history revision `caret_picks` and `redo_selections` were last
+    /// pruned at.
+    picks_pruned_at: Option<u64>,
     /// Transactions whose undo and redo put one caret at the start of the
     /// text they change ([`EditorModel::put_carets_at_change_start`]).
     change_start_carets: HashSet<TransactionId>,
@@ -2089,7 +2101,7 @@ struct History {
     /// forward delete's caret. Each is an offset in the text of the version
     /// kept with it, which `record` carries through the edits since, as an
     /// anchor goes, and how much of the run's deleted text lay before it,
-    /// which an undo restores there. Kept as `caret_picks` is.
+    /// which an undo restores there. Pruned as `caret_picks` is.
     typing_starts: HashMap<TransactionId, (Version, Vec<(usize, usize)>)>,
     /// How many saves have been prepared: a run of typing in any model
     /// ends at one, so its snapshot is an undo step's edge.
@@ -2119,11 +2131,34 @@ impl History {
             models: Vec::new(),
             caret_picks: HashMap::new(),
             redo_selections: HashMap::new(),
+            picks_pruned_at: None,
             change_start_carets: HashSet::new(),
             typing_starts: HashMap::new(),
             save_marks: 0,
             stamped: None,
         }
+    }
+
+    /// Drops the entries of the per-transaction maps (`caret_picks`,
+    /// `redo_selections`, `typing_starts`, `change_start_carets`) for
+    /// transactions undo and redo can no longer reach, other than the open
+    /// one. Once per change of the buffer's history revision.
+    fn prune_picks(&mut self, buffer: &Buffer) {
+        let revision = buffer.history_revision();
+        if self.picks_pruned_at == Some(revision) {
+            return;
+        }
+        let mut keep: HashSet<TransactionId> = buffer
+            .history_times(|_| true)
+            .into_iter()
+            .map(|time| time.transaction)
+            .collect();
+        keep.extend(buffer.open_transaction());
+        self.caret_picks.retain(|id, _| keep.contains(id));
+        self.redo_selections.retain(|id, _| keep.contains(id));
+        self.typing_starts.retain(|id, _| keep.contains(id));
+        self.change_start_carets.retain(|id| keep.contains(id));
+        self.picks_pruned_at = Some(revision);
     }
 
     /// Adds a model caught up to `version`, which it marks as it catches
@@ -2575,6 +2610,9 @@ impl CharClass {
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+#[path = "caret_picks_prune_tests.rs"]
+mod caret_picks_prune_tests;
 #[cfg(test)]
 #[path = "primary_identity_tests.rs"]
 mod primary_identity_tests;

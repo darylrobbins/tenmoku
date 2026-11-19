@@ -143,10 +143,9 @@ impl EditorModel {
         let id = buffer.edit(edits, self.origin.clone());
         if let (Some(transaction), Some(typed)) = (id, typed) {
             if let Some(starts) = starts {
-                self.history
-                    .borrow_mut()
-                    .typing_starts
-                    .insert(transaction, (before, starts));
+                let mut history = self.history.borrow_mut();
+                history.typing_starts.insert(transaction, (before, starts));
+                history.prune_picks(buffer);
             }
             self.typing = Some(TypingGroup {
                 transaction,
