@@ -956,8 +956,23 @@ fn a_notification_to_a_stopped_session_is_not_found(cx: &mut TestAppContext) {
         s.fake.crash_at(crash);
         if crash < 6 {
             let backoff = Duration::from_secs(1 << (crash - 1));
-            s.clock.wait_for_sleep(backoff);
-            s.clock.advance(backoff);
+            // Other timers on the clock (requests, the initialize timeout) can share the
+            // backoff's length, so an advance may be taken by one that isn't the restart's.
+            // Poll instead of blocking on a sleep: advance only while the next launch hasn't
+            // started and a sleep of the backoff's length is armed (one that has fired is gone,
+            // so nothing waits for it).
+            let give_up = Instant::now() + Duration::from_secs(30);
+            while s.fake.launches() <= crash {
+                if s.clock.sleeping().contains(&backoff) {
+                    s.clock.advance(backoff);
+                }
+                assert!(
+                    Instant::now() < give_up,
+                    "launch {} never started",
+                    crash + 1
+                );
+                thread::sleep(Duration::from_millis(2));
+            }
             s.fake.wait_initialized_at(crash + 1);
         }
     }
