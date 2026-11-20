@@ -1,0 +1,17 @@
+[package]
+name = "fe-structural"
+description = "Structural (syntax-tree) search patterns, ast-grep style. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fe-syntax.workspace = true
+log.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+
+[lints]
+workspace = true

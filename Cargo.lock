@@ -2631,6 +2631,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-structural"
+version = "0.2.5"
+dependencies = [
+ "fe-syntax",
+ "log",
+ "thiserror 2.0.21",
+ "tree-sitter",
+]
+
+[[package]]
 name = "fe-syntax"
 version = "0.2.5"
 dependencies = [
