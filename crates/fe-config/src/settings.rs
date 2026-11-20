@@ -70,6 +70,10 @@ pub struct Settings {
     /// Updates to Tenmoku itself.
     #[serde(default)]
     pub update: UpdateSettings,
+    /// Working on a remote host over ssh. All four are the user's own: a
+    /// project file can't set them.
+    #[serde(default)]
+    pub remote: crate::remote_settings::RemoteSettings,
     /// External formatters, by language name (`rust`, `python`,
     /// `typescript`, ...: the names `lsp.servers.<name>.languages` uses). A
     /// project file can't set them: a cloned repo shouldn't choose a program
@@ -1922,6 +1926,7 @@ fn options() -> SettingsOptions {
             drop_bad_python_server,
         ))
         .layer_filter(ProjectFilter::new("extensions", clamp_plugin_limits))
+        .layer_filter(ProjectFilter::new(REMOTE_PORTS_KEY, drop_bad_ports))
         .project_filter(ProjectFilter::new("formatters", drop_formatters))
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
@@ -1932,6 +1937,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("debug", narrow_debug))
         .project_filter(ProjectFilter::new("extensions", drop_extensions))
         .project_filter(ProjectFilter::new("workbench", drop_workbench_user_only))
+        .project_filter(ProjectFilter::new("remote", drop_remote))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -2191,6 +2197,7 @@ pub(crate) fn project_warning(en_us: &str) -> String {
         PROJECT_TERMINAL_SHELL => tr!("config-project-terminal-shell-ignored"),
         PROJECT_VIM_USER_ONLY => tr!("config-project-vim-user-only"),
         PROJECT_ICON_THEME => tr!("config-project-icon-theme-ignored"),
+        PROJECT_REMOTE => tr!("config-project-remote-ignored"),
         _ => return en_us.to_owned(),
     }
     .to_string()
@@ -2204,6 +2211,16 @@ pub const PROJECT_THEME: &str =
 /// at each key it set (at `theme` itself if it isn't a table).
 fn drop_theme(layer: &mut Layer) {
     drop_table(layer, "theme", PROJECT_THEME);
+}
+
+/// The warning for each `remote` key a project file sets, in en-US.
+pub const PROJECT_REMOTE: &str = "remote settings in project files are ignored: a folder can't choose the server a connect uploads, the ports it forwards or how long a host holds your session";
+
+/// Drops a project layer's `remote` table, with a [`PROJECT_REMOTE`] warning
+/// at each key it set (at `remote` itself if it isn't a table). Design § 9:
+/// all four are in user settings only.
+fn drop_remote(layer: &mut Layer) {
+    drop_table(layer, "remote", PROJECT_REMOTE);
 }
 
 /// Drops a project layer's `name` table, with a `message` warning at each
@@ -2341,6 +2358,74 @@ fn drop_bad_formatters(layer: &mut Layer) {
         let warning = layer.diagnostic_at(Severity::Warning, Some(key), offset, message);
         layer.diagnostics.push(warning);
     }
+}
+
+/// `remote.ports`, as a diagnostic names it.
+const REMOTE_PORTS_KEY: &str = "remote.ports";
+
+/// Drops each `remote.ports` entry that isn't a port (1 to 65535) or a
+/// `"<host>:<local>"` pair of them, with a warning at it, so the entry is
+/// ignored rather than the file rejected. The schema describes both forms,
+/// but a bad one inside the array goes unreported, so this is what refuses
+/// it.
+fn drop_bad_ports(layer: &mut Layer) {
+    let Some(toml::Value::Table(remote)) = layer.table.get_mut("remote") else {
+        return;
+    };
+    let mut problems: Vec<String> = Vec::new();
+    match remote.get_mut("ports") {
+        None => return,
+        Some(toml::Value::Array(ports)) => ports.retain(|port| match port_problem(port) {
+            None => true,
+            Some(problem) => {
+                problems.push(problem);
+                false
+            }
+        }),
+        Some(_) => {
+            remote.remove("ports");
+            problems.push(kiln_l10n::tr!("config-remote-ports-not-array").to_string());
+        }
+    }
+    if problems.is_empty() {
+        return;
+    }
+    let document = DeTable::parse(&layer.source).ok();
+    let offset = document.as_ref().map_or(0, |document| {
+        key_offset(document.get_ref(), "remote", &["ports".to_owned()])
+    });
+    for message in problems {
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(REMOTE_PORTS_KEY.into()),
+            offset,
+            message,
+        );
+        layer.diagnostics.push(warning);
+    }
+}
+
+/// Why `port` isn't a forwarded port, in the active locale, or `None` if it
+/// is one.
+fn port_problem(port: &toml::Value) -> Option<String> {
+    let in_range = |number: i64| (1..=65535).contains(&number);
+    match port {
+        toml::Value::Integer(number) if in_range(*number) => None,
+        toml::Value::String(text) => match text.split_once(':') {
+            Some((host, local))
+                if host.parse().is_ok_and(in_range) && local.parse().is_ok_and(in_range) =>
+            {
+                None
+            }
+            _ => Some(bad_port(text)),
+        },
+        other => Some(bad_port(&other.to_string())),
+    }
+}
+
+/// The warning for `value`, which isn't a port.
+fn bad_port(value: &str) -> String {
+    kiln_l10n::tr!("config-remote-port-bad", value = value.to_string()).to_string()
 }
 
 /// `lsp.python_server`, as a diagnostic names it.

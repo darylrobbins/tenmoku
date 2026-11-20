@@ -27,6 +27,7 @@ pub mod l10n;
 pub mod language_choices;
 pub mod paths;
 pub mod recent;
+pub mod remote_settings;
 pub mod settings;
 pub mod settings_edit;
 pub mod settings_model;

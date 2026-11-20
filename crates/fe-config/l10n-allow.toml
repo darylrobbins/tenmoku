@@ -67,6 +67,11 @@ reason = "PROJECT_THEME, the en-US text of config-project-theme-ignored"
 
 [[literal]]
 file = "src/settings.rs"
+text = "remote settings in project files are ignored: a folder can't choose the server a connect uploads, the ports it forwards or how long a host holds your session"
+reason = "PROJECT_REMOTE, the en-US text of config-project-remote-ignored"
+
+[[literal]]
+file = "src/settings.rs"
 text = "formatters in project files are ignored: a folder can't choose the program that formats its files"
 reason = "PROJECT_FORMATTERS, the en-US text of config-project-formatters-ignored"
 

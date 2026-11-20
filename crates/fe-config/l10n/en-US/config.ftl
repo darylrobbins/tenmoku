@@ -25,6 +25,7 @@ config-agents-task-budget = must be 0 (off) or at least 20000
 config-project-terminal-shell-ignored = terminal.shell and terminal.shell_args in project files are ignored: a folder can't choose the program its terminal runs
 config-project-vim-user-only = vim.shell and vim.remap in project files are ignored: a folder can't choose the program ! runs or type keys as you
 config-project-icon-theme-ignored = workbench.icon_theme in project files is ignored: the icons are the same in every window
+config-project-remote-ignored = remote settings in project files are ignored: a folder can't choose the server a connect uploads, the ports it forwards or how long a host holds your session
 
 ## A `[formatters.<language>]` entry that is dropped. $language is the
 ## table's name, such as `rust`.
@@ -46,6 +47,8 @@ config-spell-scopes-not-list = must be a list of "comments", "strings" and "text
 
 ## `lsp.python_server`. $value is the value as written, quotes and all.
 
+config-remote-port-bad = { $value } isn't a port or a "host:local" pair of them, each from 1 to 65535; entry ignored
+config-remote-ports-not-array = must be an array of ports, each 3000 or "5432:15432"; ignored
 config-python-server-unknown = { $value } isn't a Python server: use "pyrefly", "ty" or "pyright"; ignored, so the default applies
 
 ## A settings file the Settings editor couldn't parse. $error is the TOML

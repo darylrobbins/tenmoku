@@ -183,6 +183,26 @@
       },
       "type": "object"
     },
+    "AutoForward": {
+      "description": "What to do with a port a program on the host starts listening on.",
+      "oneOf": [
+        {
+          "const": "notify",
+          "description": "A notification offering to forward it.",
+          "type": "string"
+        },
+        {
+          "const": "forward",
+          "description": "Forward it as it appears.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "Leave it alone.",
+          "type": "string"
+        }
+      ]
+    },
     "AutoSave": {
       "description": "`editor.auto_save`.",
       "oneOf": [
@@ -1406,6 +1426,23 @@
       },
       "type": "object"
     },
+    "PortForward": {
+      "anyOf": [
+        {
+          "description": "The same port on the host and locally.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "description": "`\"<host>:<local>\"`: the host's port, then the local one it is offered\non.",
+          "pattern": "^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]):(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+          "type": "string"
+        }
+      ],
+      "description": "One forwarded port: `3000`, or `\"5432:15432\"` for the host's port and the\nlocal one."
+    },
     "ProjectPermissions": {
       "description": "`agents.project_permissions`: what a project file asks for. A level here\nonly takes effect if it is stricter than the user's.",
       "properties": {
@@ -1548,6 +1585,40 @@
           "type": "string"
         }
       ]
+    },
+    "RemoteSettings": {
+      "description": "Settings for working on a remote host.",
+      "properties": {
+        "auto_forward": {
+          "$ref": "#/$defs/AutoForward",
+          "default": "notify",
+          "description": "What happens when a program on the host starts listening on a port:\na notification offering to forward it, forwarding it straight away,\nor nothing. A port a run or task configuration declares is forwarded\nwhatever this says."
+        },
+        "dev_server": {
+          "description": "A `tenmoku-server` built from this checkout, for a development build\nof Tenmoku, which has no server release to download. It is uploaded\nand installed like a release asset, and it must report exactly this\nbuild's version. Unset means the release download.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ports": {
+          "default": [],
+          "description": "Ports forwarded on every connect, each `3000` for the same port at\nboth ends or `\"5432:15432\"` for the host's port and the local one it\nis offered on. The client listens on 127.0.0.1 only.",
+          "items": {
+            "$ref": "#/$defs/PortForward"
+          },
+          "type": "array"
+        },
+        "reconnect_grace": {
+          "default": 10,
+          "description": "How many minutes a host keeps a session whose link dropped, with its\nterminals, language servers and debuggers still running, before it\ntears them down.",
+          "format": "uint32",
+          "maximum": 60,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
     },
     "RenderWhitespace": {
       "description": "`editor.render_whitespace`.",
@@ -2378,6 +2449,15 @@
         "typescript_server": "typescript-go"
       },
       "description": "Language servers. A project file may only turn them off, but in a\ntrusted folder its settings for them apply."
+    },
+    "remote": {
+      "$ref": "#/$defs/RemoteSettings",
+      "default": {
+        "auto_forward": "notify",
+        "ports": [],
+        "reconnect_grace": 10
+      },
+      "description": "Working on a remote host over ssh. All four are the user's own: a\nproject file can't set them."
     },
     "status_bar": {
       "$ref": "#/$defs/StatusBarSettings",

@@ -17,6 +17,7 @@ settings-group-minimap = Minimap
 settings-group-sticky_scroll = Sticky Scroll
 settings-group-extensions = Extensions
 settings-group-lsp = LSP
+settings-group-remote = Remote
 settings-group-status_bar = Status Bar
 settings-group-terminal = Terminal
 settings-group-theme = Theme
@@ -553,6 +554,35 @@ settings-lsp-timeouts-workspace_symbol = Workspace symbols.
 settings-lsp-typescript_server = Which built-in server TypeScript and JavaScript files get.
     .typescript-language-server = typescript-language-server, over tsserver.
     .typescript-go = typescript-go's `tsc --lsp`.
+
+settings-remote =
+    Working on a remote host over ssh. All four are the user's own: a
+    project file can't set them.
+
+settings-remote-auto_forward =
+    What happens when a program on the host starts listening on a port:
+    a notification offering to forward it, forwarding it straight away,
+    or nothing. A port a run or task configuration declares is forwarded
+    whatever this says.
+    .notify = A notification offering to forward it.
+    .forward = Forward it as it appears.
+    .off = Leave it alone.
+
+settings-remote-dev_server =
+    A `tenmoku-server` built from this checkout, for a development build
+    of Tenmoku, which has no server release to download. It is uploaded
+    and installed like a release asset, and it must report exactly this
+    build's version. Unset means the release download.
+
+settings-remote-ports =
+    Ports forwarded on every connect, each `3000` for the same port at
+    both ends or `"5432:15432"` for the host's port and the local one it
+    is offered on. The client listens on 127.0.0.1 only.
+
+settings-remote-reconnect_grace =
+    How many minutes a host keeps a session whose link dropped, with its
+    terminals, language servers and debuggers still running, before it
+    tears them down.
 
 settings-status_bar = The status bar.
 
