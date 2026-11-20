@@ -111,7 +111,10 @@ pub(crate) fn private_dir_in(base: &Path) -> io::Result<PathBuf> {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
+        #[cfg(unix)]
         let mut builder = fs::DirBuilder::new();
+        #[cfg(not(unix))]
+        let builder = fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
         match builder.create(&path) {
@@ -729,6 +732,8 @@ fn make_writable(dir: &Path) {
         #[cfg(not(unix))]
         {
             let _ = is_dir;
+            // Clearing the read-only attribute is the intent; Windows has no mode bits to widen.
+            #[allow(clippy::permissions_set_readonly_false)]
             permissions.set_readonly(false);
         }
         fs::set_permissions(path, permissions)
@@ -768,7 +773,7 @@ type Hook = Arc<dyn Fn() + Send + Sync>;
 static AFTER_OPEN: Mutex<Vec<(PathBuf, Hook)>> = Mutex::new(Vec::new());
 
 /// Has `hook` run between the open and the lock in [`staging_slot`] of `dir`.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn pause_after_open(dir: PathBuf, hook: Hook) {
     AFTER_OPEN
         .lock()
@@ -790,7 +795,7 @@ fn after_open(dir: &Path) {
 }
 
 /// A collection of `dir` that keeps nothing and finds no grants, for tests.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn collect_unkept(dir: &Path) {
     collect(dir, &State::default());
 }
