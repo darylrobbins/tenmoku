@@ -129,4 +129,16 @@ mod cpp {
         assert!(cpp("foo::printf(\"%d\", n)").is_empty());
         assert!(cpp("printf(fmt, \"%d\")").is_empty());
     }
+
+    #[test]
+    fn concatenated_raw_pieces_each_inject() {
+        let d = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(cpp("printf(R\"(%d)\" \" %s\", n, s)"), d(&["%d", "%s"]));
+        assert_eq!(cpp("printf(\"%s \" R\"(%d)\", s, n)"), d(&["%s", "%d"]));
+        assert_eq!(cpp("printf(R\"(%s)\" R\"x(%d)x\", s, n)"), d(&["%s", "%d"]));
+        assert_eq!(cpp("fprintf(f, R\"(%d)\" \" x\", n)"), d(&["%d"]));
+        assert_eq!(cpp("snprintf(b, 4, \"x\" R\"(%d)\", n)"), d(&["%d"]));
+        // A verb split across pieces paints nothing.
+        assert!(cpp("printf(R\"(%)\" \"d\", n)").is_empty());
+    }
 }

@@ -11,6 +11,7 @@
     [
       (string_literal (string_content) @injection.content)
       (concatenated_string (string_literal (string_content) @injection.content))
+      (concatenated_string (raw_string_literal (raw_string_content) @injection.content))
       (raw_string_literal (raw_string_content) @injection.content)
     ])
   (#any-of? @_fn "printf" "vprintf")
@@ -26,6 +27,7 @@
     [
       (string_literal (string_content) @injection.content)
       (concatenated_string (string_literal (string_content) @injection.content))
+      (concatenated_string (raw_string_literal (raw_string_content) @injection.content))
       (raw_string_literal (raw_string_content) @injection.content)
     ])
   (#any-of? @_fn "fprintf" "vfprintf" "dprintf" "sprintf" "vsprintf" "asprintf" "vasprintf" "syslog")
@@ -43,6 +45,7 @@
     [
       (string_literal (string_content) @injection.content)
       (concatenated_string (string_literal (string_content) @injection.content))
+      (concatenated_string (raw_string_literal (raw_string_content) @injection.content))
       (raw_string_literal (raw_string_content) @injection.content)
     ])
   (#any-of? @_fn "snprintf" "vsnprintf")
