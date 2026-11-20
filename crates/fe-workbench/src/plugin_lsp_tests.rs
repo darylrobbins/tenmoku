@@ -40,6 +40,8 @@ use crate::{plugin_host::Found, tests::lsp::Lsp};
 const PLUGIN: &str = "acme";
 const METHOD: &str = "fastedit-test/custom";
 const NOTICE: &str = "fastedit-test/notice";
+/// The params of the probe `probe_through` sends, to tell it from the notice under test.
+const PROBE_PARAMS: &str = "{\"probe\":true}";
 
 pub(super) fn grants() -> Grants {
     ["lsp:rust-analyzer", "buffer.read", "fs.read:workspace"]
@@ -62,6 +64,47 @@ pub(super) fn on_plugin_thread<R: Send + 'static>(
         thread::sleep(Duration::from_millis(2));
     }
     thread.join().unwrap()
+}
+
+/// Sends a probe notice (`NOTICE` with `PROBE_PARAMS`) through `bridge` from a live plugin and waits (bounded) until the
+/// fake server has recorded it. Jobs run in order, so anything queued before it has been handled
+/// by then: an absence check made after it rests on a positive signal, not a fixed number of draws.
+fn probe_through(s: &mut Lsp, bridge: &Bridge, root: &Path) {
+    let sessions = bridge.lsp(
+        CallDeadline::default(),
+        Duration::from_secs(30),
+        PathBuf::new(),
+        Arc::default(),
+    );
+    let mut plugin = HostState {
+        lsp: State::new(
+            "probe",
+            &grants(),
+            Vec::new(),
+            &LspRequests::new(),
+            sessions,
+        ),
+        ..HostState::default()
+    };
+    let root = paths::root(root, paths::Rules::HOST).expect("a guest root");
+    let result = on_plugin_thread(s, move || {
+        plugin.notify(
+            "rust-analyzer".into(),
+            Target::Root(root),
+            NOTICE.into(),
+            PROBE_PARAMS.into(),
+        )
+    });
+    assert!(result.is_ok(), "{result:?}");
+    let until = Instant::now() + Duration::from_secs(60);
+    while !s.fake.records().iter().any(|record| {
+        matches!(record, Record::Notification { method, params }
+            if method == NOTICE && *params == json!({"probe": true}))
+    }) {
+        assert!(Instant::now() < until, "the probe never reached the server");
+        s.draw();
+        thread::sleep(Duration::from_millis(2));
+    }
 }
 
 #[gpui::test]
@@ -495,12 +538,11 @@ fn a_cancelled_call_is_not_sent_after_the_unload(cx: &mut TestAppContext) {
     // The queued job runs now, and finds its plugin gone.
     let commands = kiln_plugin::commands::CommandHost::new(Vec::new(), bridge.dispatcher());
     s.cx.update(|_, cx| serve(jobs, &commands, cx));
-    for _ in 0..50 {
-        s.draw();
-        thread::sleep(Duration::from_millis(2));
-    }
+    let probe_root = s.root.clone();
+    probe_through(&mut s, &bridge, &probe_root);
     let sent = s.fake.records().iter().any(|record| {
-        matches!(record, Record::Notification { method, .. } if method == "fastedit-test/notice")
+        matches!(record, Record::Notification { method, params }
+            if method == NOTICE && *params != json!({"probe": true}))
     });
     assert!(!sent, "the notification was sent after the plugin unloaded");
 }
@@ -627,12 +669,22 @@ fn a_plugin_reaches_its_extensions_consented_server_through_a_pending_change(
     );
     let (a, b, c, d, _, _) = round(&mut s, owner, other);
     checked(a, b, c, d);
-    let notified = s
-        .fake
-        .records()
-        .iter()
-        .filter(|record| matches!(record, Record::Notification { method, .. } if method == NOTICE))
-        .count();
+    let count = |s: &Lsp| {
+        s.fake
+            .records()
+            .iter()
+            .filter(
+                |record| matches!(record, Record::Notification { method, .. } if method == NOTICE),
+            )
+            .count()
+    };
+    let until = Instant::now() + Duration::from_secs(60);
+    while count(&s) < 2 {
+        assert!(Instant::now() < until, "the notifications never arrived");
+        s.draw();
+        thread::sleep(Duration::from_millis(2));
+    }
+    let notified = count(&s);
     assert_eq!(notified, 2, "the owner's two notifications reached taplo");
 }
 
@@ -804,10 +856,18 @@ fn cancelling_a_load_drops_a_request_waiting_on_a_slow_server(cx: &mut TestAppCo
     assert!(started.elapsed() < Duration::from_secs(10));
     let result = call.join().unwrap();
     assert!(matches!(result, Err(Error::Denied(_))), "{result:?}");
-    let cancelled = s.fake.records().iter().any(
+    // The cancel goes out asynchronously: wait for the fake to record it.
+    let until = Instant::now() + Duration::from_secs(60);
+    while !s.fake.records().iter().any(
         |record| matches!(record, Record::Notification { method, .. } if method == "$/cancelRequest"),
-    );
-    assert!(cancelled, "the server's request was cancelled");
+    ) {
+        assert!(
+            Instant::now() < until,
+            "the server's request was cancelled"
+        );
+        s.draw();
+        thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// A notification of a plugin whose load was cancelled is never sent, though the main thread
@@ -851,14 +911,12 @@ fn a_notification_of_a_cancelled_load_is_not_sent(cx: &mut TestAppContext) {
         )
     });
     assert!(matches!(result, Err(Error::Denied(_))), "{result:?}");
-    for _ in 0..30 {
-        s.draw();
-        thread::sleep(Duration::from_millis(2));
-    }
-    let sent =
-        s.fake.records().iter().any(
-            |record| matches!(record, Record::Notification { method, .. } if method == NOTICE),
-        );
+    let probe_root = s.root.clone();
+    probe_through(&mut s, &bridge, &probe_root);
+    let sent = s.fake.records().iter().any(|record| {
+        matches!(record, Record::Notification { method, params }
+                if method == NOTICE && *params != json!({"probe": true}))
+    });
     assert!(!sent, "the cancelled load's notification was sent");
 }
 
