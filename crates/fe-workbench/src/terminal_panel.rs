@@ -48,6 +48,7 @@ use fe_editor::lane::LaneId;
 use fe_gpui::EditorTheme;
 use fe_terminal_view::{
     CommandStatus, TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent,
+    profiles::{self, Profile, ProfileKind},
 };
 use fe_ui::{ActiveTheme as _, Icon, IconButton, IconRef, TAB_HEIGHT, Tab, TabBar, Tooltip};
 use gpui::{
@@ -69,6 +70,9 @@ use terminal_find::TerminalFind;
 
 #[path = "terminal_find.rs"]
 mod terminal_find;
+
+/// The `+` caret's id among the strip's buttons: `icon-button:<id>`.
+pub(crate) const PROFILES_BUTTON: &str = "terminal-profiles-button";
 
 /// The panel's id in the bottom dock.
 pub(crate) const TERMINAL: PanelId = PanelId("terminal");
@@ -93,6 +97,9 @@ pub(crate) enum TerminalPanelEvent {
     /// A finished task's toast asked for its tab, now active: the workbench
     /// shows the dock.
     ShowRequested,
+    /// The profiles a terminal can start changed, as detection found more
+    /// or the settings changed: an open picker of them lists them again.
+    ProfilesChanged,
 }
 
 /// A debuggee tab's rerun: the debugger starts a fresh session of the
@@ -138,6 +145,9 @@ struct Session {
     read_only: bool,
     /// The command a lane's tab names: `lane 2 · <command>`.
     command: Option<SharedString>,
+    /// The profile it was started from, whose name its tab shows until its
+    /// program sets a title.
+    profile: Option<SharedString>,
     /// To its view's events: its shell's exit and its command's status.
     _events: Subscription,
 }
@@ -237,6 +247,62 @@ pub(crate) enum TaskRun {
     Failed,
 }
 
+/// A session asked for while detection ran ([`TerminalPanel::waiting`]).
+struct Waiting {
+    dir: Option<PathBuf>,
+    /// The profile asked for; `None` for the default one.
+    name: Option<String>,
+}
+
+/// The `+` caret's open menu: a row per profile.
+/// Its rows are the profiles there are as it draws, so profiles detection
+/// finds while it's open show in it.
+struct ProfileMenu {
+    /// The profile, by id, whose row Up and Down moved to, or the pointer
+    /// is over, which Enter chooses: none until either does.
+    highlighted: Option<String>,
+    /// The caret's bounds in the window, which it hangs under.
+    anchor: gpui::Bounds<gpui::Pixels>,
+    /// What had focus as it opened, which closing it gives focus back to.
+    back: Option<FocusHandle>,
+    /// Closes it when focus leaves the panel.
+    _focus_out: Subscription,
+}
+
+/// The profile a user's `[[terminal.profiles]]` entry is: `user:<name>`.
+fn user_profile(user: &fe_config::TerminalProfileSettings) -> Profile {
+    let name = user.name.trim();
+    Profile {
+        cwd: user.cwd.as_ref().map(PathBuf::from),
+        env: user.env.clone(),
+        icon: user.icon.clone(),
+        ..Profile::shell(
+            format!("{}{name}", profiles::ids::USER_PREFIX),
+            name,
+            user.command.trim(),
+            user.args.clone(),
+        )
+    }
+}
+
+/// What the menu, the picker and a session's tab call `profile`: Default and
+/// Command Prompt in the active locale, the others by their names.
+pub(crate) fn profile_label(profile: &Profile) -> SharedString {
+    match (&profile.kind, profile.id.as_str()) {
+        (ProfileKind::Login, _) => tr!("workbench-terminal-profile-default"),
+        (_, profiles::ids::COMMAND_PROMPT) => tr!("workbench-terminal-profile-cmd"),
+        _ => profile.name.clone().into(),
+    }
+}
+
+/// `profile`'s icon: its own, if the icon set has one of that name, else a
+/// terminal's.
+fn profile_icon(profile: &Profile) -> Icon {
+    (profile.icon.as_deref())
+        .and_then(|name| Icon::ALL.iter().copied().find(|icon| icon.name() == name))
+        .unwrap_or(Icon::SquareTerminal)
+}
+
 pub struct TerminalPanel {
     /// In start order, from the first show until the last shell exits.
     sessions: Vec<Session>,
@@ -275,6 +341,21 @@ pub struct TerminalPanel {
     runs_started: u64,
     /// Itself, for the dock strip's actions ([`DockItem::actions`]).
     this: gpui::WeakEntity<Self>,
+    /// The profiles detection ([`profiles::detected`]) has found on this
+    /// machine so far: on Windows, the shells come before the WSL distros.
+    detected: Vec<Profile>,
+    /// Whether detection may find more.
+    detecting: bool,
+    /// Whether detection found more since the panel last drew, for
+    /// [`Self::start_waiting`].
+    landed: bool,
+    /// The sessions asked for while detection runs whose profile it may
+    /// yet find: each started as it lands ([`Self::start_waiting`]).
+    waiting: Vec<Waiting>,
+    /// The `+` caret's menu of profiles, while it's open.
+    profile_menu: Option<ProfileMenu>,
+    /// Where the panel's own strip last drew the caret, in the window.
+    caret_bounds: Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// The shell a session runs instead of the user's.
     #[cfg(test)]
     shell: Option<(String, Vec<String>)>,
@@ -312,6 +393,15 @@ impl TerminalPanel {
     /// A panel whose sessions start in `cwd`, drawn in `theme`'s font and
     /// colours.
     pub(crate) fn new(cwd: PathBuf, theme: &EditorTheme, cx: &mut Context<Self>) -> Self {
+        // Under the test platform nothing detects: the detecting thread
+        // landing would wake the panel's task from off the test scheduler,
+        // which fails the test as nondeterministic. Tests give the panel
+        // what detection finds themselves ([`Self::detection_landed`]).
+        // `cx.is_test()` covers other crates' tests too, where `cfg!(test)`
+        // is off.
+        if !cx.is_test() {
+            Self::detect_profiles(cx);
+        }
         Self {
             sessions: Vec::new(),
             active: 0,
@@ -333,6 +423,12 @@ impl TerminalPanel {
             last_task_id: 0,
             runs_started: 0,
             this: cx.weak_entity(),
+            detected: Vec::new(),
+            detecting: true,
+            landed: false,
+            waiting: Vec::new(),
+            profile_menu: None,
+            caret_bounds: Rc::default(),
             #[cfg(test)]
             shell: None,
             #[cfg(test)]
@@ -374,9 +470,12 @@ impl TerminalPanel {
 
     /// Applies the `terminal` settings: a new font restyles the running
     /// sessions; a new shell, arguments or scrollback apply to the next one.
+    /// New profiles show in the caret's menu, if it's open, and the picker.
     pub(crate) fn set_settings(&mut self, settings: &TerminalSettings, cx: &mut Context<Self>) {
         self.settings = settings.clone();
         self.restyle(cx);
+        cx.emit(TerminalPanelEvent::ProfilesChanged);
+        cx.notify();
     }
 
     /// Recolours the theme the terminal's colours fall back to from the
@@ -422,7 +521,7 @@ impl TerminalPanel {
 
     /// Starts a session unless one is running.
     pub(crate) fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sessions.is_empty() {
+        if self.sessions.is_empty() && self.waiting.is_empty() {
             self.add(window, cx);
         }
     }
@@ -437,29 +536,166 @@ impl TerminalPanel {
     }
 
     /// Like [`Self::add`], but in `dir` if it's given and a directory.
+    /// It runs the default profile (`terminal.default_profile`); with none
+    /// set, `terminal.shell` or the login shell, as before profiles.
     pub(crate) fn add_in(
         &mut self,
         dir: Option<&Path>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(dir) = dir.filter(|dir| dir.is_dir()) {
-            let options = TerminalOptions {
-                shell: self.shell(),
-                scrollback: self.settings.scrollback,
-                ..TerminalOptions::new(dir.to_owned())
-            };
-            return self.add_session(options, window, cx);
-        }
-        let reported = (self.view())
-            .and_then(|view| view.read(cx).terminal()?.cwd())
-            .filter(|dir| dir.is_dir());
-        let options = TerminalOptions {
-            shell: self.shell(),
-            scrollback: self.settings.scrollback,
-            ..TerminalOptions::new(reported.unwrap_or_else(|| start_dir(&self.cwd)))
+        self.start_profile_in(dir, None, window, cx);
+    }
+
+    /// Like [`Self::add`], but running the profile `name` picks (by its name
+    /// or id, ignoring case): whether it's starting, or will once
+    /// detection has finished. If no profile has that name, a toast says so
+    /// and nothing starts.
+    pub(crate) fn add_profile(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.start_profile_in(None, Some(name), window, cx)
+    }
+
+    /// Starts a session of profile `name`, else of the default profile, in
+    /// `dir` if it's a directory, else where [`Self::add`] says. One named
+    /// that neither the user's profiles nor what detection has found so far
+    /// has waits, while detection runs, for what it finds next: on Windows
+    /// a shell is found before `wsl.exe` runs, so only a WSL distro's (or an
+    /// unknown name) waits for its answer, at most
+    /// [`profiles::WSL_TIMEOUT`]. Nothing blocks meanwhile. An unknown name
+    /// is a toast; for the default profile, the session still starts, as
+    /// with no default profile set. False if nothing starts or waits.
+    fn start_profile_in(
+        &mut self,
+        dir: Option<&Path>,
+        name: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let asked = name.unwrap_or(&self.settings.default_profile).trim();
+        let profile = if asked.is_empty() {
+            None
+        } else {
+            match self.profile_named(asked) {
+                Some(profile) => Some(profile),
+                None if self.detecting => {
+                    self.waiting.push(Waiting {
+                        dir: dir.map(Path::to_owned),
+                        name: name.map(str::to_owned),
+                    });
+                    cx.notify();
+                    return true;
+                }
+                None => {
+                    let message = tr!("workbench-terminal-profile-unknown", name = asked);
+                    toast::show(cx, Toast::error(message));
+                    if name.is_some() {
+                        return false;
+                    }
+                    None
+                }
+            }
         };
-        self.add_session(options, window, cx);
+        let dir = match dir.filter(|dir| dir.is_dir()) {
+            Some(dir) => dir.to_owned(),
+            None => (self.view())
+                .and_then(|view| view.read(cx).terminal()?.cwd())
+                .filter(|dir| dir.is_dir())
+                .unwrap_or_else(|| start_dir(&self.cwd)),
+        };
+        let scrollback = self.settings.scrollback;
+        let options = match &profile {
+            Some(profile) => profile.options(dir, scrollback),
+            None => TerminalOptions {
+                shell: self.shell(),
+                scrollback,
+                ..TerminalOptions::new(dir)
+            },
+        };
+        let label = profile.as_ref().map(profile_label);
+        self.add_session(options, label, window, cx);
+        true
+    }
+
+    /// Once detection has found more: starts the sessions that waited for
+    /// it whose profile it found, and, once it's finished, says which
+    /// weren't found (the default profile's then runs the shell). True if
+    /// one asked for by name wasn't found and so the panel, with no
+    /// session, has told the workbench to hide it: it starts none itself.
+    fn start_waiting(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !std::mem::take(&mut self.landed) {
+            return false;
+        }
+        let mut refused = false;
+        for waiting in std::mem::take(&mut self.waiting) {
+            let (dir, name) = (waiting.dir.as_deref(), waiting.name.as_deref());
+            refused |= !self.start_profile_in(dir, name, window, cx);
+        }
+        if refused && self.sessions.is_empty() && self.waiting.is_empty() {
+            cx.emit(TerminalPanelEvent::Exited);
+            return true;
+        }
+        false
+    }
+
+    /// Starts detecting the machine's profiles, once per process, on a
+    /// thread of its own; the panel has each stage as it lands. Never under
+    /// the test platform: see [`Self::new`].
+    fn detect_profiles(cx: &mut Context<Self>) {
+        let (found, landed) = async_channel::unbounded();
+        profiles::detected(move |detected| {
+            found.try_send(detected.clone()).ok();
+        });
+        cx.spawn(async move |panel, cx| {
+            while let Ok(found) = landed.recv().await {
+                let done = found.done;
+                if panel
+                    .update(cx, |panel, cx| panel.detection_landed(found, cx))
+                    .is_err()
+                    || done
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// What detection has found so far: the sessions waiting for it start
+    /// as the panel next draws, and the menu and picker of profiles list it.
+    pub(crate) fn detection_landed(&mut self, found: profiles::Detected, cx: &mut Context<Self>) {
+        self.detected = found.profiles;
+        self.detecting = !found.done;
+        self.landed = true;
+        cx.emit(TerminalPanelEvent::ProfilesChanged);
+        cx.notify();
+    }
+
+    /// Detection has finished, having found `found`.
+    #[cfg(test)]
+    pub(crate) fn set_detected(&mut self, found: Vec<Profile>, cx: &mut Context<Self>) {
+        let done = profiles::Detected {
+            profiles: found,
+            done: true,
+        };
+        self.detection_landed(done, cx);
+    }
+
+    /// Every profile a terminal can start, in the menu's order: those found
+    /// on this machine so far, each replaced by the user's of its name, then
+    /// the user's others.
+    pub(crate) fn profiles(&self) -> Vec<Profile> {
+        let detected = self.detected.clone();
+        (self.settings).profiles_over(detected, |profile| &profile.name, user_profile)
+    }
+
+    /// The profile `name` picks, by its name or id.
+    fn profile_named(&self, name: &str) -> Option<Profile> {
+        (self.profiles().into_iter()).find(|profile| profile.is_named(name))
     }
 
     /// Starts a session running `/bin/sh`, which writes `bytes` to the
@@ -476,14 +712,15 @@ impl TerminalPanel {
             scrollback: self.settings.scrollback,
             ..TerminalOptions::new(start_dir(&self.cwd))
         };
-        self.add_session(options, window, cx);
+        self.add_session(options, None, window, cx);
     }
 
     /// Starts a shell's session running `options` after the last, and makes
-    /// it active.
+    /// it active; `profile` names its tab until its program sets a title.
     fn add_session(
         &mut self,
         options: TerminalOptions,
+        profile: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -498,6 +735,7 @@ impl TerminalPanel {
             lane: None,
             read_only: false,
             command: None,
+            profile,
             _events: events,
         });
         self.next_number += 1;
@@ -530,6 +768,7 @@ impl TerminalPanel {
             lane: Some(lane),
             read_only,
             command: Some(command.into()),
+            profile: None,
             _events: events,
         });
         self.next_number += 1;
@@ -713,6 +952,7 @@ impl TerminalPanel {
                     lane: None,
                     read_only: false,
                     command: None,
+                    profile: None,
                     _events: events,
                 });
                 self.sessions.len() - 1
@@ -1118,9 +1358,10 @@ impl TerminalPanel {
                 command = command
             );
         }
-        match session.view.read(cx).title() {
-            Some(title) => title.to_owned().into(),
-            None => tr!("workbench-terminal-numbered", number = session.number),
+        match (session.view.read(cx).title(), &session.profile) {
+            (Some(title), _) => title.to_owned().into(),
+            (None, Some(profile)) => profile.clone(),
+            (None, None) => tr!("workbench-terminal-numbered", number = session.number),
         }
     }
 
@@ -1195,9 +1436,10 @@ impl TerminalPanel {
                 cx.new(|_| tooltip).into()
             }
         };
-        let (new, kill) = (
+        let (new, kill, profiles) = (
             tr!("workbench-terminal-new"),
             tr!("workbench-terminal-kill"),
+            tr!("workbench-terminal-profiles"),
         );
         let rerun = self.debuggee().map(|view| {
             let title = tr!("workbench-debug-debuggee-rerun-session");
@@ -1240,6 +1482,22 @@ impl TerminalPanel {
                             }),
                     ),
             )
+            .child({
+                let (drawn, caret) = (self.caret_bounds.clone(), self.caret_bounds.clone());
+                div()
+                    .on_children_prepainted(move |bounds, _, _| drawn.set(bounds.first().copied()))
+                    .child(
+                        IconButton::new(PROFILES_BUTTON, Icon::ChevronDown, profiles.clone(), &ui)
+                            .tooltip(tip(profiles, "terminal.new_with_profile"))
+                            .on_click(cx.listener(move |panel, event: &ClickEvent, window, cx| {
+                                let at = event.position();
+                                let anchor = caret.get().unwrap_or_else(|| {
+                                    gpui::Bounds::new(at, gpui::size(px(0.), px(0.)))
+                                });
+                                panel.toggle_profile_menu(anchor, window, cx);
+                            })),
+                    )
+            })
             .child(
                 IconButton::new("terminal-kill", Icon::X, kill.clone(), &ui)
                     .tooltip(tip(kill, "terminal.close"))
@@ -1306,6 +1564,193 @@ impl TerminalPanel {
         }
         let settings = &self.settings;
         (!settings.shell.is_empty()).then(|| (settings.shell.clone(), settings.shell_args.clone()))
+    }
+}
+
+impl TerminalPanel {
+    /// The caret's click: opens the menu of profiles hanging from
+    /// `anchor`, the caret's bounds, or closes it if it's open. The panel takes focus while it's
+    /// open, for its keys: Up and Down move its highlight, wrapping, Enter
+    /// starts the highlighted profile and Escape closes it. A click outside
+    /// it, or focus leaving the panel, closes it too.
+    pub(crate) fn toggle_profile_menu(
+        &mut self,
+        anchor: gpui::Bounds<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.profile_menu.is_some() {
+            return self.close_profile_menu(window, cx);
+        }
+        let back = window.focused(cx);
+        window.focus(&self.focus, cx);
+        let focus_out = cx.on_focus_out(&self.focus, window, |panel, _, _, cx| {
+            if panel.profile_menu.take().is_some() {
+                cx.notify();
+            }
+        });
+        self.profile_menu = Some(ProfileMenu {
+            highlighted: None,
+            anchor,
+            back,
+            _focus_out: focus_out,
+        });
+        cx.notify();
+    }
+
+    /// Closes the menu of profiles, starting nothing, and gives focus back
+    /// to what had it.
+    fn close_profile_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.profile_menu.take() else {
+            return;
+        };
+        match menu.back {
+            Some(back) => window.focus(&back, cx),
+            None => self.focus_active(window, cx),
+        }
+        cx.notify();
+    }
+
+    /// Starts the menu's profile `id`, closing it.
+    fn choose_profile(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.profile_menu.take().is_none() {
+            return;
+        }
+        cx.notify();
+        self.add_profile(id, window, cx);
+        window.focus(&self.focus, cx);
+    }
+
+    /// Escape, Up, Down and Enter while the menu of profiles is open; other
+    /// keys do nothing then.
+    fn on_profile_menu_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.profile_menu.is_none() {
+            return;
+        }
+        let keystroke = &event.keystroke;
+        if keystroke.modifiers.modified() {
+            return;
+        }
+        cx.stop_propagation();
+        let profiles = self.profiles();
+        let Some(menu) = &mut self.profile_menu else {
+            return;
+        };
+        let at = (menu.highlighted.as_ref())
+            .and_then(|id| profiles.iter().position(|profile| &profile.id == id));
+        match keystroke.key.as_str() {
+            "escape" => self.close_profile_menu(window, cx),
+            "down" | "up" if !profiles.is_empty() => {
+                let last = profiles.len() - 1;
+                let to = match (at, keystroke.key == "down") {
+                    (None, true) => 0,
+                    (None, false) => last,
+                    (Some(at), true) if at >= last => 0,
+                    (Some(at), true) => at + 1,
+                    (Some(at), false) => at.checked_sub(1).unwrap_or(last),
+                };
+                menu.highlighted = Some(profiles[to].id.clone());
+                cx.notify();
+            }
+            "enter" => {
+                if let Some(at) = at {
+                    self.choose_profile(&profiles[at].id, window, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The open menu of profiles, over the window under the caret: a row
+    /// per profile, or one saying there's none.
+    fn render_profile_menu(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        use fe_ui::{MenuEntry, MenuPanel};
+        use gpui::{anchored, deferred};
+        let menu = self.profile_menu.as_ref()?;
+        let profiles = self.profiles();
+        let none = profiles.is_empty();
+        let entries = if none {
+            vec![MenuEntry::Item {
+                title: tr!("workbench-terminal-profiles-none"),
+                shortcut: None,
+            }]
+        } else {
+            (profiles.iter())
+                .map(|profile| MenuEntry::Item {
+                    title: profile_label(profile),
+                    shortcut: None,
+                })
+                .collect()
+        };
+        let highlighted = (menu.highlighted.as_ref())
+            .and_then(|id| profiles.iter().position(|profile| &profile.id == id));
+        // Rows by the id they drew with, should the list change under them.
+        let ids: Rc<[String]> = profiles.iter().map(|profile| profile.id.clone()).collect();
+        let (panel, hovered) = (cx.entity().downgrade(), cx.entity().downgrade());
+        let clicked = Rc::clone(&ids);
+        let ui = fe_ui::ui_theme(cx);
+        let mut menu_panel = MenuPanel::new(entries, &ui)
+            .item_nodes()
+            .highlighted(highlighted)
+            .on_click(move |ix, window, cx| {
+                let Some(id) = clicked.get(ix) else {
+                    return;
+                };
+                (panel.update(cx, |panel, cx| panel.choose_profile(id, window, cx))).ok();
+            })
+            .on_hover(move |ix, _, cx| {
+                let Some(id) = ids.get(ix) else {
+                    return;
+                };
+                (hovered.update(cx, |panel, cx| {
+                    if let Some(menu) = &mut panel.profile_menu
+                        && menu.highlighted.as_ref() != Some(id)
+                    {
+                        menu.highlighted = Some(id.clone());
+                        cx.notify();
+                    }
+                }))
+                .ok();
+            });
+        if none {
+            menu_panel = menu_panel.disabled(vec![0]);
+        }
+        // A press on the caret is its click's, which closes the menu.
+        let anchor = menu.anchor;
+        let wrapper = div()
+            .id("terminal-profile-menu")
+            .debug_selector(|| "terminal-profile-menu".into())
+            .on_mouse_down_out(cx.listener(
+                move |panel, event: &gpui::MouseDownEvent, window, cx| {
+                    if !anchor.contains(&event.position) {
+                        panel.close_profile_menu(window, cx);
+                    }
+                },
+            ))
+            .child(menu_panel);
+        let below = anchor.bottom_left() + gpui::point(px(0.), px(2.));
+        Some(
+            deferred(
+                anchored()
+                    .position(below)
+                    .snap_to_window_with_margin(px(4.))
+                    .child(wrapper),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
+    }
+
+    /// The open menu's profiles, by name, if it's open.
+    #[cfg(test)]
+    pub(crate) fn profile_menu_names(&self) -> Option<Vec<String>> {
+        self.profile_menu.as_ref()?;
+        Some(self.profiles().into_iter().map(|p| p.name).collect())
     }
 }
 
@@ -1514,7 +1959,7 @@ impl DockItem for TerminalPanel {
     }
 
     /// The active task tab's label, else the title the active session's
-    /// shell set, else "Terminal".
+    /// shell set, else its profile's name, else "Terminal".
     fn title(&self, cx: &App) -> SharedString {
         if self
             .sessions
@@ -1524,10 +1969,12 @@ impl DockItem for TerminalPanel {
             return self.label(self.active, cx);
         }
         let title = self.view().and_then(|view| view.read(cx).title());
-        title.map_or_else(
-            || tr!("workbench-terminal-title"),
-            |title| title.to_owned().into(),
-        )
+        let profile = (self.sessions.get(self.active)).and_then(|s| s.profile.clone());
+        match (title, profile) {
+            (Some(title), _) => title.to_owned().into(),
+            (None, Some(profile)) => profile,
+            (None, None) => tr!("workbench-terminal-title"),
+        }
     }
 
     fn icon(&self, _: &App) -> Icon {
@@ -1550,7 +1997,8 @@ impl DockItem for TerminalPanel {
 
     /// With one session, which draws no strip of its own, the strip's
     /// buttons, in its order and with its names, tooltips and commands: a
-    /// debuggee's rerun, `+` and kill. None from two, whose strip has them.
+    /// debuggee's rerun, `+`, its caret's menu of profiles and kill. None
+    /// from two, whose strip has them.
     fn actions(&self, _: &App) -> Vec<PaneAction> {
         if self.has_strip() {
             return Vec::new();
@@ -1578,6 +2026,22 @@ impl DockItem for TerminalPanel {
             }),
             anchored: None,
         };
+        let this = self.this.clone();
+        let profiles = PaneAction {
+            id: PROFILES_BUTTON,
+            icon: Icon::ChevronDown,
+            title: tr!("workbench-terminal-profiles"),
+            command: Some("terminal.new_with_profile"),
+            run: Rc::new(move |window, cx| {
+                pane_toolbar::dispatch("terminal.new_with_profile", Source::Mouse, window, cx);
+            }),
+            anchored: Some(Rc::new(move |anchor, window, cx| {
+                (this.update(cx, |panel, cx| {
+                    panel.toggle_profile_menu(anchor, window, cx)
+                }))
+                .ok();
+            })),
+        };
         (rerun.into_iter())
             .chain([
                 action(
@@ -1586,6 +2050,7 @@ impl DockItem for TerminalPanel {
                     tr!("workbench-terminal-new"),
                     "terminal.new",
                 ),
+                profiles,
                 action(
                     "terminal-kill",
                     Icon::X,
@@ -1603,8 +2068,13 @@ impl Render for TerminalPanel {
         // takes focus. Shown with no session, as by a rail click after the
         // shell exited: start one.
         let focused = self.focus.is_focused(window);
-        self.start(window, cx);
-        if focused {
+        // One asked for by name that detection didn't find hides the
+        // panel rather than starting the default.
+        if !self.start_waiting(window, cx) {
+            self.start(window, cx);
+        }
+        // The menu of profiles holds focus for its keys.
+        if focused && self.profile_menu.is_none() {
             self.focus_active(window, cx);
         }
         // A query set before its session started is checked once it has.
@@ -1629,9 +2099,11 @@ impl Render for TerminalPanel {
         if fe_gpui::vim_enabled(cx) {
             context.add(VIM_FLAG);
         }
+        let profile_menu = self.render_profile_menu(cx);
         div()
             .track_focus(&self.focus)
             .key_context(context)
+            .on_key_down(cx.listener(Self::on_profile_menu_key))
             .size_full()
             .flex()
             .flex_col()
@@ -1649,6 +2121,7 @@ impl Render for TerminalPanel {
                     .children(unstarted)
                     .children(session),
             )
+            .children(profile_menu)
     }
 }
 
@@ -1826,6 +2299,160 @@ impl PickerDelegate for RenameTerminal {
 
     fn status(&self) -> Option<gpui::SharedString> {
         Some(tr!("workbench-terminal-rename-status"))
+    }
+}
+
+/// `terminal.new_with_profile`'s picker: every profile, those whose name
+/// has the query in it, ignoring case; Enter starts one. It lists them again
+/// as they change (detection finding more, the settings changing), keeping
+/// the query and the selected profile.
+pub(crate) struct PickProfile {
+    workbench: gpui::WeakEntity<crate::Workbench>,
+    profiles: Vec<Profile>,
+    /// The indexes into `profiles` of the rows shown.
+    shown: Vec<usize>,
+    /// The terminal's [`TerminalPanelEvent::ProfilesChanged`].
+    _changed: Subscription,
+}
+
+impl PickProfile {
+    /// The picker of `terminal`'s profiles.
+    pub(crate) fn new(
+        workbench: gpui::WeakEntity<crate::Workbench>,
+        terminal: &Entity<TerminalPanel>,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Self {
+        let profiles = terminal.read(cx).profiles();
+        let changed = cx.subscribe(
+            terminal,
+            |picker, terminal, event: &TerminalPanelEvent, cx| {
+                if *event == TerminalPanelEvent::ProfilesChanged {
+                    let profiles = terminal.read(cx).profiles();
+                    let selected = picker.selected();
+                    let query = picker.input().read(cx).text().to_owned();
+                    picker.delegate.relist(profiles, selected, &query, cx);
+                }
+            },
+        );
+        let shown = (0..profiles.len()).collect();
+        Self {
+            workbench,
+            profiles,
+            shown,
+            _changed: changed,
+        }
+    }
+
+    fn profile(&self, ix: usize) -> Option<&Profile> {
+        self.profiles.get(*self.shown.get(ix)?)
+    }
+
+    /// The rows of `profiles` matching `query`.
+    fn matching(&self, query: &str) -> Vec<usize> {
+        let query = query.trim().to_lowercase();
+        (0..self.profiles.len())
+            .filter(|&ix| {
+                let label = profile_label(&self.profiles[ix]).to_lowercase();
+                label.contains(&query) || self.profiles[ix].name.to_lowercase().contains(&query)
+            })
+            .collect()
+    }
+
+    /// Lists `profiles` in place of the profiles it had, matching `query`,
+    /// with the profile that was on row `selected` still selected if it's
+    /// there.
+    fn relist(
+        &mut self,
+        profiles: Vec<Profile>,
+        selected: usize,
+        query: &str,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        if profiles == self.profiles {
+            return;
+        }
+        let picker = cx.entity();
+        let was = self.profile(selected).map(|profile| profile.id.clone());
+        self.profiles = profiles;
+        self.shown = self.matching(query);
+        let at = was.and_then(|id| {
+            (0..self.shown.len()).find(|&ix| self.profile(ix).is_some_and(|p| p.id == id))
+        });
+        cx.notify();
+        // `Picker::select` borrows the picker, which is being updated now.
+        cx.defer(move |cx| {
+            picker.update(cx, |picker, cx| match at {
+                Some(at) => picker.select(at, cx),
+                None => picker.matches_updated(false, cx),
+            })
+        });
+    }
+}
+
+impl PickerDelegate for PickProfile {
+    fn update_matches(&mut self, query: String, cx: &mut Context<Picker<Self>>) {
+        self.shown = self.matching(&query);
+        cx.notify();
+        let picker = cx.entity();
+        // `Picker::matches_updated` borrows the picker, which is being
+        // updated now.
+        cx.defer(move |cx| picker.update(cx, |picker, cx| picker.matches_updated(true, cx)));
+    }
+
+    fn match_count(&self) -> usize {
+        self.shown.len()
+    }
+
+    fn match_id(&self, ix: usize) -> gpui::SharedString {
+        self.profile(ix)
+            .map_or_else(SharedString::default, |p| p.id.clone().into())
+    }
+
+    fn render_match(&self, ix: usize, _: bool, cx: &App) -> gpui::AnyElement {
+        use gpui::{IntoElement as _, ParentElement as _, Styled as _};
+        let Some(profile) = self.profile(ix) else {
+            return div().into_any_element();
+        };
+        let ui = fe_ui::ui_theme(cx);
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                gpui::svg()
+                    .path(profile_icon(profile).path())
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(ui.icon),
+            )
+            .child(profile_label(profile))
+            .into_any_element()
+    }
+
+    /// The row's text: the profile's name.
+    fn match_label(&self, ix: usize, _: &App) -> gpui::SharedString {
+        self.profile(ix).map(profile_label).unwrap_or_default()
+    }
+
+    fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
+        let Some(id) = self.profile(ix).map(|profile| profile.id.clone()) else {
+            return false;
+        };
+        let workbench = self.workbench.clone();
+        // Once the picker has gone: the workbench moves focus.
+        window.defer(cx, move |window, cx| {
+            (workbench.update(cx, |workbench, cx| {
+                workbench.new_terminal_with_profile(Some(id), window, cx)
+            }))
+            .ok();
+        });
+        true
+    }
+
+    fn dismissed(&mut self, _: &mut Window, _: &mut Context<Picker<Self>>) {}
+
+    fn status(&self) -> Option<gpui::SharedString> {
+        Some(tr!("workbench-terminal-profile-status"))
     }
 }
 

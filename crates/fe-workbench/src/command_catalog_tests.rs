@@ -375,6 +375,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "terminal.move_to_left",
     "terminal.move_to_right",
     "terminal.new",
+    "terminal.new_with_profile",
     "terminal.next",
     "terminal.previous",
     "terminal.rename",

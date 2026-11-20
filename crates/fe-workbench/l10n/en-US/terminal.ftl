@@ -23,6 +23,23 @@ workbench-terminal-lane = lane { $lane } · { $command }
 workbench-terminal-new = New Terminal
 workbench-terminal-kill = Kill Terminal
 
+## Profiles: the caret beside the strip's +, its menu, and
+## terminal.new_with_profile's picker
+
+# The caret's accessible name and tooltip.
+workbench-terminal-profiles = New Terminal with Profile
+# The profile of the login shell, the one a terminal runs with no profile,
+# on macOS and Linux.
+workbench-terminal-profile-default = Default
+# cmd.exe's profile on Windows, as Windows names it.
+workbench-terminal-profile-cmd = Command Prompt
+# The menu's one row while no profile is known.
+workbench-terminal-profiles-none = No profiles found
+# The toast when no profile has the name asked for. $name is that name.
+workbench-terminal-profile-unknown = No terminal profile named { $name }
+workbench-terminal-profile-placeholder = Terminal profile…
+workbench-terminal-profile-status = Enter to start a terminal, Escape to cancel
+
 ## Running a task: the toasts
 
 # $label is the task's label.

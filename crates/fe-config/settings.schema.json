@@ -1651,9 +1651,60 @@
       },
       "type": "object"
     },
+    "TerminalProfileSettings": {
+      "description": "A terminal profile of your own, as `[[terminal.profiles]]`.",
+      "properties": {
+        "args": {
+          "default": [],
+          "description": "The program's arguments.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "default": "",
+          "description": "The program it runs.",
+          "type": "string"
+        },
+        "cwd": {
+          "description": "The folder it starts in. Unset starts where a new terminal would.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "What it adds to the program's environment.",
+          "type": "object"
+        },
+        "icon": {
+          "description": "An icon's name from the app's icon set, such as \"terminal\" or\n\"square-terminal\". Unset uses the terminal's own.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "default": "",
+          "description": "What the profile menu calls it, and `default_profile` names it by.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "TerminalSettings": {
       "description": "Settings for the terminal panel. A project file may set all but the\nprogram it runs.",
       "properties": {
+        "default_profile": {
+          "default": "",
+          "description": "The profile a new terminal starts, by name: one found on this\nmachine (\"PowerShell 7\", \"Command Prompt\", \"Git Bash\", a WSL distro's\nname, \"zsh\") or one of `profiles`. Empty runs `shell`, else your login\nshell.",
+          "type": "string"
+        },
         "font_fallbacks": {
           "default": [],
           "description": "Fonts to take a character from when the terminal's font lacks it, in\norder: \"Symbols Nerd Font Mono\" gives Nerd Font icons with any font.",
@@ -1679,6 +1730,14 @@
             "number",
             "null"
           ]
+        },
+        "profiles": {
+          "default": [],
+          "description": "Your own terminal profiles, which the `+` button's menu lists with\nthe ones found on this machine. One named as a found one replaces it.",
+          "items": {
+            "$ref": "#/$defs/TerminalProfileSettings"
+          },
+          "type": "array"
         },
         "scrollback": {
           "default": 10000,
@@ -2381,7 +2440,9 @@
     "terminal": {
       "$ref": "#/$defs/TerminalSettings",
       "default": {
+        "default_profile": "",
         "font_fallbacks": [],
+        "profiles": [],
         "scrollback": 10000,
         "shell": "",
         "shell_args": []
