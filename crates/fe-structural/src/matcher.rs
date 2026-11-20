@@ -7,7 +7,9 @@
 //! skipped on both sides, and a different number of them is a mismatch.
 //! Field names are not compared. A wildcard matches any one node; a named
 //! one binds it, and a later occurrence of the same name must cover the same
-//! source text. Multi wildcards (`$$$`) are structural search SS4.
+//! source text. A multi wildcard (`$$$`) matches a run of siblings, by
+//! backtracking (see [`crate::multi`]). A `where` section's constraints are
+//! checked as metavariables bind and, for `inside`, once a node matches.
 
 use std::ops::Range;
 
@@ -15,7 +17,9 @@ use tree_sitter::{Node, Tree, TreeCursor};
 
 use crate::{
     captures::Captures,
-    pattern::{Pattern, PatternNode},
+    constraints::Constraints,
+    multi::{self, Cont, Search},
+    pattern::{Pattern, PatternNode, Wildcard},
 };
 
 /// How [`Pattern::find_all`] reports matches.
@@ -42,17 +46,14 @@ pub enum Stopped {
     /// The stop callback said to stop.
     #[error("the search was cancelled")]
     Cancelled,
-    /// The pattern holds a multi metavariable (`$$$`), which matching
-    /// doesn't support yet.
-    #[error("multi metavariables ($$$) are not supported yet")]
-    Unsupported,
     /// The text couldn't be parsed in the pattern's language (only
     /// [`Pattern::find_in_text`] parses).
     #[error("the text could not be parsed")]
     ParseFailed,
 }
 
-/// How many file nodes are visited between asks of the stop callback.
+/// How many steps (file nodes visited, by the walk or by a comparison, and
+/// runs a multi wildcard tries) are taken between asks of the stop callback.
 const STOP_EVERY: usize = 1024;
 
 impl Pattern {
@@ -60,8 +61,8 @@ impl Pattern {
     /// pattern's language (by [`fe_syntax::parse_str`]), in tree order:
     /// outer matches before the ones inside them, which are reported only
     /// with [`MatchOptions::nested`]. `stop` is asked before the first node
-    /// and after every 1024 nodes; once it says `true` the search
-    /// ends with [`Stopped::Cancelled`].
+    /// and after every 1024 steps, comparisons and backtracking included;
+    /// once it says `true` the search ends with [`Stopped::Cancelled`].
     pub fn find_all(
         &self,
         source: &str,
@@ -69,25 +70,31 @@ impl Pattern {
         opts: &MatchOptions,
         stop: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<Match>, Stopped> {
-        if self.has_multi() {
-            return Err(Stopped::Unsupported);
-        }
         let root = self.root();
+        let constraints = self.constraints();
         let mut matcher = Matcher {
             source,
             bindings: Vec::new(),
             cursor: tree.walk(),
+            constraints,
+            search: Search::new(root),
+            stop,
+            steps: 0,
+            cancelled: false,
         };
         let mut found = Vec::new();
         let mut cursor = tree.walk();
-        let mut visited = 0usize;
         loop {
-            if visited.is_multiple_of(STOP_EVERY) && stop() {
+            if matcher.tick() {
                 return Err(Stopped::Cancelled);
             }
-            visited += 1;
             let node = cursor.node();
-            let matched = is_candidate(root, node) && matcher.matches_at(root, node);
+            let matched = is_candidate(root, node)
+                && matcher.matches_at(root, node)
+                && (!constraints.has_place() || constraints.allows_place(node, source));
+            if matcher.cancelled {
+                return Err(Stopped::Cancelled);
+            }
             if matched {
                 found.push(Match {
                     range: node.byte_range(),
@@ -123,9 +130,6 @@ impl Pattern {
         opts: &MatchOptions,
         stop: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<Match>, Stopped> {
-        if self.has_multi() {
-            return Err(Stopped::Unsupported);
-        }
         let mut stopped = false;
         let tree = fe_syntax::parse_str(self.language(), text, || {
             stopped = stop();
@@ -139,10 +143,6 @@ impl Pattern {
             });
         };
         self.find_all(text, &tree, opts, stop)
-    }
-
-    fn has_multi(&self) -> bool {
-        self.metavariables().iter().any(|m| m.multi)
     }
 
     /// The named metavariables' bindings, in the pattern's order.
@@ -169,77 +169,146 @@ fn is_candidate(root: &PatternNode, node: Node<'_>) -> bool {
 
 /// Same named-ness and kind. The id is compared first; the name too, since
 /// a grammar can give one kind name several ids (through aliases).
-fn same_kind(pattern: &PatternNode, node: Node<'_>) -> bool {
+pub(crate) fn same_kind(pattern: &PatternNode, node: Node<'_>) -> bool {
     pattern.named == node.is_named()
         && (pattern.kind_id == node.kind_id() || *pattern.kind == *node.kind())
 }
 
-/// A pattern node that is trivia. [`PatternNode`] doesn't record
-/// [`Node::is_extra`], so a comment in the pattern is known by its kind
-/// name: every grammar in the tree names its comment kinds `*comment*`.
-fn is_pattern_trivia(pattern: &PatternNode) -> bool {
-    pattern.wildcard.is_none() && pattern.kind.contains("comment")
+/// A pattern node that is trivia: an extra of the grammar, as the pattern's
+/// parse marked it, skipped as the file's extras are.
+pub(crate) fn is_pattern_trivia(pattern: &PatternNode) -> bool {
+    pattern.wildcard.is_none() && pattern.extra
 }
 
-struct Matcher<'s, 'p, 't> {
-    source: &'s str,
+pub(crate) struct Matcher<'s, 'p, 't, 'f> {
+    pub(crate) source: &'s str,
     /// Named metavariables bound so far in this attempt.
-    bindings: Vec<(&'p str, Range<usize>)>,
-    /// Walks the candidate's subtree; reset for each candidate.
-    cursor: TreeCursor<'t>,
+    pub(crate) bindings: Vec<(&'p str, Range<usize>)>,
+    /// Walks a subtree being compared.
+    pub(crate) cursor: TreeCursor<'t>,
+    pub(crate) constraints: &'p Constraints,
+    /// The backtracking search's pattern facts and failure memo.
+    pub(crate) search: Search<'p>,
+    stop: &'f mut dyn FnMut() -> bool,
+    /// Steps taken, for asking `stop` every [`STOP_EVERY`].
+    steps: usize,
+    /// `stop` said to stop: every comparison fails from then on.
+    pub(crate) cancelled: bool,
 }
 
-impl<'p, 't> Matcher<'_, 'p, 't> {
-    fn matches_at(&mut self, pattern: &'p PatternNode, node: Node<'t>) -> bool {
-        self.bindings.clear();
-        self.cursor.reset(node);
-        self.matches(pattern)
+impl<'p, 't> Matcher<'_, 'p, 't, '_> {
+    /// Takes a step, asking `stop` every [`STOP_EVERY`]: whether the search
+    /// is cancelled.
+    pub(crate) fn tick(&mut self) -> bool {
+        if self.cancelled {
+            return true;
+        }
+        if self.steps.is_multiple_of(STOP_EVERY) && (self.stop)() {
+            self.cancelled = true;
+        }
+        self.steps += 1;
+        self.cancelled
     }
 
-    /// Whether the node at the cursor matches `pattern`. On `true` the
-    /// cursor is back at that node; on `false` it is anywhere below it.
+    fn matches_at(&mut self, pattern: &'p PatternNode, node: Node<'t>) -> bool {
+        self.bindings.clear();
+        self.search.reset();
+        self.node(pattern, node, &Cont::Done)
+    }
+
+    /// Whether `node` matches `pattern` with `then`, the rest of the
+    /// pattern, matching after it. On `false` the bindings are as they were.
+    pub(crate) fn node(
+        &mut self,
+        pattern: &'p PatternNode,
+        node: Node<'t>,
+        then: &Cont<'_, 'p, 't>,
+    ) -> bool {
+        let saved = self.bindings.len();
+        let matched = if self.search.has_multi(pattern) {
+            multi::node(self, pattern, node, then)
+        } else {
+            // No multi wildcard below: one way to match at most.
+            self.cursor.reset(node);
+            self.matches(pattern) && multi::resume(self, then)
+        };
+        if !matched {
+            self.bindings.truncate(saved);
+        }
+        matched
+    }
+
+    /// Binds a named metavariable to `nodes` covering `range`, or, bound
+    /// already, compares the text: whether it may.
+    pub(crate) fn bind(
+        &mut self,
+        wildcard: &'p Wildcard,
+        nodes: &[Node<'t>],
+        range: Range<usize>,
+    ) -> bool {
+        if wildcard.anonymous {
+            return true;
+        }
+        if let Some(bound) = self.bound(&wildcard.name) {
+            return self.source.get(bound) == self.source.get(range);
+        }
+        if !self
+            .constraints
+            .allows(&wildcard.name, wildcard.multi, nodes, &range, self.source)
+        {
+            return false;
+        }
+        self.bindings.push((&wildcard.name, range));
+        true
+    }
+
+    /// What `name` is bound to, if it is.
+    pub(crate) fn bound(&self, name: &str) -> Option<Range<usize>> {
+        self.bindings
+            .iter()
+            .find(|(bound, _)| *bound == name)
+            .map(|(_, range)| range.clone())
+    }
+
+    /// Whether the node at the cursor matches `pattern`, which holds no
+    /// multi wildcard. On `true` the cursor is back at that node; on `false`
+    /// it is anywhere below it, and bindings may have been added.
     fn matches(&mut self, pattern: &'p PatternNode) -> bool {
+        if self.tick() {
+            return false;
+        }
         let node = self.cursor.node();
         if node.is_missing() {
             // Zero-width, inserted by error recovery: not text that is there.
             return false;
         }
         if let Some(wildcard) = &pattern.wildcard {
-            if wildcard.anonymous {
-                return true;
-            }
-            let range = node.byte_range();
-            if let Some((_, bound)) = self
-                .bindings
-                .iter()
-                .find(|(name, _)| *name == wildcard.name)
-            {
-                return self.source.get(bound.clone()) == self.source.get(range);
-            }
-            self.bindings.push((&wildcard.name, range));
-            return true;
+            return self.bind(wildcard, &[node], node.byte_range());
         }
-        if !same_kind(pattern, node) {
+        if !same_kind(pattern, node) || !leaf_text_matches(pattern, node, self.source) {
             return false;
         }
-        if pattern.named
-            && let Some(text) = pattern.text.as_deref()
-            && self.source.get(node.byte_range()) != Some(text)
-        {
-            return false;
-        }
-        self.children_match(&pattern.children)
+        self.children_match(pattern)
     }
 
     /// Whether the cursor node's children, extras skipped, match `pattern`'s
-    /// pairwise, trivia skipped, and are as many.
-    fn children_match(&mut self, children: &'p [PatternNode]) -> bool {
-        let mut wanted = children.iter().filter(|child| !is_pattern_trivia(child));
+    /// pairwise, trivia skipped, and are as many (or more, for a pattern
+    /// node whose text ended before its parse did).
+    fn children_match(&mut self, pattern: &'p PatternNode) -> bool {
+        let mut wanted = pattern
+            .children
+            .iter()
+            .filter(|child| !is_pattern_trivia(child));
         if self.cursor.goto_first_child() {
             loop {
+                if self.tick() {
+                    return false;
+                }
                 if !self.cursor.node().is_extra() {
                     let Some(child) = wanted.next() else {
-                        return false;
+                        let more = pattern.open_end;
+                        self.cursor.goto_parent();
+                        return more;
                     };
                     if !self.matches(child) {
                         return false;
@@ -252,5 +321,13 @@ impl<'p, 't> Matcher<'_, 'p, 't> {
             self.cursor.goto_parent();
         }
         wanted.next().is_none()
+    }
+}
+
+/// For a named leaf, whether `node` has its text.
+pub(crate) fn leaf_text_matches(pattern: &PatternNode, node: Node<'_>, source: &str) -> bool {
+    match pattern.text.as_deref() {
+        Some(text) if pattern.named => source.get(node.byte_range()) == Some(text),
+        _ => true,
     }
 }

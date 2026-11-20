@@ -2,8 +2,10 @@
 //! patterns for a language, and matched against files' trees, headless.
 
 mod captures;
+mod constraints;
 mod error;
 mod matcher;
+mod multi;
 mod pattern;
 
 pub use captures::Captures;

@@ -4,9 +4,11 @@ use std::ops::Range;
 
 /// The byte ranges each named metavariable of a [`Match`](crate::Match)
 /// covered in the file, by name, in order of first appearance in the
-/// pattern. A single metavariable (`$A`) has one range; a multi one
-/// (`$$$A`, structural search SS4) will have one per node it took.
-/// Anonymous metavariables (`$_`, `$$$`) capture nothing.
+/// pattern. Each has one range: a single metavariable (`$A`) the node's, a
+/// multi one (`$$$A`) from the start of the first sibling it took to the end
+/// of the last, separators between them included, or an empty range where
+/// the run would stand when it took none. Anonymous metavariables (`$_`,
+/// `$$$`) capture nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Captures {
     entries: Vec<(Box<str>, Vec<Range<usize>>)>,
@@ -22,7 +24,7 @@ impl Captures {
             .map(|(_, ranges)| ranges.as_slice())
     }
 
-    /// The one range a single metavariable covered: `None` if `name` didn't
+    /// The one range a metavariable covered: `None` if `name` didn't
     /// capture exactly one.
     pub fn single(&self, name: &str) -> Option<Range<usize>> {
         match self.get(name)? {

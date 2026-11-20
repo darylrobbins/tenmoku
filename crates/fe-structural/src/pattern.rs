@@ -6,14 +6,23 @@
 //! `[A-Z_][A-Z0-9_]*`, as in ast-grep. Each metavariable is replaced by a
 //! placeholder token the grammar can parse (an identifier, else a string,
 //! else a number), the text is parsed, and the tree is copied out with the
-//! placeholders marked as wildcards.
+//! placeholders marked as wildcards. A `where` section after the code
+//! constrains what the metavariables match (see `constraints.rs`).
 
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    sync::Arc,
+};
 
 use fe_syntax::Language;
 use tree_sitter::{Node, Tree};
 
-use crate::error::{PatternError, PatternErrorKind};
+use crate::{
+    constraints::{self, Constraints},
+    error::{PatternError, PatternErrorKind},
+    multi,
+};
 
 /// A metavariable of a pattern, by name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -53,6 +62,14 @@ pub struct PatternNode {
     pub named: bool,
     /// The field it fills in its parent, if any.
     pub field: Option<Arc<str>>,
+    /// An extra of the grammar (a comment, as [`Node::is_extra`] says):
+    /// skipped when matching, as the file's extras are.
+    pub extra: bool,
+    /// The pattern's text ended inside this node: the parse needed a
+    /// suffix (`;`, a newline) the pattern doesn't hold, and the children
+    /// that are only suffix were left out. A file node may have more
+    /// children after the ones the pattern gives.
+    pub open_end: bool,
     /// The text of a leaf, as the pattern spells it (`$$` already a `$`).
     /// `None` for a node with children and for a wildcard.
     pub text: Option<Box<str>>,
@@ -89,11 +106,48 @@ pub struct Pattern {
     source: Box<str>,
     root: PatternNode,
     metavars: Vec<Metavar>,
+    constraints: Constraints,
 }
 
 impl Pattern {
     /// Compiles `source`, an ast-grep-style pattern, for `language`.
+    ///
+    /// The code may be followed by a `where` section: a line holding only
+    /// `where`, then one constraint per line, all of which a match meets:
+    ///
+    /// - `$NAME: kind=<kind>`: the node is of that kind (each named node of
+    ///   the run, for `$$$NAME`).
+    /// - `$NAME: regex=<re>`: the regular expression (unanchored) matches
+    ///   in the text the metavariable covers.
+    /// - `$NAME: text=<text>`: that text is exactly `<text>`.
+    /// - `$NAME: not kind=<kind>` (or `not regex=`, `not text=`): the
+    ///   opposite.
+    /// - `inside: kind=<kind>`, optionally with ` name=<text>`: an ancestor
+    ///   of the matched node is of that kind (and its `name` field's text is
+    ///   `<text>`); `not inside: …`, no ancestor is.
+    ///
+    /// ```text
+    /// $X.unwrap()
+    /// where
+    /// $X: kind=identifier
+    /// not inside: kind=function_item name=test
+    /// ```
+    ///
+    /// A constraint on a name the pattern doesn't bind (or on `$_`), an
+    /// unknown key and a bad regex are errors. Offsets in a [`PatternError`]
+    /// are into the whole of `source`.
     pub fn compile(language: &'static Language, source: &str) -> Result<Pattern, PatternError> {
+        let (code, section) = constraints::split(source);
+        let mut pattern = Self::compile_code(language, code)?;
+        if let Some((at, section)) = section {
+            pattern.constraints = Constraints::parse(section, at, &pattern.metavars)?;
+        }
+        pattern.source = source.into();
+        Ok(pattern)
+    }
+
+    /// Compiles the pattern's code, without a `where` section.
+    fn compile_code(language: &'static Language, source: &str) -> Result<Pattern, PatternError> {
         let scan = scan(source)?;
         let Some(first) = source.find(|c: char| !c.is_whitespace()) else {
             return Err(PatternError {
@@ -102,47 +156,53 @@ impl Pattern {
             });
         };
         let tag = placeholder_tag(source);
-        let mut choice = vec![0usize; scan.holes.len()];
+        let mut tried = HashSet::new();
         let mut first_failure: Option<PatternError> = None;
-        loop {
-            let mut built = build(source, &scan, &choice, &tag);
-            // What the first spelling's attempt found, for blame.
-            let mut verdict = None;
-            for suffix in SUFFIXES {
-                let parsed = attempt(language, &mut built, suffix).ok_or(PatternError {
-                    kind: PatternErrorKind::ParseFailed,
-                    offset: first,
-                })?;
-                match parsed {
-                    Ok(tree) => return Ok(finish(language, source, &scan, &built, &tree)),
-                    Err(found) => {
-                        verdict.get_or_insert(found);
-                    }
-                }
+        // `Err(None)`: tried already.
+        let mut attempt_choice = |choice: &[usize]| {
+            if !tried.insert(choice.to_vec()) {
+                return Ok(Err(None));
             }
-            let Some((clean, error)) = verdict else {
-                unreachable!("SUFFIXES is not empty");
+            let outcome = try_choice(language, source, &scan, &tag, choice, first)?;
+            Ok(outcome.map_err(|failed| {
+                log::trace!("pattern attempt {choice:?} failed: {}", failed.error);
+                first_failure.get_or_insert_with(|| failed.error.clone());
+                Some(failed)
+            }))
+        };
+        // Guided first: the spelling of the hole that is no node, or the
+        // one nearest the error, moves on.
+        let mut choice = vec![0usize; scan.holes.len()];
+        loop {
+            let failed = match attempt_choice(&choice)? {
+                Ok(pattern) => return check_repeats(pattern, &scan),
+                Err(Some(failed)) => failed,
+                Err(None) => break,
             };
-            let failure = match error {
-                Some(ref range) => PatternError {
-                    kind: PatternErrorKind::Syntax,
-                    offset: built.source_offset(range.start),
-                },
-                None => {
-                    let hole = clean.iter().position(|&c| !c).unwrap_or(0);
-                    PatternError {
-                        kind: PatternErrorKind::MetavarNotANode,
-                        offset: scan.holes[hole].source.start,
-                    }
-                }
-            };
-            log::trace!("pattern attempt {choice:?} failed: {failure}");
-            let first_failure = first_failure.get_or_insert(failure);
-            match blame(&built.holes, &clean, error.as_ref(), &choice) {
+            match blame(&failed.holes, &failed.clean, failed.at.as_ref(), &choice) {
                 Some(hole) => choice[hole] += 1,
-                None => return Err(first_failure.clone()),
+                None => break,
             }
         }
+        // Then every other combination, up to a limit: error recovery can
+        // blame a hole for another's spelling, so the guided walk can miss
+        // one that parses.
+        let mut choice = vec![0usize; scan.holes.len()];
+        for _ in 0..MAX_COMBINATIONS {
+            if let Ok(pattern) = attempt_choice(&choice)? {
+                return check_repeats(pattern, &scan);
+            }
+            // The next combination, the first hole counting fastest.
+            let Some(hole) = choice.iter().position(|&c| c + 1 < CANDIDATES) else {
+                break;
+            };
+            choice[hole] += 1;
+            choice[..hole].fill(0);
+        }
+        Err(first_failure.unwrap_or(PatternError {
+            kind: PatternErrorKind::Syntax,
+            offset: first,
+        }))
     }
 
     /// The language the pattern was compiled for.
@@ -179,6 +239,96 @@ impl Pattern {
         self.root.collect_literals(&mut out);
         out
     }
+
+    /// The `where` section's constraints (none without one).
+    pub(crate) fn constraints(&self) -> &Constraints {
+        &self.constraints
+    }
+}
+
+/// How many placeholder combinations are parsed after the guided walk
+/// gives up: every one for up to five metavariables.
+const MAX_COMBINATIONS: usize = 243;
+
+/// A combination of placeholder spellings that didn't parse cleanly.
+struct Failed {
+    /// What the first suffix's attempt says is wrong, in source terms.
+    error: PatternError,
+    /// Each hole's placeholder bytes in the built text.
+    holes: Vec<Range<usize>>,
+    /// Which holes parsed as a node of their own.
+    clean: Vec<bool>,
+    /// The first syntax error's bytes in the built text, if any.
+    at: Option<Range<usize>>,
+}
+
+/// Parses the source with each hole spelled as `choice` says, with each
+/// suffix in turn: the pattern, what went wrong, or an error if the
+/// language couldn't parse at all.
+fn try_choice(
+    language: &'static Language,
+    source: &str,
+    scan: &Scan,
+    tag: &str,
+    choice: &[usize],
+    first: usize,
+) -> Result<Result<Pattern, Failed>, PatternError> {
+    let mut built = build(source, scan, choice, tag);
+    // What the first suffix's attempt found, for blame.
+    let mut verdict = None;
+    for suffix in SUFFIXES {
+        let parsed = attempt(language, &mut built, suffix).ok_or(PatternError {
+            kind: PatternErrorKind::ParseFailed,
+            offset: first,
+        })?;
+        match parsed {
+            Ok(tree) => return Ok(Ok(finish(language, source, scan, &built, &tree))),
+            Err(found) => {
+                verdict.get_or_insert(found);
+            }
+        }
+    }
+    let Some((clean, at)) = verdict else {
+        unreachable!("SUFFIXES is not empty");
+    };
+    let error = match at {
+        Some(ref range) => PatternError {
+            kind: PatternErrorKind::Syntax,
+            offset: built.source_offset(range.start),
+        },
+        None => {
+            let hole = clean.iter().position(|&c| !c).unwrap_or(0);
+            PatternError {
+                kind: PatternErrorKind::MetavarNotANode,
+                offset: scan.holes[hole].source.start,
+            }
+        }
+    };
+    Ok(Err(Failed {
+        error,
+        holes: built.holes,
+        clean,
+        at,
+    }))
+}
+
+/// Refuses a pattern with more than one repeated name whose first match
+/// can vary (see `multi.rs`): with several, matching is NP-hard. The error
+/// is at the second such name's second occurrence.
+fn check_repeats(pattern: Pattern, scan: &Scan) -> Result<Pattern, PatternError> {
+    let Some(name) = multi::varying_repeat(&pattern.root) else {
+        return Ok(pattern);
+    };
+    let offset = scan
+        .holes
+        .iter()
+        .filter(|hole| scan.metavars[hole.metavar].name == name)
+        .nth(1)
+        .map_or(0, |hole| hole.source.start);
+    Err(PatternError {
+        kind: PatternErrorKind::VaryingRepeats,
+        offset,
+    })
 }
 
 /// What is tried after the pattern's text, in order, for a grammar that
@@ -511,8 +661,16 @@ fn finish(
     Pattern {
         language,
         source: source.into(),
-        root: copy(root, None, &built.text, &wildcards, &mut Names::default()),
+        root: copy(
+            root,
+            None,
+            &built.text,
+            built.pattern_len,
+            &wildcards,
+            &mut Names::default(),
+        ),
         metavars: scan.metavars.clone(),
+        constraints: Constraints::default(),
     }
 }
 
@@ -549,10 +707,13 @@ impl Names {
     }
 }
 
+/// Copies `node` out of the parse of `text`, of which the pattern is
+/// `..end`.
 fn copy(
     node: Node<'_>,
     field: Option<Arc<str>>,
     text: &str,
+    end: usize,
     wildcards: &HashMap<usize, Wildcard>,
     names: &mut Names,
 ) -> PatternNode {
@@ -561,6 +722,8 @@ fn copy(
         kind: names.get(node.kind()),
         named: node.is_named(),
         field,
+        extra: node.is_extra(),
+        open_end: false,
         text: None,
         children: Vec::new(),
         wildcard: None,
@@ -573,9 +736,14 @@ fn copy(
     if cursor.goto_first_child() {
         loop {
             let child = cursor.node();
-            let field = cursor.field_name().map(|field| names.get(field));
-            out.children
-                .push(copy(child, field, text, wildcards, names));
+            if child.start_byte() >= end && child.end_byte() > child.start_byte() {
+                // Only the suffix the parse needed, not the pattern's.
+                out.open_end = true;
+            } else {
+                let field = cursor.field_name().map(|field| names.get(field));
+                out.children
+                    .push(copy(child, field, text, end, wildcards, names));
+            }
             if !cursor.goto_next_sibling() {
                 break;
             }
@@ -632,6 +800,24 @@ mod tests {
         assert_eq!(built.source_offset(3), 4);
         assert_eq!(built.source_offset(6), 5);
         assert_eq!(built.source_offset(15), 8);
+    }
+
+    #[test]
+    fn placeholder_spellings_are_searched_past_the_guided_walk() {
+        // T708 F1: JavaScript's `import $A from $B` needs an identifier, then
+        // a string. Error recovery blames `$A` while `$B` is an identifier,
+        // so the guided walk runs `$A` out of spellings first.
+        let js = fe_syntax::language_by_name("javascript").unwrap();
+        let pattern = Pattern::compile(js, "import $A from $B").unwrap();
+        let found = pattern.find_in_text("import x from \"y\"\n").unwrap();
+        assert_eq!(found.len(), 1);
+        // JSON keys are strings, and so is a value spelled as an identifier.
+        let json = fe_syntax::language_by_name("json").unwrap();
+        let pattern = Pattern::compile(json, "{$K: $V}").unwrap();
+        let text = "{\"a\": \"b\"}";
+        let found = pattern.find_in_text(text).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(&text[found[0].captures.single("K").unwrap()], "\"a\"");
     }
 
     #[test]

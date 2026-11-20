@@ -162,18 +162,6 @@ fn cancel_callback_stops_a_match_over_a_large_generated_file_promptly() {
 }
 
 #[test]
-fn a_multi_metavariable_is_unsupported_for_now() {
-    let pattern = pattern("foo($$$ARGS)");
-    assert_eq!(
-        pattern.find_in_text("fn f() { foo(); }"),
-        Err(Stopped::Unsupported)
-    );
-    let tree = fe_syntax::parse_str(rust(), "foo();", || false).unwrap();
-    let result = pattern.find_all("foo();", &tree, &MatchOptions::default(), &mut || false);
-    assert_eq!(result, Err(Stopped::Unsupported));
-}
-
-#[test]
 fn missing_tokens_from_error_recovery_never_match() {
     // The `)` is MISSING, inserted by recovery.
     let source = "fn f() { foo(x; }";

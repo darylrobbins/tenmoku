@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 fe-syntax.workspace = true
 log.workspace = true
+regex.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true
 

@@ -13,6 +13,21 @@ pub enum PatternErrorKind {
     MetavarNotANode,
     /// The same name is used both as `$NAME` and as `$$$NAME`.
     MixedMetavar,
+    /// A `where` line isn't a constraint: an unknown key, no `$NAME:` or
+    /// `inside:` before it, or an empty value. The offset is the part that
+    /// isn't understood.
+    UnknownConstraint,
+    /// A `where` line constrains a metavariable the pattern doesn't have, or
+    /// an anonymous one (`$_`). The offset is its `$`.
+    UnboundMetavar,
+    /// A `regex=` value isn't a valid regular expression. The offset is the
+    /// value's start.
+    InvalidRegex,
+    /// More than one name is repeated whose first match can vary (it
+    /// follows a multi metavariable in a list holding two or more, as in
+    /// `f($$$A, $$$B) + g($$$A, $$$B)`): matching that is NP-hard, so one
+    /// such name is allowed. The offset is the second one's second use.
+    VaryingRepeats,
     /// The language couldn't parse at all: no grammar could be set on a
     /// parser, or a WebAssembly grammar ran past its deadline.
     ParseFailed,
@@ -33,6 +48,14 @@ fn describe(kind: PatternErrorKind) -> &'static str {
         PatternErrorKind::Syntax => "syntax error in pattern",
         PatternErrorKind::MetavarNotANode => "metavariable is not a single node",
         PatternErrorKind::MixedMetavar => "metavariable used as both $NAME and $$$NAME",
+        PatternErrorKind::UnknownConstraint => "constraint not understood",
+        PatternErrorKind::UnboundMetavar => {
+            "constraint on a metavariable the pattern does not bind"
+        }
+        PatternErrorKind::InvalidRegex => "invalid regular expression in constraint",
+        PatternErrorKind::VaryingRepeats => {
+            "more than one repeated metavariable follows a choice of multi metavariables"
+        }
         PatternErrorKind::ParseFailed => "pattern could not be parsed",
     }
 }
