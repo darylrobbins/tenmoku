@@ -704,14 +704,31 @@ pub struct UpdateSettings {
     /// Check for a newer Tenmoku in the background once a day and offer to
     /// install it. Check for Updates… always works.
     pub automatic_checks: bool,
+    /// Which releases to update to: `stable`, or `preview`, whose builds
+    /// arrive more often and may be less polished. Switching back to stable
+    /// waits for the next stable release that is newer than what is
+    /// installed, never downgrading. A project file can't set it.
+    pub channel: ReleaseChannel,
 }
 
 impl Default for UpdateSettings {
     fn default() -> Self {
         Self {
             automatic_checks: true,
+            channel: ReleaseChannel::default(),
         }
     }
+}
+
+/// `update.channel`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseChannel {
+    /// Stable releases only.
+    #[default]
+    Stable,
+    /// The newest build, preview or stable.
+    Preview,
 }
 
 /// Settings for the workbench.
@@ -1958,6 +1975,7 @@ fn options() -> SettingsOptions {
         .project_filter(ProjectFilter::new("extensions", drop_extensions))
         .project_filter(ProjectFilter::new("workbench", drop_workbench_user_only))
         .project_filter(ProjectFilter::new("remote", drop_remote))
+        .project_filter(ProjectFilter::new("update", drop_update_channel))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -2218,6 +2236,7 @@ pub(crate) fn project_warning(en_us: &str) -> String {
         PROJECT_VIM_USER_ONLY => tr!("config-project-vim-user-only"),
         PROJECT_ICON_THEME => tr!("config-project-icon-theme-ignored"),
         PROJECT_REMOTE => tr!("config-project-remote-ignored"),
+        PROJECT_UPDATE_CHANNEL => tr!("config-project-update-channel-ignored"),
         _ => return en_us.to_owned(),
     }
     .to_string()
@@ -2787,6 +2806,31 @@ pub const PROJECT_ICON_THEME: &str =
 /// The warning for a `workbench.notifications` a project file sets.
 pub fn project_notifications_warning() -> String {
     kiln_l10n::tr!("config-project-notifications-ignored").to_string()
+}
+
+/// The warning for an `update.channel` a project file sets, in en-US.
+pub const PROJECT_UPDATE_CHANNEL: &str =
+    "update.channel in project files is ignored: the release channel is the same in every window";
+
+/// Drops a project layer's `update.channel` with a [`PROJECT_UPDATE_CHANNEL`]
+/// warning; its other `update` keys stay.
+fn drop_update_channel(layer: &mut Layer) {
+    let Some(toml::Value::Table(update)) = layer.table.get_mut("update") else {
+        return;
+    };
+    if update.remove("channel").is_none() {
+        return;
+    }
+    let offset = DeTable::parse(&layer.source).ok().map_or(0, |document| {
+        key_offset(document.get_ref(), "update", &["channel".to_owned()])
+    });
+    let warning = layer.diagnostic_at(
+        Severity::Warning,
+        Some("update.channel".into()),
+        offset,
+        project_warning(PROJECT_UPDATE_CHANNEL),
+    );
+    layer.diagnostics.push(warning);
 }
 
 /// The warning for a `workbench.locale` a project file sets.

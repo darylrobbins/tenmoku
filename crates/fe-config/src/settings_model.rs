@@ -271,6 +271,7 @@ impl SettingsModel {
                 | ["terminal", "shell" | "shell_args"]
                 | ["vim", "shell" | "remap"]
                 | ["workbench", "icon_theme" | "locale" | "notifications"]
+                | ["update", "channel"]
         ) && match key.as_slice() {
             // Only what `narrow_agents` keeps: class levels, commands_ask
             // and commands_deny, which only tighten the user's.
@@ -436,6 +437,7 @@ fn applied_project(project: &Table) -> Table {
         ("terminal", &["shell", "shell_args"][..]),
         ("vim", &["shell", "remap"]),
         ("workbench", &["icon_theme", "locale", "notifications"]),
+        ("update", &["channel"]),
     ] {
         if let Some(toml::Value::Table(inner)) = table.get_mut(name) {
             for key in keys {

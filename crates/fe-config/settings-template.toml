@@ -482,6 +482,12 @@
 # Check for a newer Tenmoku in the background once a day and offer to install
 # it. Check for Updates… always works.
 # automatic_checks = true
+#
+# Which releases to update to: "stable", or "preview", whose builds arrive more
+# often and may be less polished. Switching back to stable waits for the next
+# stable release that is newer than what is installed, never downgrading. A
+# project file can't set it.
+# channel = "stable"
 
 [extensions]
 # The IDs of installed extensions to turn off, as in ["acme.solarized"]: they

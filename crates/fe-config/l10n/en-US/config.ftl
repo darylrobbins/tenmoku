@@ -27,6 +27,7 @@ config-project-terminal-shell-ignored = terminal.shell and terminal.shell_args i
 config-project-vim-user-only = vim.shell and vim.remap in project files are ignored: a folder can't choose the program ! runs or type keys as you
 config-project-icon-theme-ignored = workbench.icon_theme in project files is ignored: the icons are the same in every window
 config-project-remote-ignored = remote settings in project files are ignored: a folder can't choose the server a connect uploads, the ports it forwards or how long a host holds your session
+config-project-update-channel-ignored = update.channel in project files is ignored: the release channel is the same in every window
 
 ## A `[formatters.<language>]` entry that is dropped. $language is the
 ## table's name, such as `rust`.

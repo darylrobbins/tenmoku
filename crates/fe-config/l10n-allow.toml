@@ -99,3 +99,8 @@ reason = "PROJECT_VIM_USER_ONLY, the en-US text of config-project-vim-user-only"
 file = "src/settings.rs"
 text = "workbench.icon_theme in project files is ignored: the icons are the same in every window"
 reason = "PROJECT_ICON_THEME, the en-US text of config-project-icon-theme-ignored"
+
+[[literal]]
+file = "src/settings.rs"
+text = "update.channel in project files is ignored: the release channel is the same in every window"
+reason = "PROJECT_UPDATE_CHANNEL, the en-US text of config-project-update-channel-ignored"

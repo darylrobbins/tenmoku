@@ -184,6 +184,7 @@ workbench-settings-label-theme-mode = Mode
 workbench-settings-label-theme-name = Name
 workbench-settings-label-tree-show_ignored = Show Ignored
 workbench-settings-label-update-automatic_checks = Automatic Checks
+workbench-settings-label-update-channel = Channel
 workbench-settings-label-vim-clipboard = Clipboard
 workbench-settings-label-vim-enabled = Vim mode
 workbench-settings-label-vim-filter_time_limit = Filter Time Limit

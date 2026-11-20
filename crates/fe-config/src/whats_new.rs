@@ -77,6 +77,58 @@ pub fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     parts.next().is_none().then_some(version)
 }
 
+/// A release's version: `X.Y.Z`, or `X.Y.Z-preview.N`, which is older than
+/// its own `X.Y.Z` and newer than the stable before it. The derived order
+/// follows from `pre` being compared last, with a preview below no preview.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReleaseVersion {
+    pub major: u64,
+    pub minor: u64,
+    pub patch: u64,
+    /// The preview's number, or `None` for a stable release.
+    pub pre: Option<u64>,
+}
+
+impl Ord for ReleaseVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let core = |v: &Self| (v.major, v.minor, v.patch);
+        core(self)
+            .cmp(&core(other))
+            .then_with(|| match (self.pre, other.pre) {
+                (None, None) => std::cmp::Ordering::Equal,
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(a), Some(b)) => a.cmp(&b),
+            })
+    }
+}
+
+impl PartialOrd for ReleaseVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// `X.Y.Z` or `X.Y.Z-preview.N`, each number by [`parse_version`]'s rules.
+pub fn parse_release_version(text: &str) -> Option<ReleaseVersion> {
+    let (core, pre) = match text.split_once('-') {
+        Some((core, pre)) => (core, Some(pre.strip_prefix("preview.")?)),
+        None => (text, None),
+    };
+    let (major, minor, patch) = parse_version(core)?;
+    // `parse_version` on "N.0.0" holds N to plain digits.
+    let pre = match pre {
+        Some(n) => Some(parse_version(&format!("{n}.0.0"))?.0),
+        None => None,
+    };
+    Some(ReleaseVersion {
+        major,
+        minor,
+        patch,
+        pre,
+    })
+}
+
 /// Writes the marker, `seen = "<version>"`, creating the state directory;
 /// a later call replaces it.
 pub fn record(state_dir: &Path, version: &str) -> io::Result<()> {

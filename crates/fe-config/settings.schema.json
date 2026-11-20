@@ -1606,6 +1606,21 @@
         }
       ]
     },
+    "ReleaseChannel": {
+      "description": "`update.channel`.",
+      "oneOf": [
+        {
+          "const": "stable",
+          "description": "Stable releases only.",
+          "type": "string"
+        },
+        {
+          "const": "preview",
+          "description": "The newest build, preview or stable.",
+          "type": "string"
+        }
+      ]
+    },
     "RemoteSettings": {
       "description": "Settings for working on a remote host.",
       "properties": {
@@ -1891,6 +1906,11 @@
           "default": true,
           "description": "Check for a newer Tenmoku in the background once a day and offer to\ninstall it. Check for Updates… always works.",
           "type": "boolean"
+        },
+        "channel": {
+          "$ref": "#/$defs/ReleaseChannel",
+          "default": "stable",
+          "description": "Which releases to update to: `stable`, or `preview`, whose builds\narrive more often and may be less polished. Switching back to stable\nwaits for the next stable release that is newer than what is\ninstalled, never downgrading. A project file can't set it."
         }
       },
       "type": "object"
@@ -2518,7 +2538,8 @@
     "update": {
       "$ref": "#/$defs/UpdateSettings",
       "default": {
-        "automatic_checks": true
+        "automatic_checks": true,
+        "channel": "stable"
       },
       "description": "Updates to Tenmoku itself."
     },

@@ -650,6 +650,14 @@ settings-update-automatic_checks =
     Check for a newer Tenmoku in the background once a day and offer to
     install it. Check for Updates… always works.
 
+settings-update-channel =
+    Which releases to update to: `stable`, or `preview`, whose builds
+    arrive more often and may be less polished. Switching back to stable
+    waits for the next stable release that is newer than what is
+    installed, never downgrading. A project file can't set it.
+    .stable = Stable releases only.
+    .preview = The newest build, preview or stable.
+
 settings-vim = Vim mode.
 
 settings-vim-clipboard =

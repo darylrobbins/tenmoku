@@ -492,6 +492,12 @@ settings-template-update-automatic_checks =
     Check for a newer Tenmoku in the background once a day and offer to install
     it. Check for Updates… always works.
 
+settings-template-update-channel =
+    Which releases to update to: "stable", or "preview", whose builds arrive more
+    often and may be less polished. Switching back to stable waits for the next
+    stable release that is newer than what is installed, never downgrading. A
+    project file can't set it.
+
 settings-template-extensions-disabled =
     The IDs of installed extensions to turn off, as in ["acme.solarized"]: they
     stay installed but contribute nothing. An ID no extension has is ignored. A

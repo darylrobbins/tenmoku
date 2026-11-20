@@ -303,6 +303,10 @@ fn project_warnings_are_their_constants_in_en_us() {
         ),
         (PROJECT_VIM_USER_ONLY, "config-project-vim-user-only"),
         (PROJECT_ICON_THEME, "config-project-icon-theme-ignored"),
+        (
+            PROJECT_UPDATE_CHANNEL,
+            "config-project-update-channel-ignored",
+        ),
     ] {
         assert_eq!(kiln_l10n::tr_or(key, ""), constant, "{key}");
         assert_eq!(project_warning(constant), constant, "{key}");
