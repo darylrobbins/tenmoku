@@ -403,6 +403,49 @@ fn a_named_group_shows_its_name(cx: &mut TestAppContext) {
     draw(cx);
 }
 
+/// Naming, renaming or unnaming a group while its popup shows updates the
+/// popup in place: it stays open across the next frame, holds its prefix,
+/// and the map still completes.
+#[gpui::test]
+fn reloading_group_names_keeps_the_popup(cx: &mut TestAppContext) {
+    let remaps = vec![noremap("<leader>ff", "gg"), noremap("<leader>fg", "G")];
+    let (view, cx) = vim_editor(cx, remaps);
+    let name = |name: &str| {
+        fe_vim::WhichKeyGroupName::parse(&[RemapMode::Normal], "<leader>f", name, ",").unwrap()
+    };
+    cx.simulate_keystrokes(",");
+    wait(DELAY, cx);
+    assert!(popup(&view, cx).is_some());
+    let f_title = |cx: &mut VisualTestContext| {
+        let which = popup(&view, cx).expect("the popup stays open");
+        titles(&which, cx)
+    };
+    assert_eq!(f_title(cx), [("f".into(), "+2".into())]);
+
+    for (groups, expected) in [
+        (name("file"), "+file"),
+        (name("files"), "+files"),
+        (Vec::new(), "+2"),
+    ] {
+        cx.update(|_, cx| set_vim_which_key_groups(cx, groups));
+        draw(cx);
+        wait(DELAY * 4, cx);
+        draw(cx);
+        assert_eq!(f_title(cx), [("f".into(), expected.into())]);
+    }
+
+    cx.simulate_keystrokes("f g");
+    assert_eq!(popup(&view, cx), None);
+    let row = view.read_with(cx, |view, _| {
+        let model = view.model();
+        model
+            .text()
+            .offset_to_point(model.primary_selection().head())
+            .row
+    });
+    assert_eq!(row, 5);
+}
+
 /// `vim.which_key = false` shows nothing; a delay of 0 shows the popup at
 /// once; each change applies to the editors already open, closing their
 /// popups when it's turned off.

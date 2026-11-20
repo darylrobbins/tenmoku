@@ -375,10 +375,18 @@ impl EditorView {
         let stale = match (&now, &self.which_key.shown) {
             (None, _) => true,
             (Some((_, now)), _) if now != target => true,
-            (Some((which, _)), Some(shown)) => which != shown,
+            (Some((which, _)), Some(shown)) => which != shown && !same_but_names(which, shown),
             (Some(_), None) => false,
         };
-        stale && self.which_key.close()
+        if !stale {
+            // A group renamed or unnamed under a shown popup: it repaints
+            // with the new names, keeping its prefix held.
+            if let (Some((which, _)), Some(shown)) = (now, self.which_key.shown.as_mut()) {
+                *shown = which;
+            }
+            return false;
+        }
+        self.which_key.close()
     }
 
     /// Once the update under way is over, in the active window: closes a
@@ -416,6 +424,21 @@ impl EditorView {
             self.arm_which_key(which, target, false, window, cx);
         }
     }
+}
+
+/// Whether `a` and `b` list the same keys, differing at most in the names
+/// of their groups.
+fn same_but_names(a: &WhichKey, b: &WhichKey) -> bool {
+    let unnamed = |which: &WhichKey| {
+        let mut which = which.clone();
+        for entry in &mut which.entries {
+            if let WhichKeyLabel::Group { name, .. } = &mut entry.label {
+                *name = None;
+            }
+        }
+        which
+    };
+    unnamed(a) == unnamed(b)
 }
 
 /// What goes on from `chord`: its next keys, each with the command the keys
