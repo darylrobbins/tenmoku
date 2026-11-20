@@ -661,6 +661,8 @@ pub(crate) struct Found {
     /// against.
     engine: ApiVersion,
     plugin: Result<PluginManifest, String>,
+    /// The language servers its extension contributes, `[contributes.lsp.<name>]`.
+    lsp_servers: Vec<String>,
 }
 
 impl Found {
@@ -673,6 +675,9 @@ impl Found {
             dir: manifest.dir.clone(),
             engine: manifest.engine,
             plugin,
+            lsp_servers: (manifest.app.get("lsp").and_then(toml::Value::as_table))
+                .map(|table| table.keys().cloned().collect())
+                .unwrap_or_default(),
         }
     }
 }
@@ -681,6 +686,12 @@ impl Found {
 /// found unloads at once, a load of it under way cancelled; one whose
 /// manifest changed has no request pending until it's decided again.
 pub(crate) fn set_plugins(cx: &mut App, found: Vec<Found>) {
+    *lock(own_server_map()) = (found.iter())
+        .map(|found| {
+            let declared = (found.dir.clone(), found.lsp_servers.clone());
+            (found.id.clone(), declared)
+        })
+        .collect();
     let host = host_mut(cx);
     for (id, slot) in &mut host.slots {
         let now = found.iter().find(|found| found.id == *id);
@@ -1443,6 +1454,9 @@ fn withdraw(id: &str, host: &mut PluginHost) -> Option<Loaded> {
         commands.unload(id);
     }
     loaded.inbox.close();
+    // A request waiting on a language server is dropped now: the plugin's
+    // mutex is held by the call that waits, so shutdown can't do it first.
+    lsp_requests().unload(id);
     Some(loaded)
 }
 
@@ -1901,7 +1915,19 @@ impl LoadContext {
             diagnostics: self.paint.diagnostics(id, grants, checked),
             formatting: formatters,
             status: self.paint.status(id, grants),
+            lsp: {
+                let (dir, declared) = own_servers(id);
+                fe_plugin::lsp::State::new(
+                    id,
+                    grants,
+                    declared,
+                    lsp_requests(),
+                    self.bridge
+                        .lsp(deadline.clone(), limits.call_deadline, dir, cancel.clone()),
+                )
+            },
         };
+        let unloader = host.lsp.unloader();
         let inbox = Inbox::new(&limits);
         let plugin = HostedPlugin::load(
             engine,
@@ -1926,12 +1952,34 @@ impl LoadContext {
             formatting.forget(id);
             failed(error.to_string())
         })?;
+        let mut plugin = plugin;
+        plugin.lsp = unloader;
         let plugin = Arc::new(Mutex::new(plugin));
         bound.set(&plugin);
         let handle: kiln_plugin::commands::PluginHandle = plugin.clone();
         let commands = self.commands.commands(id, &handle);
         Ok((plugin, commands, inbox))
     }
+}
+
+/// Every plugin's waiting language-server requests, which the plugins' lsp slices share.
+pub(crate) fn lsp_requests() -> &'static fe_plugin::lsp::LspRequests {
+    static REQUESTS: OnceLock<fe_plugin::lsp::LspRequests> = OnceLock::new();
+    REQUESTS.get_or_init(fe_plugin::lsp::LspRequests::new)
+}
+
+/// Where each plugin's extension is and the language server names it declares, by plugin id, as
+/// last found. The names only filter: whether a server is the extension's own is decided at each
+/// call ([`crate::plugin_bridge`]'s `plugin_lsp`).
+type OwnServers = HashMap<String, (PathBuf, Vec<String>)>;
+
+fn own_server_map() -> &'static Mutex<OwnServers> {
+    static OWN: OnceLock<Mutex<OwnServers>> = OnceLock::new();
+    OWN.get_or_init(Mutex::default)
+}
+
+fn own_servers(id: &str) -> (PathBuf, Vec<String>) {
+    lock(own_server_map()).get(id).cloned().unwrap_or_default()
 }
 
 /// Where the plugins' lifecycle and logs go: the `log` crate, each
@@ -2353,6 +2401,8 @@ pub(crate) struct HostedPlugin {
     channel: Option<Channel>,
     thread: Option<JoinHandle<()>>,
     inbox: Inbox,
+    /// Drops its waiting language-server requests, so shutdown isn't held by one.
+    lsp: Option<fe_plugin::lsp::Unloader>,
     /// What its background jobs may use: its manifest's, then the user's
     /// `plugin_limits`, held to this computer's ceilings.
     pub(crate) background: BackgroundLimits,
@@ -2485,6 +2535,7 @@ impl HostedPlugin {
             channel: Some(Channel { calls, replies }),
             thread: Some(thread),
             inbox,
+            lsp: None,
             background: BackgroundLimits::default(),
         })
     }
@@ -2529,6 +2580,9 @@ impl HostedPlugin {
     fn shutdown(&mut self) {
         // Closing the channel, the inbox's end too, tells the thread to
         // shut the plugin down.
+        if let Some(lsp) = &self.lsp {
+            lsp.unload();
+        }
         self.inbox.close();
         self.channel = None;
         if let Some(thread) = self.thread.take() {
@@ -2581,7 +2635,7 @@ impl Drop for HostedPlugin {
 
 /// The editor world's imports and WASI's, against [`Data`].
 fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
-    use fe_plugin::fastedit::editor::{buffer, decorations, diagnostics, formatting, status};
+    use fe_plugin::fastedit::editor::{buffer, decorations, diagnostics, formatting, lsp, status};
     let mut linker = Linker::<Data>::new(engine.engine());
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     bindings::add_to_linker(&mut linker, |data| &mut data.host.kiln)?;
@@ -2598,6 +2652,7 @@ fn linker(engine: &PluginEngine) -> wasmtime::Result<Linker<Data>> {
     formatting::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
         &mut data.host
     })?;
+    lsp::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| &mut data.host)?;
     status::add_to_linker::<_, HasSelf<fe_plugin::HostState>>(&mut linker, |data| {
         data.painted = true;
         &mut data.host

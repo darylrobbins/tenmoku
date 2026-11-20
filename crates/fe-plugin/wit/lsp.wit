@@ -1,0 +1,29 @@
+package fastedit:editor@1.1.0;
+
+/// Requests and notifications to language servers the editor runs. The servers stay native
+/// processes: an extension contributes one with `[contributes.lsp.<name>]`, under the same
+/// consent as without a plugin, and the editor starts, restarts and stops it. A plugin reaches a
+/// server's custom methods here.
+interface lsp {
+    use kiln:extension/types@1.1.0.{buffer-id, error};
+
+    /// Which session of the server: the one an open buffer is placed on, or the one started at
+    /// an open root (a guest path). A server runs one session per name and root, so a bare name
+    /// is never enough. A buffer needs `buffer.read`; a root needs an `fs` capability that
+    /// reaches it. With no session there (not started, untrusted, crashed out) the call fails
+    /// with `not-found`, and nothing is started for it.
+    variant target { buffer(buffer-id), root(string) }
+
+    /// Sends `method`, a request the language server `server` defines (rust-analyzer's
+    /// `experimental/runnables`, say), to the session `target` names, and returns its result as
+    /// JSON. Needs `lsp:<server>`, naming a server the plugin's own extension contributes or a
+    /// built-in one; another extension's server is `denied`. Methods the editor routes itself
+    /// (`textDocument/*`, `workspace/*`, `completionItem/*` and the like) are `denied`. Params
+    /// and the result are each at most 16 MiB. A plugin has at most 4 requests waiting at once;
+    /// one more is `failed`. A request still waiting when the plugin unloads is dropped.
+    request: func(server: string, target: target, method: string, params: string) -> result<string, error>;
+
+    /// Sends `method` to the session as a notification, which has no answer. The same rules as
+    /// `request`.
+    notify: func(server: string, target: target, method: string, params: string) -> result<_, error>;
+}

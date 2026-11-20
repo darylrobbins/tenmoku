@@ -54,7 +54,7 @@ use fe_editor::commands::Editor;
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_plugin::editor::{BufferAccess, BufferText, Proposal};
 use gpui::{AnyWindowHandle, App, Entity, Focusable as _, Global};
-use kiln_l10n::tr;
+use kiln_l10n::{tr, verbatim};
 use kiln_plugin::{
     bindings::Error,
     commands::{CommandHost, Dispatcher, Request},
@@ -113,6 +113,17 @@ impl Bridge {
         deadline: Instant,
         job: impl FnOnce(&Served, &mut App) -> R + Send + 'static,
     ) -> Result<R, Error> {
+        self.on_main_unless(deadline, None, job)
+    }
+
+    /// As [`Self::on_main`], and a plugin whose `cancelled` turns true stops waiting at once: a
+    /// job the main thread hasn't started then never runs.
+    fn on_main_unless<R: Send + 'static>(
+        &self,
+        deadline: Instant,
+        cancelled: Option<&dyn Fn() -> bool>,
+        job: impl FnOnce(&Served, &mut App) -> R + Send + 'static,
+    ) -> Result<R, Error> {
         let handoff = Handoff::new(deadline);
         let theirs = Arc::clone(&handoff);
         let sent = self.jobs.try_send(Box::new(move |served, cx| {
@@ -125,9 +136,12 @@ impl Bridge {
                 tr!("workbench-extensions-bridge-closed").into(),
             ));
         }
-        handoff.wait()
+        handoff.wait_unless(cancelled)
     }
 }
+
+/// How often a wait that may be cancelled looks for it.
+const CANCEL_CHECK: Duration = Duration::from_millis(25);
 
 /// A job handed to the main thread, and what came of it. The plugin waits
 /// for it until the deadline and no longer, whether or not it has started.
@@ -183,11 +197,20 @@ impl<R> Handoff<R> {
 
     /// The plugin's side: what the job returned, if it returns by the
     /// deadline.
+    #[cfg(test)]
     fn wait(&self) -> Result<R, Error> {
+        self.wait_unless(None)
+    }
+
+    /// As [`Self::wait`], but stops waiting, abandoning the job, once `cancelled` is set.
+    fn wait_unless(&self, cancelled: Option<&dyn Fn() -> bool>) -> Result<R, Error> {
         let mut slot = lock(&self.slot);
         loop {
             match std::mem::replace(&mut *slot, Slot::Abandoned) {
                 Slot::Done(returned) => return Ok(returned),
+                _ if cancelled.is_some_and(|stop| stop()) => {
+                    return Err(Error::Denied(verbatim!("the plugin was unloaded").into()));
+                }
                 waiting => {
                     let left = self.deadline.saturating_duration_since(Instant::now());
                     if left.is_zero() {
@@ -199,6 +222,11 @@ impl<R> Handoff<R> {
                         return Err(Error::Failed(message.into()));
                     }
                     *slot = waiting;
+                    // A plugin that may be cancelled looks for it between waits.
+                    let left = match cancelled {
+                        Some(_) => left.min(CANCEL_CHECK),
+                        None => left,
+                    };
                     slot = (self.done)
                         .wait_timeout(slot, left)
                         .unwrap_or_else(PoisonError::into_inner)
@@ -701,6 +729,9 @@ fn propose(buffer: u64, proposal: Proposal, cx: &mut App) -> Result<(), Error> {
     });
     Ok(())
 }
+
+#[path = "plugin_lsp.rs"]
+mod plugin_lsp;
 
 #[cfg(test)]
 #[path = "plugin_bridge_tests.rs"]

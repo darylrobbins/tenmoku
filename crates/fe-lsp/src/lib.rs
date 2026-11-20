@@ -89,6 +89,7 @@ mod clock;
 pub mod code_action;
 mod code_lens;
 mod completion;
+mod custom;
 mod diagnostics;
 mod document;
 mod document_color;
@@ -144,6 +145,7 @@ pub use code_lens::CodeLens;
 pub use completion::{
     CompletionEdit, CompletionItem, CompletionTrigger, Completions, kind_label, kind_name,
 };
+pub use custom::is_builtin_server;
 pub use diagnostics::{
     Diagnostic, DiagnosticTag, FileDiagnostic, Related, Severity, decode_file_diagnostics,
 };

@@ -2290,6 +2290,14 @@ impl LspManager {
         ids
     }
 
+    /// As [`send`](Self::send), but false, with nothing sent, if `server` has no handle here or
+    /// its thread has ended and closed its command channel (a stopped server's handle stays
+    /// until a later operation prunes it): for a command that can't be lost silently.
+    pub(crate) fn try_send(&self, server: ServerId, command: Command) -> bool {
+        (self.servers.get(&server))
+            .is_some_and(|handle| handle.commands.unbounded_send(command).is_ok())
+    }
+
     pub(crate) fn send(&self, server: ServerId, command: Command) {
         if let Some(handle) = self.servers.get(&server) {
             // A server that has gone has no documents to sync.

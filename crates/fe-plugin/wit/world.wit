@@ -13,5 +13,6 @@ world editor-extension {
     import decorations;
     import diagnostics;
     import formatting;
+    import lsp;
     import status;
 }

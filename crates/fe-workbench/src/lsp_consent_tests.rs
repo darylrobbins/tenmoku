@@ -864,3 +864,34 @@ fn a_launch_that_failed_ended_or_was_under_way_restarts_once_a_change_is_granted
     launching.join().unwrap().unwrap();
     assert_eq!(gate.stale(), at);
 }
+
+#[gpui::test]
+fn the_running_servers_keep_one_whose_changed_invocation_awaits_consent(cx: &mut TestAppContext) {
+    use crate::lsp_consent::running_extension_servers;
+    let running = |cx: &mut TestAppContext| cx.update(|cx| running_extension_servers(cx));
+    let dir = tempfile::tempdir().unwrap();
+    let extension = extension(dir.path());
+    consenting(cx, dir.path());
+    let granted = server(&extension);
+    set(cx, vec![granted.clone()]);
+    // Not consented to yet: nothing runs.
+    assert_eq!(running(cx), []);
+    let asked = pending(cx).remove(0);
+    cx.update(|cx| grant_extension_server(cx, &asked)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(running(cx), [(extension.clone(), "zls".to_owned())]);
+
+    // Its arguments change: the user is asked again, and the granted one keeps running.
+    let mut args = granted.clone();
+    args.spec.args.push("--verbose".into());
+    set(cx, vec![args]);
+    assert_eq!(pending(cx).len(), 1);
+    assert_eq!(running(cx), [(extension.clone(), "zls".to_owned())]);
+
+    // A later extension's server of the same name is shadowed, so it isn't running.
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = self::extension(other_dir.path());
+    let shadowed = server(&other);
+    set(cx, vec![granted, shadowed]);
+    assert_eq!(running(cx), [(extension, "zls".to_owned())]);
+}

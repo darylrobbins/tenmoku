@@ -738,6 +738,16 @@ pub(crate) fn granted_extension_servers(cx: &App) -> Vec<GrantedServer> {
     granted
 }
 
+/// The extension directory (canonical) and name of each server handed to the managers, which is
+/// what runs now: one whose changed invocation awaits consent is still here, as its granted
+/// invocation still runs, and one a same-named server of an earlier extension shadows is not.
+pub(crate) fn running_extension_servers(cx: &App) -> Vec<Key> {
+    let Some(state) = cx.try_global::<ExtensionConsent>() else {
+        return Vec::new();
+    };
+    state.handed.keys().cloned().collect()
+}
+
 /// Lets `pending`'s server run exactly what it shows, from now on and in
 /// later sessions, and starts it, restarting what ran before it. Each
 /// launch checks it still runs that ([`ConsentGate`]). The decision is

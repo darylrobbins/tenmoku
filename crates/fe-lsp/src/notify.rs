@@ -31,8 +31,11 @@ macro_rules! raw_notifications {
                     true
                 })*
                 _ => {
-                    log::warn!("no notification {method} to send");
-                    false
+                    let sent = crate::custom::send_notice(socket, method, params);
+                    if !sent {
+                        log::warn!("no notification {method} to send");
+                    }
+                    sent
                 }
             }
         }
