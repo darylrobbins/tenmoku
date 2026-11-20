@@ -172,8 +172,11 @@ pub(crate) const BELL_PRIORITY: i32 = 100_000;
 /// The bell for an inbox with `needs_you` notifications waiting on the
 /// user: the accent dot while there are any, and an accessible name and
 /// tooltip that count them.
-pub(crate) fn bell_item(needs_you: usize) -> kiln_shell::StatusItem {
-    let name = tr!("workbench-inbox-bell", count = needs_you);
+pub(crate) fn bell_item(needs_you: usize, focus: bool) -> kiln_shell::StatusItem {
+    let name = match focus {
+        true => tr!("workbench-inbox-bell-focus", count = needs_you),
+        false => tr!("workbench-inbox-bell", count = needs_you),
+    };
     let show = Invocation::of(crate::workbench::notification_inbox_view::SHOW)
         .expect("a valid command ID");
     kiln_shell::StatusItem::new(
@@ -182,7 +185,11 @@ pub(crate) fn bell_item(needs_you: usize) -> kiln_shell::StatusItem {
         BELL_PRIORITY,
         SharedString::default(),
     )
-    .icon(fe_ui::Icon::Bell)
+    // The slash is Focus mode's: non-urgent toasts are held.
+    .icon(match focus {
+        true => fe_ui::Icon::BellOff,
+        false => fe_ui::Icon::Bell,
+    })
     .dot(needs_you > 0)
     .name(name.clone())
     .tooltip(name)
@@ -209,7 +216,7 @@ pub struct StatusBar {
     items: StatusItems,
     /// How many notifications need the user, for the bell; no bell before
     /// the workbench says ([`StatusBar::set_bell`]).
-    bell: Option<usize>,
+    bell: Option<(usize, bool)>,
     /// The lanes Working, for the `agents` item ([`StatusBar::set_agents`]).
     agents: usize,
     /// The operation in progress, after the vim mode, while one runs
@@ -265,9 +272,9 @@ impl StatusBar {
 
     /// Shows the bell, for `needs_you` notifications waiting on the user.
     /// Its text is made as the bar renders, in the locale then.
-    pub(crate) fn set_bell(&mut self, needs_you: usize, cx: &mut Context<Self>) {
-        if self.bell != Some(needs_you) {
-            self.bell = Some(needs_you);
+    pub(crate) fn set_bell(&mut self, needs_you: usize, focus: bool, cx: &mut Context<Self>) {
+        if self.bell != Some((needs_you, focus)) {
+            self.bell = Some((needs_you, focus));
             cx.notify();
         }
     }
@@ -368,7 +375,10 @@ impl StatusBar {
     pub(crate) fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
         let colors = &cx.theme().colors;
         let agents = agents_item(self.agents, colors.agent.base, colors.agent.soft);
-        let bell = self.bell.map(bell_item).into_iter().chain(agents);
+        let bell = (self.bell)
+            .map(|(needs_you, focus)| bell_item(needs_you, focus))
+            .into_iter()
+            .chain(agents);
         let Some(item) = self.item.as_deref() else {
             return self.items.merged(bell);
         };

@@ -309,6 +309,9 @@ impl Workbench {
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         self.preview_tabs = event.settings.workbench.preview_tabs;
         self.set_start_page_on(event.settings.workbench.start_page, cx);
+        let level = event.settings.workbench.notifications;
+        self.toasts
+            .update(cx, |toasts, cx| toasts.set_level(level, cx));
         // Drawn again, it follows vim turned on or off.
         self.start_page.update(cx, |_, cx| cx.notify());
         self.follow_zen_settings(&event.settings.workbench.zen_mode);

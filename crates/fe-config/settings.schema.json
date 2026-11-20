@@ -1378,6 +1378,26 @@
         }
       ]
     },
+    "NotificationLevel": {
+      "description": "`workbench.notifications`.",
+      "oneOf": [
+        {
+          "const": "all",
+          "description": "Every notification shows as a toast.",
+          "type": "string"
+        },
+        {
+          "const": "needs_you",
+          "description": "Only a notification that needs you shows as a toast.",
+          "type": "string"
+        },
+        {
+          "const": "off",
+          "description": "None shows as a toast but an error, once.",
+          "type": "string"
+        }
+      ]
+    },
     "PluginLimitsSettings": {
       "description": "One plugin's limits in `[extensions.plugin_limits.\"<id>\"]`: each unset\nkey leaves the manifest's value, or the default, as it is.",
       "properties": {
@@ -2209,6 +2229,11 @@
           ],
           "type": "string"
         },
+        "notifications": {
+          "$ref": "#/$defs/NotificationLevel",
+          "default": "all",
+          "description": "Which notifications show as toasts: `all` shows every one; `needs_you`\nonly those that need you (they have an action or a question), the\nrest going straight to the notifications inbox; `off` sends every\none to the inbox, though an error still shows once. A project file\ncan't set it."
+        },
         "preview_tabs": {
           "default": true,
           "description": "Whether a file single-clicked in the project tree opens in a preview\ntab, in italics, that the next one replaces. Editing it,\ndouble-clicking it or its tab, or pinning it keeps it open.",
@@ -2532,6 +2557,7 @@
         "contrast": "system",
         "icon_theme": "tenmoku",
         "locale": "auto",
+        "notifications": "all",
         "preview_tabs": true,
         "rail": "left",
         "reduce_motion": "system",

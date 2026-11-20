@@ -210,6 +210,7 @@ workbench-settings-label-workbench-color_blind_mode = Colour-blind mode
 workbench-settings-label-workbench-contrast = Contrast
 workbench-settings-label-workbench-icon_theme = Icon Theme
 workbench-settings-label-workbench-locale = Locale
+workbench-settings-label-workbench-notifications = Notifications
 workbench-settings-label-workbench-preview_tabs = Preview Tabs
 workbench-settings-label-workbench-rail = Rail position
 workbench-settings-label-workbench-reduce_motion = Reduce motion

@@ -1165,6 +1165,13 @@ impl Workbench {
         cx.cx.notify();
     }
 
+    /// Toggle Notification Focus Mode
+    #[command(id = "notifications.toggle_focus")]
+    fn toggle_notification_focus(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        (self.toasts).update(cx.cx, |toasts, cx| toasts.toggle_focus_mode(cx));
+    }
+
     /// Toast: Focus
     #[command(id = "toast.focus")]
     fn focus_toast(&mut self, cx: &mut Cx<Self>) {

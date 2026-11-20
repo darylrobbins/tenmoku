@@ -7,15 +7,53 @@
 //! the queue as before. A toast timing out leaves its notification where it
 //! is: an action not taken still needs you. At most [`CAP`] are kept.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use fe_command::CommandId;
+use fe_config::NotificationLevel;
 
 use super::{Level, Toast, ToastId};
 
 /// How many notifications the inbox keeps: past that, the oldest Earlier
 /// one goes, and the oldest of all if none is Earlier.
 pub(crate) const CAP: usize = 200;
+
+/// How long there must be no key or mouse input before Focus mode lets the
+/// toasts it holds show.
+pub(crate) const FOCUS_IDLE: Duration = Duration::from_secs(20);
+
+/// What becomes of a toast when it's raised.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Disposition {
+    /// It shows as a toast.
+    Show,
+    /// Focus mode keeps it in the inbox until the user is idle, then it
+    /// shows.
+    Hold,
+    /// It goes to the inbox alone.
+    Inbox,
+}
+
+/// Whether `toast` is urgent: it has an action or a question, or is an
+/// error. Focus mode never holds one.
+pub(crate) fn urgent(toast: &Toast) -> bool {
+    toast.action.is_some()
+        || toast.choices.as_ref().is_some_and(|c| !c.titles.is_empty())
+        || toast.level == Level::Error
+}
+
+/// What `workbench.notifications` (`level`) and Focus mode (`focus`) make of
+/// `toast`: `all` shows every one, `needs_you` those that are urgent and
+/// `off` only errors, the rest going to the inbox alone; with Focus mode on,
+/// a toast that would show but isn't urgent is held.
+pub(crate) fn disposition(level: NotificationLevel, focus: bool, toast: &Toast) -> Disposition {
+    match level {
+        NotificationLevel::Off if toast.level != Level::Error => Disposition::Inbox,
+        NotificationLevel::NeedsYou if !urgent(toast) => Disposition::Inbox,
+        _ if focus && !urgent(toast) => Disposition::Hold,
+        _ => Disposition::Show,
+    }
+}
 
 /// Who raised a notification.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -71,6 +109,8 @@ pub(crate) struct Notification {
     pub detail: Option<String>,
     /// A button's label, and the command it runs.
     pub action: Option<(String, CommandId)>,
+    /// The arguments its action's command runs with.
+    pub action_args: Option<serde_json::Value>,
     /// Whether it asks a question, with a button per answer.
     pub choices: bool,
     /// The question's answers, each a button's title: empty for none.
@@ -121,6 +161,11 @@ impl NotificationInbox {
             self.items.push(item);
             return id;
         }
+        self.insert(toast, Some(queued), at)
+    }
+
+    /// Keeps `toast` as a new notification.
+    fn insert(&mut self, toast: &Toast, queued: Option<ToastId>, at: SystemTime) -> NotificationId {
         let id = NotificationId(self.next_id);
         self.next_id += 1;
         self.items.push(Notification {
@@ -130,15 +175,71 @@ impl NotificationInbox {
             title: toast.message.clone(),
             detail: toast.detail.clone(),
             action: toast.action.clone(),
+            action_args: toast.action_args.clone(),
             choices: toast.choices.as_ref().is_some_and(|c| !c.titles.is_empty()),
             answers: (toast.choices.as_ref()).map_or_else(Vec::new, |c| c.titles.clone()),
             at,
             count: 1,
             state: State::Open,
-            toast: Some(queued),
+            toast: queued,
         });
         self.trim();
         id
+    }
+
+    /// Records `toast`, raised at `at`, which the queue doesn't hold: for the
+    /// inbox alone, or held until it's shown ([`NotificationInbox::attach`]).
+    pub(crate) fn record_unqueued(&mut self, toast: &Toast, at: SystemTime) -> NotificationId {
+        self.insert(toast, None, at)
+    }
+
+    /// Notes that the queue now holds `toast` for notification `id`, a held
+    /// one shown at last.
+    pub(crate) fn attach(&mut self, id: NotificationId, toast: ToastId) {
+        if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
+            item.toast = Some(toast);
+        }
+    }
+
+    /// Notes that the queue counted held notification `id`'s toast into
+    /// `toast`, which it already had: `id` goes, and the notification of
+    /// `toast` counts up as a toast raised again does. Returns the notification
+    /// that now stands for `id`'s.
+    pub(crate) fn merge_held(
+        &mut self,
+        id: NotificationId,
+        toast: ToastId,
+        at: SystemTime,
+    ) -> NotificationId {
+        let Some(held) = self.items.iter().position(|item| item.id == id) else {
+            return id;
+        };
+        let held = self.items.remove(held);
+        let existing = (self.items.iter())
+            .position(|item| item.toast == Some(toast) && item.state == State::Open);
+        match existing {
+            Some(at_index) => {
+                let mut item = self.items.remove(at_index);
+                item.count += held.count;
+                item.at = at;
+                let survivor = item.id;
+                self.items.push(item);
+                survivor
+            }
+            // Nothing of the queue's to count into: it stays as it was.
+            None => {
+                let mut held = held;
+                held.toast = Some(toast);
+                let survivor = held.id;
+                self.items.push(held);
+                survivor
+            }
+        }
+    }
+
+    /// Whether notification `id` is kept and still open.
+    pub(crate) fn is_open(&self, id: NotificationId) -> bool {
+        (self.items.iter()).any(|item| item.id == id && item.state == State::Open)
     }
 
     /// Every notification, oldest first.

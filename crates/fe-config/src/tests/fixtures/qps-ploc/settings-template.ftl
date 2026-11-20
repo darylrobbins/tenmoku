@@ -176,6 +176,8 @@ settings-template-workbench-color_blind_mode = ⟦settings-template-workbench-co
 
 settings-template-workbench-locale = ⟦settings-template-workbench-locale⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
 
+settings-template-workbench-notifications = ⟦settings-template-workbench-notifications⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
 settings-template-workbench-zen_mode-hide_tabs = ⟦settings-template-workbench-zen_mode-hide_tabs⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
 
 settings-template-workbench-zen_mode-hide_status_bar = ⟦settings-template-workbench-zen_mode-hide_status_bar⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.

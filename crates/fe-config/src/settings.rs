@@ -762,6 +762,25 @@ pub struct WorkbenchSettings {
     /// colour-blind colours, as Yohen and Hakuji do. Warnings, modified
     /// and every glyph stay as they are. It applies at once.
     pub color_blind_mode: bool,
+    /// Which notifications show as toasts: `all` shows every one; `needs_you`
+    /// only those that need you (they have an action or a question), the
+    /// rest going straight to the notifications inbox; `off` sends every
+    /// one to the inbox, though an error still shows once. A project file
+    /// can't set it.
+    pub notifications: NotificationLevel,
+}
+
+/// `workbench.notifications`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationLevel {
+    /// Every notification shows as a toast.
+    #[default]
+    All,
+    /// Only a notification that needs you shows as a toast.
+    NeedsYou,
+    /// None shows as a toast but an error, once.
+    Off,
 }
 
 /// `workbench.contrast`.
@@ -1002,6 +1021,7 @@ impl Default for WorkbenchSettings {
             reduce_motion: ReduceMotion::default(),
             contrast: ContrastSetting::default(),
             color_blind_mode: false,
+            notifications: NotificationLevel::default(),
             locale: LocaleSetting::default(),
         }
     }
@@ -2764,6 +2784,11 @@ fn drop_vim_user_only(layer: &mut Layer) {
 pub const PROJECT_ICON_THEME: &str =
     "workbench.icon_theme in project files is ignored: the icons are the same in every window";
 
+/// The warning for a `workbench.notifications` a project file sets.
+pub fn project_notifications_warning() -> String {
+    kiln_l10n::tr!("config-project-notifications-ignored").to_string()
+}
+
 /// The warning for a `workbench.locale` a project file sets.
 pub fn project_locale_warning() -> String {
     kiln_l10n::tr!("config-project-locale-ignored").to_string()
@@ -2776,7 +2801,7 @@ fn drop_workbench_user_only(layer: &mut Layer) {
     let Some(toml::Value::Table(workbench)) = layer.table.get_mut("workbench") else {
         return;
     };
-    let dropped: Vec<&str> = ["icon_theme", "locale"]
+    let dropped: Vec<&str> = ["icon_theme", "locale", "notifications"]
         .into_iter()
         .filter(|key| workbench.remove(*key).is_some())
         .collect();
@@ -2790,6 +2815,7 @@ fn drop_workbench_user_only(layer: &mut Layer) {
         });
         let message = match key {
             "icon_theme" => project_warning(PROJECT_ICON_THEME),
+            "notifications" => project_notifications_warning(),
             _ => project_locale_warning(),
         };
         let warning = layer.diagnostic_at(

@@ -62,7 +62,9 @@ use kiln_l10n::{Text, text, tr};
 pub(crate) mod notification_inbox;
 
 use crate::workbench::notification_inbox_view::source_icon;
-use notification_inbox::{NotificationId, NotificationInbox, NotificationSource, Resolution};
+use notification_inbox::{
+    Disposition, FOCUS_IDLE, NotificationId, NotificationInbox, NotificationSource, Resolution,
+};
 
 /// How many toasts show at once.
 pub(crate) const MAX_SHOWN: usize = 3;
@@ -260,6 +262,13 @@ impl Toast {
 /// A toast in a queue, for as long as it's there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ToastId(u64);
+
+impl ToastId {
+    /// The first id [`ToastLayer::push`] gives a toast that didn't show, so
+    /// has no place in the queue: held by Focus mode or sent to the inbox.
+    /// They count down from here, the queue's up from 0.
+    const UNQUEUED: u64 = u64::MAX;
+}
 
 /// When a shown toast goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -568,6 +577,23 @@ pub(crate) struct ToastLayer {
     queue: ToastQueue,
     /// Every toast pushed, kept after it goes.
     inbox: NotificationInbox,
+    /// `workbench.notifications`: which toasts show.
+    level: fe_config::NotificationLevel,
+    /// Focus mode: non-urgent toasts wait in `held` until the user has been
+    /// idle for [`FOCUS_IDLE`]. Not persisted.
+    focus: bool,
+    /// When a key or the mouse last had input in the window.
+    last_input: Instant,
+    /// Toasts Focus mode holds, oldest first, by their notification.
+    held: Vec<(NotificationId, Toast)>,
+    /// The ids [`ToastLayer::push`] gave toasts that didn't show, by their
+    /// notifications, so a dismiss of one reaches it; for as long as the
+    /// notification is open.
+    unqueued: Vec<(ToastId, Handle)>,
+    /// The questions of notifications that never had a toast, which the
+    /// inbox answers; dropped unanswered once their notification is gone.
+    kept_choices: Vec<(NotificationId, Choices)>,
+    next_unqueued: u64,
     /// Wakes the layer when the next toast's time is up.
     timer: Option<Task<()>>,
     /// The column's scroll, when the toasts are taller than the window.
@@ -602,6 +628,15 @@ pub(crate) struct ToastLayer {
     _focus_in: Subscription,
     _focus_out: Subscription,
     _focus_lost: Subscription,
+}
+
+/// What the id of a toast that didn't show stands for: its notification
+/// until Focus mode shows it, then the queue's toast, which the inbox may
+/// have let go of by then.
+#[derive(Clone, Copy)]
+enum Handle {
+    Notification(NotificationId),
+    Queued(ToastId),
 }
 
 /// The toast with keyboard focus, and where focus was before.
@@ -670,6 +705,17 @@ impl ToastLayer {
         Self {
             queue: ToastQueue::default(),
             inbox: NotificationInbox::default(),
+            level: cx
+                .try_global::<kiln::GlobalSettings<fe_config::Settings>>()
+                .map_or_else(Default::default, |global| {
+                    global.settings().workbench.notifications
+                }),
+            focus: false,
+            last_input: cx.background_executor().now(),
+            held: Vec::new(),
+            unqueued: Vec::new(),
+            kept_choices: Vec::new(),
+            next_unqueued: ToastId::UNQUEUED,
             timer: None,
             scroll: ScrollHandle::new(),
             room: Rc::default(),
@@ -929,7 +975,15 @@ impl ToastLayer {
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(toast) = self.inbox.toast_of(id) else {
-            return false;
+            // Never shown as a toast: the layer kept its question.
+            let Some(at) = self.kept_choices.iter().position(|(kept, _)| *kept == id) else {
+                return false;
+            };
+            let (_, choices) = self.kept_choices.remove(at);
+            choices.answer(Some(choice));
+            self.inbox.resolve(id, Resolution::Answered);
+            cx.notify();
+            return true;
         };
         let Some(choices) = (self.queue.entry(toast)).and_then(|entry| entry.toast.choices.clone())
         else {
@@ -943,6 +997,26 @@ impl ToastLayer {
     /// Shows `toast` in this layer's window, whichever is active: for
     /// [`ToastLayer::dismiss`] once it's out of date.
     pub(crate) fn push(&mut self, toast: Toast, cx: &mut Context<Self>) -> ToastId {
+        match notification_inbox::disposition(self.level, self.focus, &toast) {
+            Disposition::Show => self.show_now(toast, cx),
+            disposition => {
+                let notification = self.inbox.record_unqueued(&toast, SystemTime::now());
+                if let Some(choices) = toast.choices.clone() {
+                    self.kept_choices.push((notification, choices));
+                }
+                if disposition == Disposition::Hold {
+                    self.held.push((notification, toast));
+                }
+                let id = ToastId(self.next_unqueued);
+                self.next_unqueued -= 1;
+                self.unqueued.push((id, Handle::Notification(notification)));
+                self.changed(cx);
+                id
+            }
+        }
+    }
+
+    fn show_now(&mut self, toast: Toast, cx: &mut Context<Self>) -> ToastId {
         let now = cx.background_executor().now();
         let Pushed {
             id,
@@ -958,6 +1032,86 @@ impl ToastLayer {
         self.scroll.scroll_to_bottom();
         self.changed(cx);
         id
+    }
+
+    /// Sets `workbench.notifications`.
+    pub(crate) fn set_level(
+        &mut self,
+        level: fe_config::NotificationLevel,
+        cx: &mut Context<Self>,
+    ) {
+        if self.level != level {
+            self.level = level;
+            cx.notify();
+        }
+    }
+
+    /// Whether Focus mode is on.
+    pub(crate) fn focus_mode(&self) -> bool {
+        self.focus
+    }
+
+    /// Turns Focus mode on or off; off shows what it held at once.
+    pub(crate) fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+        self.focus = !self.focus;
+        self.last_input = cx.background_executor().now();
+        self.changed(cx);
+    }
+
+    /// Notes key or mouse input in the window, which holds Focus mode's
+    /// toasts back for [`FOCUS_IDLE`] more. The timer re-checks as it fires.
+    pub(crate) fn note_input(&mut self, cx: &mut Context<Self>) {
+        self.last_input = cx.background_executor().now();
+    }
+
+    /// When Focus mode next lets what it holds show: none while nothing is
+    /// held.
+    fn held_deadline(&self) -> Option<Instant> {
+        (!self.held.is_empty()).then(|| self.last_input + FOCUS_IDLE)
+    }
+
+    /// Shows what Focus mode held, if it's off or the user is idle now.
+    fn release_held(&mut self, now: Instant) {
+        // What the inbox lost, or `workbench.notifications` now keeps out
+        // of toasts, isn't shown; what's left is bounded by the inbox's.
+        let inbox = &self.inbox;
+        let queue = &self.queue;
+        self.unqueued.retain(|(_, handle)| match handle {
+            Handle::Notification(id) => inbox.is_open(*id),
+            Handle::Queued(toast) => queue.entry(*toast).is_some(),
+        });
+        self.kept_choices.retain(|(id, _)| inbox.is_open(*id));
+        let (level, inbox) = (self.level, &self.inbox);
+        self.held.retain(|(id, toast)| {
+            inbox.is_open(*id)
+                && notification_inbox::disposition(level, false, toast) != Disposition::Inbox
+        });
+        if self.held.is_empty() || (self.focus && now < self.last_input + FOCUS_IDLE) {
+            return;
+        }
+        for (id, toast) in std::mem::take(&mut self.held) {
+            let Pushed {
+                id: queued,
+                merged,
+                evicted,
+            } = self.queue.push_merging(toast, now);
+            match merged {
+                true => {
+                    self.inbox.merge_held(id, queued, SystemTime::now());
+                }
+                false => self.inbox.attach(id, queued),
+            }
+            // Its handles stand for the queue's toast now.
+            for (_, handle) in &mut self.unqueued {
+                if matches!(handle, Handle::Notification(n) if *n == id) {
+                    *handle = Handle::Queued(queued);
+                }
+            }
+            if let Some(evicted) = evicted {
+                self.inbox.resolve_toast(evicted, Resolution::Dismissed);
+            }
+            self.scroll.scroll_to_bottom();
+        }
     }
 
     /// Opens or closes `id`'s More menu, its choices past the buttons
@@ -1001,6 +1155,22 @@ impl ToastLayer {
     }
 
     pub(crate) fn dismiss(&mut self, id: ToastId, cx: &mut Context<Self>) {
+        // A toast that didn't show: its notification, or the toast Focus
+        // mode showed for it since.
+        if let Some(at) = self
+            .unqueued
+            .iter()
+            .position(|(unqueued, _)| *unqueued == id)
+        {
+            match self.unqueued.remove(at).1 {
+                Handle::Notification(notification) => {
+                    self.inbox.resolve(notification, Resolution::Dismissed);
+                    self.changed(cx);
+                }
+                Handle::Queued(toast) => self.resolve(toast, Resolution::Dismissed, cx),
+            }
+            return;
+        }
         self.resolve(id, Resolution::Dismissed, cx);
     }
 
@@ -1030,6 +1200,7 @@ impl ToastLayer {
     /// If the focused toast went, focus goes back where it was.
     fn changed(&mut self, cx: &mut Context<Self>) {
         let now = cx.background_executor().now();
+        self.release_held(now);
         self.queue.expire(now);
         self.announce_shown(cx);
         if let Some(focused) = &self.focused
@@ -1045,7 +1216,11 @@ impl ToastLayer {
                     .ok();
             });
         }
-        self.timer = self.queue.next_deadline().map(|due| {
+        let due = [self.queue.next_deadline(), self.held_deadline()]
+            .into_iter()
+            .flatten()
+            .min();
+        self.timer = due.map(|due| {
             let wait = due.saturating_duration_since(now);
             cx.spawn(async move |layer, cx| {
                 cx.background_executor().timer(wait).await;
@@ -1579,6 +1754,8 @@ impl Render for ToastLayer {
 mod tests {
     #[path = "../tests/notification_inbox.rs"]
     mod notification_inbox;
+    #[path = "../tests/notification_policy.rs"]
+    mod notification_policy;
 }
 
 #[cfg(test)]

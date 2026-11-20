@@ -1275,6 +1275,45 @@ impl Render for Workbench {
             .then(|| crate::debug_toolbar::floating(self, cx))
             .flatten();
         root.on_action(cx.listener(Self::on_run_command))
+            // Focus mode's clock: any key or mouse input is the user here.
+            // Not through the workbench's own listeners: a key can be
+            // dispatched from inside an update of it.
+            .capture_key_down({
+                let toasts = self.toasts.clone();
+                move |_, _, cx| toasts.update(cx, |toasts, cx| toasts.note_input(cx))
+            })
+            // Only a pointer that moved: gpui sends a synthetic move after a
+            // redraw, which isn't the user.
+            .on_mouse_move({
+                let toasts = self.toasts.clone();
+                let at = std::cell::Cell::new(None);
+                move |event: &gpui::MouseMoveEvent, _, cx| {
+                    if at.replace(Some(event.position)) != Some(event.position) {
+                        toasts.update(cx, |toasts, cx| toasts.note_input(cx));
+                    }
+                }
+            })
+            // Scrolling in the capture phase, which a child that consumes it
+            // can't hide: gpui's elements have no capture handler for it.
+            .child({
+                let toasts = self.toasts.clone();
+                gpui::canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        let toasts = toasts.clone();
+                        window.on_mouse_event(move |_: &gpui::ScrollWheelEvent, phase, _, cx| {
+                            if phase == gpui::DispatchPhase::Capture {
+                                toasts.update(cx, |toasts, cx| toasts.note_input(cx));
+                            }
+                        });
+                    },
+                )
+                .absolute()
+            })
+            .capture_any_mouse_down({
+                let toasts = self.toasts.clone();
+                move |_, _, cx| toasts.update(cx, |toasts, cx| toasts.note_input(cx))
+            })
             // So a modifier pressed while a panel has focus reaches the
             // editors, for their cmd-click hover.
             .on_modifiers_changed(EditorView::modifiers_changed)

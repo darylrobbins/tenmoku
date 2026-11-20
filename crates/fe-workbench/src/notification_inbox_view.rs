@@ -41,7 +41,7 @@ use std::{
 };
 
 use fe_command::{CommandId, Source};
-use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, radius};
+use fe_ui::{ActiveTheme as _, Button, Icon, IconButton, ToggleButton, radius};
 use gpui::{
     App, Context, Entity, FocusHandle, FontWeight, Hsla, InteractiveElement as _, IntoElement,
     KeyDownEvent, ParentElement as _, Render, ScrollHandle, SharedString,
@@ -273,7 +273,10 @@ impl NotificationInboxView {
 
     fn sync_bell(&self, cx: &mut App) {
         let count = self.layer.read(cx).inbox().needs_you_count();
-        self.bar.update(cx, |bar, cx| bar.set_bell(count, cx)).ok();
+        let focus = self.layer.read(cx).focus_mode();
+        (self.bar)
+            .update(cx, |bar, cx| bar.set_bell(count, focus, cx))
+            .ok();
     }
 
     /// While the popup is open, redraws it when the first of its ages
@@ -434,7 +437,10 @@ impl NotificationInboxView {
         cx: &mut Context<Self>,
     ) {
         self.close(true, window, cx);
-        toast::run_action(command, None, source, window, cx);
+        let args = (self.layer.read(cx).inbox().all().iter())
+            .find(|item| item.id == id)
+            .and_then(|item| item.action_args.clone());
+        toast::run_action(command, args, source, window, cx);
         (self.layer).update(cx, |layer, cx| {
             layer.resolve_notification(id, Resolution::Acted, cx)
         });
@@ -514,6 +520,40 @@ impl NotificationInboxView {
     ) {
         self.close(true, window, cx);
         window.dispatch_action(action.boxed_clone(), cx);
+    }
+
+    /// The footer: the Focus mode toggle, which holds non-urgent toasts in
+    /// the inbox until the user has been idle for a while.
+    fn footer(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let colors = cx.theme().colors;
+        let layer = self.layer.clone();
+        let on = layer.read(cx).focus_mode();
+        let name = tr!("workbench-inbox-focus");
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_end()
+            .h(px(32.))
+            .px_3()
+            .border_t_1()
+            .border_color(colors.border.default)
+            .child(
+                div()
+                    .debug_selector(|| verbatim!("inbox-focus").to_owned())
+                    .child(
+                        ToggleButton::new(
+                            verbatim!("inbox-focus"),
+                            name.clone(),
+                            name,
+                            &fe_ui::ui_theme(cx),
+                        )
+                        .on(on)
+                        .on_click(move |_, _, cx| {
+                            layer.update(cx, |layer, cx| layer.toggle_focus_mode(cx));
+                        }),
+                    ),
+            )
     }
 
     /// Group `group`'s header: its name, and for Earlier the Clear earlier
@@ -834,6 +874,7 @@ impl Render for NotificationInboxView {
                 .children(list)
                 .children(empty),
         )
+        .child(self.footer(cx))
         .into_any_element()
     }
 }

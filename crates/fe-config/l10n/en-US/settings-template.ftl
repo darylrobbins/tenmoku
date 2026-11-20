@@ -348,6 +348,12 @@ settings-template-workbench-locale =
     Tenmoku doesn't ship is skipped, with a warning naming the one used. A
     project file can't set it.
 
+settings-template-workbench-notifications =
+    Which notifications show as toasts: "all" shows every one; "needs_you" only
+    those that need you (an action or a question), the rest going straight to
+    the notifications inbox; "off" sends every one to the inbox, though an error
+    still shows once. A project file can't set it.
+
 settings-template-workbench-zen_mode-hide_tabs =
     What Zen Mode (cmd-k z, ctrl-k z off macOS, again to leave it) hides
     beyond the docks, the panels and the activity rail, which it always hides.

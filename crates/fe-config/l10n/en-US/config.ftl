@@ -7,6 +7,7 @@ config-locale-unshipped = No `{ $requested }` translation; using `{ $chosen }`
 
 # A project's settings file sets `workbench.locale`, which only the user's may.
 config-project-locale-ignored = workbench.locale in project files is ignored: the language is the same in every window
+config-project-notifications-ignored = workbench.notifications in project files is ignored: how loud notifications are is the user's choice
 
 # A string setting that is only blanks, as serde reports it.
 config-value-empty = can't be empty

@@ -9,6 +9,17 @@ workbench-inbox-bell =
         [one] Notifications, { $count } needs you
        *[other] Notifications, { $count } need you
     }
+# The bell's accessible name and tooltip while Focus mode is on: non-urgent
+# toasts are held. $count is how many notifications need the user.
+workbench-inbox-bell-focus =
+    { $count ->
+        [0] Notifications, Focus mode on
+        [one] Notifications, Focus mode on, { $count } needs you
+       *[other] Notifications, Focus mode on, { $count } need you
+    }
+# The popup footer's toggle for Focus mode, which holds non-urgent toasts in
+# the inbox until there has been no input for a while.
+workbench-inbox-focus = Focus mode
 # The inbox popup's accessible name.
 workbench-inbox-title = Notifications
 # The group of notifications waiting on the user, each with its action.
@@ -41,3 +52,4 @@ workbench-inbox-age-days =
     }
 
 command-notifications-show = Show Notifications
+command-notifications-toggle_focus = Toggle Notification Focus Mode

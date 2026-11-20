@@ -812,6 +812,16 @@ settings-workbench-locale =
     Applications). A language Tenmoku doesn't ship is skipped, with a
     warning naming the one used. A project file can't set it.
 
+settings-workbench-notifications =
+    Which notifications show as toasts: `all` shows every one; `needs_you`
+    only those that need you (they have an action or a question), the
+    rest going straight to the notifications inbox; `off` sends every
+    one to the inbox, though an error still shows once. A project file
+    can't set it.
+    .all = Every notification shows as a toast.
+    .needs_you = Only a notification that needs you shows as a toast.
+    .off = None shows as a toast but an error, once.
+
 settings-workbench-preview_tabs =
     Whether a file single-clicked in the project tree opens in a preview
     tab, in italics, that the next one replaces. Editing it,
