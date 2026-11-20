@@ -1060,6 +1060,14 @@ impl Resolver {
     /// it is outside, never read.
     fn canonical(&mut self, path: PathBuf) -> PathBuf {
         if !self.inside(&path) {
+            // Spelled through a symlinked ancestor of the root (`/var` on
+            // macOS): inside once resolved. Otherwise kept as spelled.
+            if path.is_absolute()
+                && let Ok(canonical) = dunce::canonicalize(&path)
+                && canonical.starts_with(&self.canonical_root)
+            {
+                return canonical;
+            }
             return path;
         }
         if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink())

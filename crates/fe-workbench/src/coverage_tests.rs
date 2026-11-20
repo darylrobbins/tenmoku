@@ -613,6 +613,46 @@ fn paths_resolve_under_symlinked_roots() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn a_report_through_a_symlinked_ancestor_of_the_root_resolves_inside() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().unwrap();
+    let t = dir.path();
+    write(&t.join("r/real/src/c.rs"), "");
+    write(&t.join("r/elsewhere.rs"), "");
+    symlink(t.join("r"), t.join("alias")).unwrap();
+    symlink(t.join("r/real"), t.join("r/link")).unwrap();
+    let root = t.join("r/link");
+    let canonical = dunce::canonicalize(t.join("r/real/src/c.rs")).unwrap();
+    let alias = t.join("alias");
+
+    let lcov = format!(
+        "SF:{a}/real/src/c.rs\nDA:3,1\nend_of_record\n\
+         SF:{a}/elsewhere.rs\nDA:1,1\nend_of_record\n",
+        a = alias.display()
+    );
+    write(&root.join("lcov.info"), &lcov);
+    let report = load_report(&root.join("lcov.info"), &root).unwrap();
+    assert_eq!(report.mark(&canonical, 3), Some(LineCover::Covered));
+    // Exists, resolves outside the root: kept as spelled, not canonical.
+    let outside = alias.join("elsewhere.rs");
+    assert_eq!(report.mark(&outside, 1), Some(LineCover::Covered));
+    assert_eq!(report.mark(&t.join("r/elsewhere.rs"), 1), None);
+
+    let xml = format!(
+        r#"<?xml version="1.0"?>
+<coverage line-rate="1"><packages><package name="p"><classes>
+<class filename="{a}/real/src/c.rs"><lines><line number="3" hits="1"/></lines></class>
+</classes></package></packages></coverage>"#,
+        a = alias.display()
+    );
+    write(&root.join("coverage.xml"), &xml);
+    let report = load_report(&root.join("coverage.xml"), &root).unwrap();
+    assert_eq!(report.mark(&canonical, 3), Some(LineCover::Covered));
+}
+
 #[test]
 fn discovery_order_and_setting() {
     let project = project();
