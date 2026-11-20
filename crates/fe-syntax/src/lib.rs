@@ -46,6 +46,7 @@ mod language;
 mod modeline;
 mod outline;
 mod parse_limit;
+mod parse_str;
 mod runtime;
 mod select;
 mod sniff;
@@ -79,6 +80,7 @@ pub use outline::{
     symbols_supported,
 };
 pub use parse_limit::TREE_BUDGET_BYTES;
+pub use parse_str::parse_str;
 pub use runtime::{
     Clash, GrammarDeadlines, GrammarError, GrammarSpec, MAX_GRAMMAR_BYTES, WasmStats,
     register_language, set_grammar_deadlines, unregister_language, wasm_stats,
