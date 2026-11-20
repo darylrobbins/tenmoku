@@ -107,7 +107,7 @@ fn one_grant_relaunches_the_server_exactly_once(cx: &mut gpui::TestAppContext) {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert_eq!(s.fake.launches(), 2);
-    assert_eq!(s.fake.launched()[1].0.args, ["server.js", "--verbose"]);
+    crate::lsp_consent_tests::assert_from_snapshot(&s.fake.launched()[1].0.args, &["--verbose"]);
     assert_eq!(s.fake.kills(), 1, "only the old server is killed");
 }
 
@@ -163,5 +163,5 @@ fn a_late_record_of_the_replaced_launch_does_not_relaunch_its_replacement(
     s.until("the replacement to run", |s| s.fake.launches() >= 2);
     s.cx.run_until_parked();
     assert_eq!(s.fake.launches(), 2);
-    assert_eq!(s.fake.launched()[1].0.args, ["server.js", "--verbose"]);
+    crate::lsp_consent_tests::assert_from_snapshot(&s.fake.launched()[1].0.args, &["--verbose"]);
 }

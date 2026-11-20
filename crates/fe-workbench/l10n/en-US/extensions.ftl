@@ -280,6 +280,7 @@ workbench-extensions-grammar-failed-offline = Couldn't install { $name } syntax:
 
 workbench-extensions-lsp-consent-unreadable = can't read { $path }: { $error }
 workbench-extensions-lsp-consent-changed-since = { $server } isn't started: what it runs changed since you allowed it
+workbench-extensions-lsp-consent-snapshot-missing = { $server } isn't started: the copy of the package you allowed is missing or changed
 workbench-extensions-lsp-consent-not-found = { $command } not found
 
 ## Snippets: extensions' and the user's (extension_snippets.rs,

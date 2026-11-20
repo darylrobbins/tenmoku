@@ -392,12 +392,22 @@ fn a_later_session_runs_the_granted_only_while_its_script_is_as_granted(
     );
     assert_eq!(pending(later)[0].previous.as_ref(), Some(&asked.invocation));
 
-    // Its script changed: what was granted can't run as it was, so nothing does.
+    // Its script changed: what was granted still runs, from its retained
+    // snapshot, and the change is asked about.
     fs::write(extension.join("server.js"), "require('child_process')\n").unwrap();
     consenting(last, dir.path());
-    set(last, vec![granted]);
-    assert_eq!(self::handed(last), []);
+    set(last, vec![granted.clone()]);
+    assert_eq!(self::handed(last), std::slice::from_ref(&granted.spec));
     assert_eq!(pending(last)[0].previous.as_ref(), Some(&asked.invocation));
+}
+
+/// `args` with the in-package `server.js` run from a snapshot: its
+/// absolute path under the snapshot store, then `rest`.
+pub(crate) fn assert_from_snapshot(args: &[String], rest: &[&str]) {
+    assert_eq!(args.len(), rest.len() + 1, "{args:?}");
+    assert!(Path::new(&args[0]).is_absolute(), "{args:?}");
+    assert!(Path::new(&args[0]).ends_with("server.js"), "{args:?}");
+    assert_eq!(&args[1..], rest);
 }
 
 /// A launcher recording what it's asked to launch, and launching nothing.
@@ -490,11 +500,16 @@ fn every_launch_is_checked_against_the_grant(cx: &mut TestAppContext) {
     );
 
     // Its script changes: a launch from now on, such as a crash's restart
-    // or a new window's, is refused, though the spec is still handed.
+    // or a new window's, still runs what was granted (its snapshot) until
+    // the change is accepted.
     fs::write(extension.join("server.js"), "require('child_process')\n").unwrap();
     set(cx, vec![node.clone()]);
     assert_eq!(handed(cx).len(), 1);
-    assert_eq!(launch(&gate, &recorder, &node.spec), None);
+    assert_eq!(pending(cx).len(), 1);
+    assert_eq!(
+        launch(&gate, &recorder, &node.spec),
+        Some(first.join("node"))
+    );
     fs::write(extension.join("server.js"), "console.log(1)\n").unwrap();
     assert_eq!(
         launch(&gate, &recorder, &node.spec),
@@ -548,14 +563,14 @@ fn a_retargeted_or_new_script_is_a_change(cx: &mut TestAppContext, later: &mut T
     let changes: [&dyn Fn(&Path); 2] = [&retarget, &create];
     for change in changes {
         change(&extension);
-        // Asked about, and refused at launch.
+        // Asked about, and launched from the snapshot of what was granted.
         set(cx, vec![node.clone()]);
         assert_eq!(pending(cx).len(), 1);
-        assert_eq!(launch(&gate, &recorder, &node.spec), None);
-        // A later session runs nothing of it.
+        assert!(launch(&gate, &recorder, &node.spec).is_some());
+        // A later session runs the granted snapshot, not the change.
         consenting(later, dir.path());
         set(later, vec![node.clone()]);
-        assert_eq!(handed(later), []);
+        assert_eq!(handed(later).len(), 1);
         assert_eq!(pending(later).len(), 1);
         // Put back, it runs again.
         fs::remove_file(extension.join("main.js")).unwrap();
@@ -620,7 +635,7 @@ fn a_running_server_restarts_only_once_its_change_is_granted(cx: &mut TestAppCon
     grant_in(&mut s, "taplo");
     s.open("a.toml");
     s.until("taplo to launch", |s| s.fake.launches() == 1);
-    assert_eq!(s.fake.launched()[0].0.args, ["server.js"]);
+    assert_from_snapshot(&s.fake.launched()[0].0.args[..], &[]);
 
     // Its arguments, languages and root markers change together: it's
     // asked about, and keeps running as it was, not restarted.
@@ -638,7 +653,7 @@ fn a_running_server_restarts_only_once_its_change_is_granted(cx: &mut TestAppCon
     // Granted, it restarts as it now is.
     grant_in(&mut s, "taplo");
     s.until("taplo to restart", |s| s.fake.launches() == 2);
-    assert_eq!(s.fake.launched()[1].0.args, ["server.js", "--verbose"]);
+    assert_from_snapshot(&s.fake.launched()[1].0.args[..], &["--verbose"]);
 
     // Its script changes, with nothing else: still running, asked about.
     fs::write(extension.join("server.js"), "changed\n").unwrap();
@@ -659,17 +674,16 @@ fn a_launch_refused_for_a_change_starts_once_it_is_granted(cx: &mut TestAppConte
     give(&mut s, vec![granted.clone()]);
     grant_in(&mut s, "taplo");
 
-    // Its script changes before anything opened it: the spec is still
-    // handed, but the server it would start is refused.
+    // Its script changes before anything opened it: the server it starts
+    // runs what was granted (its snapshot).
     fs::write(extension.join("server.js"), "changed\n").unwrap();
     give(&mut s, vec![granted.clone()]);
     s.open("a.toml");
-    s.draw();
-    assert_eq!(s.fake.launches(), 0);
-
-    // Granted, it starts.
-    grant_in(&mut s, "taplo");
     s.until("taplo to launch", |s| s.fake.launches() == 1);
+
+    // Granted, it restarts as it now is.
+    grant_in(&mut s, "taplo");
+    s.until("taplo to restart", |s| s.fake.launches() == 2);
 }
 
 #[gpui::test]
@@ -700,7 +714,8 @@ fn a_decision_is_on_disk_when_it_returns(cx: &mut TestAppContext) {
 
     // A write that fails is returned, and the decision holds for the session.
     let blocked = dir.path().join("blocked");
-    fs::write(&blocked, "").unwrap();
+    // The consent file's path is a directory: it can't be written.
+    fs::create_dir_all(blocked.join(CONSENT_FILE)).unwrap();
     cx.update(|cx| set_extension_consent_file(cx, blocked.join(CONSENT_FILE)));
     set(cx, vec![granted.clone()]);
     let asked = pending(cx).remove(0);
@@ -736,11 +751,11 @@ fn only_the_first_server_of_a_name_is_handed_and_checked(cx: &mut TestAppContext
     let gate = cx.update(|cx| ConsentGate::new(cx, recorder.clone()));
     assert!(launch(&gate, &recorder, &first.spec).is_some());
 
-    // The script changes: the first's grant refuses it, and the second's,
-    // which would pass, isn't consulted.
+    // The script changes: the first's grant still runs its snapshot, and
+    // the second's isn't consulted; the change is asked about.
     fs::write(extension.join("server.js"), "changed\n").unwrap();
-    assert_eq!(launch(&gate, &recorder, &first.spec), None);
-    cx.run_until_parked();
+    assert!(launch(&gate, &recorder, &first.spec).is_some());
+    set(cx, vec![first.clone(), second.clone()]);
     let asked = pending(cx);
     assert_eq!(asked.len(), 1, "{asked:#?}");
     assert_eq!(asked[0].extension_dir, extension);

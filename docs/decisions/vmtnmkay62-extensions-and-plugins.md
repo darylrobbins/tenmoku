@@ -1,7 +1,8 @@
 # Extensions and plugins for kiln apps
 
 **Status: accepted** (user, 2026-10-21; §12). Task T839.
-**Revision 2026-11-19 (T1978):** LSP launch consent now binds the whole installed extension package (a SHA-256 over every file under its directory, `node_modules` included, symlinks not followed, whole content always hashed, an unreadable or over 200,000-entry / 2 GiB / 256 MiB-a-file package is "incomplete" and never granted), not only the script files the arguments name; this closes review finding T839 F5, which approval had overridden. Known limit: kiln may read an oversized file (over 256 MiB, which consent refuses) whole while hashing it before that refusal; bounding that is follow-up T2026, and running granted servers from package snapshots is T2024.
+**Revision 2026-11-19 (T1978):** LSP launch consent now binds the whole installed extension package (a SHA-256 over every file under its directory, `node_modules` included, symlinks not followed, whole content always hashed, an unreadable or over 200,000-entry / 2 GiB / 256 MiB-a-file package is "incomplete" and never granted), not only the script files the arguments name; this closes review finding T839 F5, which approval had overridden. Known limit: kiln may read an oversized file (over 256 MiB, which consent refuses) whole while hashing it before that refusal; bounding that is follow-up T2026, and running granted servers from package snapshots is T2024 (below).
+**Revision 2026-11-19 (T2024):** granted LSP servers now run from a read-only, content-addressed snapshot of their package in `extensions-lsp-packages/` beside the consent file, not the live extension directory; symlinks reaching back into the live directory make a package ungrantable; snapshots are kept while granted, pending or running and collected otherwise (§1); closes review finding T1978 F3.
 Amends `app-framework.md` §8 ("There's no themes directory or picker by name")
 by reference; that file isn't edited here (T401 holds it).
 
@@ -98,7 +99,84 @@ Two stages.
    before consent refuses the package, a known limit that follow-up T2026
    fixes (bounded hash reads, size and mtime fingerprints for oversized
    files). A grant stored without it fails closed and asks again.
-   Hashing runs off the main thread. Workspace extensions get this only after folder
+   The hash covers each file's execute bits (user, group, other) too, as they
+   decide whether a helper can be run, and never its write bits, which a
+   snapshot removes; so a permission-only update is a change, a snapshot is
+   never reused for a package of other modes, and identical bytes with
+   different modes are different packages. Adding the bits changed every
+   package hash, so a grant stored by T1978 matches nothing and asks again: no
+   release holds such a grant (T1978 landed after v0.2.5), so the re-ask costs
+   users nothing.
+   Hashing runs off the main thread.
+   **A granted server runs from an immutable snapshot of that package, never
+   the live directory** (T2024; the hash alone left a running server's late
+   `require` or child process, and a restart before the user accepted a
+   change, loading files an update had already changed). The snapshot lives in
+   `<dir of the consent file>/extensions-lsp-packages/<package hash>/` (a
+   private per-session temporary directory without a consent file). It is
+   made off the main thread during evaluation: the canonical directory is
+   copied into a `.staging-*` directory (`fs::copy`, which clones on APFS; never
+   a hard link, as rewriting an installed file in place would change a linked
+   snapshot), hashed from the copy, made read-only (execute bits kept; an error
+   here fails the snapshot) and only then renamed to its hash, so a directory
+   with a hash's name is always finished; the invocation's package hash is that
+   snapshot's, so the prompt shows exactly what it holds, and the files its
+   arguments name are resolved and hashed in the snapshot, not the live
+   directory, with `..` resolved by spelling; a launch binds what evaluation
+   recorded and refuses an argument naming the live package it can't bind. A snapshot already there is hashed again and checked read-only
+   before it is reused, and a damaged one is replaced if nothing holds it
+   (refused otherwise). Symlinks are copied as symlinks,
+   unfollowed; one whose target is absolute into the live extension
+   directory, or relative and leaving the package root, would reach back into
+   mutable files, so the package isn't snapshottable and fails closed (pending,
+   not grantable, logged), checked against the live root on every evaluation,
+   reuse included. Relative chains of links are followed, bounded, inside the copy, so one that climbs out through a destination that doesn't exist yet is refused too. Every link's chain is resolved hop by hop as the filesystem would (a `..` after a link applies to where it leads, a missing end is appended), at evaluation and on the copy: an absolute target that ends in the live directory or one holding it is refused, as is a relative target that leaves the package or gets out through an absolute link, whether or not the destination exists; a standalone absolute link elsewhere is allowed. The walk keeps a Windows drive or UNC prefix through every absolute hop. If the store can't be made beside the consent file, snapshots
+   fail closed too: the private temporary store (a fresh `0700` directory,
+   never a preexisting one; an allocation failure fails the evaluation closed) is
+   for sessions without a consent file only. Each
+   launch re-hashes the snapshot of the grant's
+   hash and requires it finished and read-only, as a stored older grant's
+   snapshot is checked too (a missing or changed one refuses the launch and re-asks) and rewrites
+   the command and each argument or `--flag=value` naming a file in the
+   package to the same relative path under it, in the gate's bound spec only; a
+   granted executable inside the package runs from its snapshot even if an
+   update removed the live one.
+   A launch while a changed package is pending, a crash's restart or a later
+   session's, therefore runs the granted snapshot's old bytes and never the
+   new package until it is granted. A snapshot is kept while a granted entry
+   in the consent file names it (any process's), or a lock is held on its
+   `<hash>.lock`: each app instance holds a shared one for every hash its
+   servers currently have or have pending or run from a stored older grant, and a launched process one until
+   its process is torn down and reaped; a lock file is never removed (staging locks are reused by slot), so its
+   identity is stable for whoever waits on it: a collection that runs between a
+   creator opening a staging lock and locking it finds nothing to unlink, and
+   a second creator then takes the lock first and the first the next slot
+   (tested with a pause between the open and the lock). Garbage collection runs off the
+   main thread after each evaluation and each process end, removes one only
+   after taking its lock exclusively without blocking and finding no grant
+   naming it, and also removes abandoned `.staging-*` directories it can lock,
+   so two instances sharing the state directory never delete each other's
+   running, current or pending snapshot (a removal that fails, such as an open
+   file on Windows, is left for the next pass). Disk is bounded by the granted,
+   pending and still-running versions of each server, each within the package
+   caps above, plus one empty lock file per hash ever made.
+   **Known limit (T2032, review F7 of T2024):** a launch binds each in-package
+   name to the path evaluation recorded, the file's canonical path inside the
+   snapshot, so an entrypoint, argument or flag value that is an internal
+   symlink (`server.sh -> scripts/main.sh`) runs as its canonical target
+   (`<snapshot>/scripts/main.sh`), and a script finding its resources by
+   `$(dirname "$0")` looks beside the target, not beside the link. Bytes are
+   never read from the live directory; only the spelling differs. Binding the
+   snapshot-relative entrypoint spelling separately from the hashed canonical
+   path is follow-up T2032.
+   **Known limit (T2033, review F10 of T2024):** the extension reload watcher
+   fingerprints each file by size, mtime and content but not its execute bits,
+   so a chmod-only update to a package (which the package hash now sees) fires
+   no reload and no new consent prompt until another change or a restart; the
+   server keeps running the granted snapshot meanwhile, never the new mode.
+   Adding the permission bits to the watcher's change detection is follow-up
+   T2033.
+   Workspace extensions get this only after folder
    trust (§3). kiln owns the package format, discovery,
    validation, hot reload and the contributions kiln understands (themes,
    keymaps, menus); each app owns the kinds that are its own (fastedit: `lsp`,
@@ -454,7 +532,7 @@ Author guide: `docs/plugins/authoring.md`.
 | VS Code risk | This design |
 |---|---|
 | Extensions run in a Node host with full Node access: files, network, child processes, as the user | No ambient authority. WASM instance with preopened dirs only, host-checked `net:<host>` and `process.spawn:<program>`, CPU and memory limits. |
-| Malicious or hijacked marketplace extensions, and auto-update shipping a bad version | Stage 1 has no plugin API or native code; its execution is sandboxed grammar WASM and host-spawned LSP servers whose effective invocation (executable, arguments, environment, named-script hashes, and a hash of the whole installed package) the user is shown and re-asked about on any change (§1). Stage 2 has no auto-update that widens rights: an update asking for new or wider capabilities stops and asks (decision 3); signing and registry review are decided with the registry (§8). |
+| Malicious or hijacked marketplace extensions, and auto-update shipping a bad version | Stage 1 has no plugin API or native code; its execution is sandboxed grammar WASM and host-spawned LSP servers whose effective invocation (executable, arguments, environment, named-script hashes, and a hash of the whole installed package) the user is shown and re-asked about on any change (§1). Granted servers run from retained immutable snapshots of the package under the state directory, so an update can't change what a running or restarted server loads before it is accepted (§1). Stage 2 has no auto-update that widens rights: an update asking for new or wider capabilities stops and asks (decision 3); signing and registry review are decided with the registry (§8). |
 | Data exfiltration: read workspace, then send it anywhere | Network is per host and enforced by the host; `buffer.read` plus `net` shows the combination warning (decision 4); `net:*` needs the extreme warning and shows as full access (decision 2). |
 | Webviews: arbitrary HTML and script in the editor | No webviews. Panels are a declarative view tree rendered by the host (§7). |
 | Workspace config that runs code (tasks, debug launch, workspace-recommended extensions) | Workspace extensions only after folder trust and only for grammars, LSP and snippets (§3); a workspace can't install or grant a code plugin; stage-2 plugins install in the user dir only. |

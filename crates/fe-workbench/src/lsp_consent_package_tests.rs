@@ -344,3 +344,27 @@ fn directories_and_links_count_toward_the_entry_limit() {
     assert_ne!(limit(7), PACKAGE_INCOMPLETE);
     assert_eq!(limit(6), PACKAGE_INCOMPLETE);
 }
+
+#[cfg(unix)]
+#[test]
+fn the_execute_bits_are_part_of_the_hash_and_the_write_bits_are_not() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let extension = extension(dir.path());
+    let file = extension.join("lib/util.js");
+    let base = of(&extension).package_hash;
+    let mode = |mode| fs::set_permissions(&file, fs::Permissions::from_mode(mode)).unwrap();
+    // Only the mode changes, the bytes not: runnable or not is a change.
+    mode(0o755);
+    let executable = of(&extension).package_hash;
+    assert_ne!(executable, base);
+    mode(0o744);
+    assert_ne!(of(&extension).package_hash, executable);
+    // Write bits aren't: a snapshot has none.
+    mode(0o555);
+    assert_eq!(of(&extension).package_hash, executable);
+    mode(0o644);
+    assert_eq!(of(&extension).package_hash, base);
+    mode(0o444);
+    assert_eq!(of(&extension).package_hash, base);
+}

@@ -46,11 +46,11 @@
 //! a view can follow it with `cx.observe_global::<ExtensionConsent>`.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     fs, io,
     io::Write as _,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     pin::Pin,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
@@ -62,11 +62,18 @@ use fe_lsp::{
     ExitInfo, LaunchCancel, LoginPath, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
 };
 use gpui::{App, AppContext as _, Global, Task};
-use kiln_l10n::tr;
+use kiln_l10n::{tr, verbatim};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use self::lsp_consent_snapshot::{Hold, Snapshots};
 use crate::lsp::hand_extension_servers;
+
+#[path = "lsp_consent_snapshot.rs"]
+mod lsp_consent_snapshot;
+#[cfg(test)]
+#[path = "lsp_consent_snapshot_tests.rs"]
+mod lsp_consent_snapshot_tests;
 
 /// The consent file's name in the state directory.
 pub const CONSENT_FILE: &str = "extensions-lsp-consent.toml";
@@ -139,26 +146,58 @@ impl Invocation {
     /// main thread.
     pub fn of(spec: &ServerSpec, extension_dir: &Path, resolved_command: Option<&Path>) -> Self {
         let command = resolved_command.unwrap_or(&spec.command).to_owned();
+        match dunce::canonicalize(extension_dir) {
+            Ok(dir) => Self::read_from(spec, command, &dir, &dir, package_hash(&dir)),
+            Err(_) => Self::read_from(
+                spec,
+                command,
+                extension_dir,
+                extension_dir,
+                PACKAGE_INCOMPLETE.to_owned(),
+            ),
+        }
+    }
+
+    /// What `spec` runs, as [`Invocation::of`] works it out, but reading the
+    /// files its arguments name, and the package's hash `package`, from
+    /// `read`, a copy of the canonical `live` directory (a snapshot).
+    fn read_from(
+        spec: &ServerSpec,
+        command: PathBuf,
+        live: &Path,
+        read: &Path,
+        package: String,
+    ) -> Self {
         let mut script_hashes = BTreeMap::new();
-        let mut package = PACKAGE_INCOMPLETE.to_owned();
-        if let Ok(dir) = dunce::canonicalize(extension_dir) {
-            package = package_hash(&dir);
-            let named = spec.args.iter().flat_map(|arg| {
-                let value = arg
-                    .strip_prefix('-')
-                    .and_then(|flag| flag.split_once('='))
-                    .map(|(_, value)| value);
-                std::iter::once(arg.as_str()).chain(value)
-            });
-            let command_name = command.to_string_lossy();
-            let names = named
-                .filter(|name| !name.is_empty())
-                .chain(command.is_absolute().then_some(command_name.as_ref()));
-            for name in names {
-                if let Some((path, hash)) = hash_inside(&dir.join(name), &dir) {
-                    script_hashes.insert(name.to_owned(), format!("{hash} {path}"));
-                }
+        let named = spec.args.iter().flat_map(|arg| {
+            let value = arg
+                .strip_prefix('-')
+                .and_then(|flag| flag.split_once('='))
+                .map(|(_, value)| value);
+            std::iter::once(arg.as_str()).chain(value)
+        });
+        let command_name = command.to_string_lossy();
+        let names = named
+            .filter(|name| !name.is_empty())
+            .chain(command.is_absolute().then_some(command_name.as_ref()));
+        for name in names {
+            // Resolved in the copy read from, never the live directory, so
+            // what's recorded is what that copy holds.
+            let Some(rel) = name_in_package(live, name, true) else {
+                continue;
+            };
+            let Ok(file) = dunce::canonicalize(read.join(rel)) else {
+                continue;
+            };
+            let Ok(inner) = file.strip_prefix(read) else {
+                continue;
+            };
+            if !file.is_file() {
+                continue;
             }
+            let hash = hash_file(&file).unwrap_or_else(|| "unreadable".to_owned());
+            let path = live.join(inner).to_string_lossy().into_owned();
+            script_hashes.insert(name.to_owned(), format!("{hash} {path}"));
         }
         Self {
             command,
@@ -220,14 +259,14 @@ fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
 
 /// A SHA-256 in hex over everything under the canonical directory `dir`:
 /// each entry's relative path (sorted, by its native bytes) and, for a
-/// file, its whole content, so an added, removed, renamed or changed file
+/// file, its whole content and execute bits, so an added, removed, renamed or changed file
 /// changes it. `node_modules` and the like are included, as they run too.
 /// A symlink is never followed: its target's bytes are hashed, so one
 /// pointing out of `dir` can't pull in anything outside, and a loop can't
 /// hang the walk. [`PACKAGE_INCOMPLETE`] if anything can't be read, or the
 /// package is past [`PACKAGE_MAX_FILES`] or [`PACKAGE_MAX_BYTES`]. Reads the
 /// whole package: call it off the main thread.
-fn package_hash(dir: &Path) -> String {
+pub(crate) fn package_hash(dir: &Path) -> String {
     package_hash_limited(
         dir,
         PACKAGE_MAX_FILES,
@@ -291,7 +330,11 @@ fn package_hash_of(
                     return None;
                 }
                 let hash = hash_file(&entry.path())?;
-                feed(&mut hasher, b'f', &[&rel_bytes, hash.as_bytes()]);
+                feed(
+                    &mut hasher,
+                    b'f',
+                    &[&rel_bytes, hash.as_bytes(), &[execute_bits(&meta)]],
+                );
             } else {
                 // A socket, device or the like: not something to grant.
                 return None;
@@ -300,6 +343,22 @@ fn package_hash_of(
         stack.extend(subdirs.into_iter().rev());
     }
     Some(format!("{:x}", hasher.finalize()))
+}
+
+/// The execute bits of a file (user, group, other), which decide whether it
+/// can be run; the write bits aren't part of what's hashed, as a snapshot's
+/// are removed. None off Unix.
+fn execute_bits(meta: &fs::Metadata) -> u8 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        (meta.permissions().mode() & 0o111) as u8
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        0
+    }
 }
 
 /// Feeds `hasher` one entry: a tag byte, then each part length-prefixed, so
@@ -312,15 +371,40 @@ fn feed(hasher: &mut Sha256, tag: u8, parts: &[&[u8]]) {
     }
 }
 
-/// The canonical path of `candidate` and its content's hash, if it is a
-/// file inside the canonical directory `dir`, with symlinks followed.
-fn hash_inside(candidate: &Path, dir: &Path) -> Option<(String, String)> {
-    let path = dunce::canonicalize(candidate).ok()?;
-    if !path.starts_with(dir) || !path.is_file() {
+/// Where the file `name` (an argument, a flag's value or the executable)
+/// names in the package in the canonical directory `live`, relative to it:
+/// `None` if it doesn't name a path inside. `..` and `.` are resolved by
+/// spelling alone; with `alias`, an absolute path in another spelling of
+/// `live` is resolved through the live directory, which only evaluation
+/// does (a launch binds what evaluation recorded).
+fn name_in_package(live: &Path, name: &str, alias: bool) -> Option<PathBuf> {
+    if name.is_empty() {
         return None;
     }
-    let hash = hash_file(&path).unwrap_or_else(|| "unreadable".to_owned());
-    Some((path.to_string_lossy().into_owned(), hash))
+    let joined = live.join(name);
+    let rel = match joined.strip_prefix(live) {
+        Ok(rel) => rel.to_owned(),
+        Err(_) if alias => dunce::canonicalize(&joined)
+            .ok()?
+            .strip_prefix(live)
+            .ok()?
+            .to_owned(),
+        Err(_) => return None,
+    };
+    let mut normal = PathBuf::new();
+    for part in rel.components() {
+        match part {
+            Component::Normal(part) => normal.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normal.pop() {
+                    return None;
+                }
+            }
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    (!normal.as_os_str().is_empty()).then_some(normal)
 }
 
 /// The SHA-256 of the file at `path`, in hex.
@@ -576,6 +660,7 @@ pub struct ExtensionConsent {
     /// invocation granted for it.
     handed: HashMap<Key, (Invocation, ServerSpec)>,
     grants: Grants,
+    snapshots: Snapshots,
     pending: Vec<PendingConsent>,
     evaluating: Option<Task<()>>,
     /// What a [`ConsentGate`] tells when a launch finds what it would run
@@ -711,9 +796,10 @@ fn evaluate(cx: &mut App) {
     let servers = state.servers.clone();
     let file = state.file.clone();
     let decided = state.decided.clone();
+    let snapshots = state.snapshots.clone();
     let task = cx.spawn(async move |cx| {
         let evaluation = cx
-            .background_spawn(async move { evaluation(servers, file, decided) })
+            .background_spawn(async move { evaluation(servers, file, decided, snapshots) })
             .await;
         cx.update(|cx| {
             let state = cx.global_mut::<ExtensionConsent>();
@@ -726,12 +812,19 @@ fn evaluate(cx: &mut App) {
     cx.global_mut::<ExtensionConsent>().evaluating = Some(task);
 }
 
-/// What [`evaluate`] works out: blocking.
+/// What [`evaluate`] works out: blocking. Snapshots each server's package
+/// (its invocation's package hash is the snapshot's), then collects the
+/// snapshots nothing keeps.
 fn evaluation(
     servers: Vec<ExtensionServer>,
     file: Option<PathBuf>,
     decided: BTreeMap<Key, Entry>,
+    snapshots: Snapshots,
 ) -> Evaluation {
+    let mut store = snapshots
+        .begin(file.as_deref())
+        .inspect_err(|error| log::warn!("no store for extension package snapshots: {error}"))
+        .ok();
     let entries = file
         .map(|file| ConsentStore::new(file).load())
         .unwrap_or_default();
@@ -741,7 +834,32 @@ fn evaluation(
             if let Ok(dir) = dunce::canonicalize(&server.extension_dir) {
                 server.extension_dir = dir;
             }
-            let invocation = invocation_now(&server.spec, &server.extension_dir);
+            let command = resolve_command(&server.spec);
+            let snapshot = match store.as_mut() {
+                Some(store) => store.snapshot(&server.extension_dir),
+                None => Err(io::Error::other(verbatim!("no snapshot store"))),
+            };
+            let invocation = match snapshot {
+                Ok((hash, snapshot)) => Invocation::read_from(
+                    &server.spec,
+                    command.unwrap_or_else(|| server.spec.command.clone()),
+                    &server.extension_dir,
+                    &snapshot,
+                    hash,
+                ),
+                Err(error) => {
+                    log::warn!(
+                        "can't snapshot extension {}'s package for its language server {}: {error}",
+                        server.extension_id,
+                        server.spec.name
+                    );
+                    // Never granted, so it never runs.
+                    Invocation {
+                        package_hash: PACKAGE_INCOMPLETE.to_owned(),
+                        ..Invocation::of(&server.spec, &server.extension_dir, command.as_deref())
+                    }
+                }
+            };
             Evaluated { server, invocation }
         })
         .collect();
@@ -755,20 +873,36 @@ fn evaluation(
         {
             let granted = entry.invocation.clone();
             let kept = granted_spec(&granted, &server.server.spec);
-            let same = invocation_now(&kept, &server.server.extension_dir) == granted;
+            // Still runs as granted: its snapshot is whole and its
+            // executable resolves as it did.
+            let same = store
+                .as_mut()
+                .is_some_and(|store| store.verified(&granted.package_hash).is_some())
+                && resolve_command(&kept).unwrap_or_else(|| kept.command.clone())
+                    == granted.command;
             intact.insert(key, (granted, same));
         }
+    }
+    let mut keep: HashSet<String> = servers
+        .iter()
+        .map(|server| server.invocation.package_hash.clone())
+        .collect();
+    keep.extend(
+        decided
+            .values()
+            .chain(entries.values())
+            .filter(|entry| entry.decision == Decision::Granted)
+            .map(|entry| entry.invocation.package_hash.clone()),
+    );
+    if let Some(mut store) = store {
+        store.keep(keep);
+        store.collect();
     }
     Evaluation {
         servers,
         entries,
         intact,
     }
-}
-
-/// What `spec`, of the extension in `dir`, runs now. Blocking.
-fn invocation_now(spec: &ServerSpec, dir: &Path) -> Invocation {
-    Invocation::of(spec, dir, resolve_command(spec).as_deref())
 }
 
 /// `spec` running `granted`'s command, arguments and environment.
@@ -915,6 +1049,7 @@ pub(crate) struct ConsentGate {
     grants: Grants,
     attempts: Arc<Mutex<Attempts>>,
     wake: async_channel::Sender<()>,
+    snapshots: Snapshots,
 }
 
 /// The last launch checked of each server at each root.
@@ -953,6 +1088,7 @@ impl ConsentGate {
             grants: cx.default_global::<ExtensionConsent>().grants.clone(),
             attempts: Arc::default(),
             wake: wake(cx),
+            snapshots: cx.default_global::<ExtensionConsent>().snapshots.clone(),
         }
     }
 
@@ -1052,21 +1188,56 @@ impl ServerLauncher for ConsentGate {
         let Some(grant) = grant else {
             return self.inner.launch(spec, root, cancel);
         };
-        let resolved = resolve_command(spec);
-        if Invocation::of(&grant.spec, &grant.dir, resolved.as_deref()) != grant.invocation {
-            self.record(&spec.name, root, grant.invocation, None, cancel);
+        let granted_command = &grant.invocation.command;
+        // An executable the package holds runs from its snapshot as granted,
+        // whether or not the live one is still there to look up.
+        let in_package = granted_command.is_absolute() && granted_command.starts_with(&grant.dir);
+        let resolved = if in_package {
+            None
+        } else {
+            resolve_command(spec)
+        };
+        let refuse = |this: &Self, error: io::Error| {
+            this.record(&spec.name, root, grant.invocation.clone(), None, cancel);
             // Worked out again, the change is asked about.
-            self.wake.try_send(()).ok();
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                tr!(
-                    "workbench-extensions-lsp-consent-changed-since",
-                    server = spec.name.as_str()
-                )
-                .to_string(),
-            ));
+            this.wake.try_send(()).ok();
+            Err(error)
+        };
+        // Any other executable resolves as it did when it was granted.
+        if !in_package && resolved.as_deref().unwrap_or(&spec.command) != granted_command {
+            return refuse(
+                self,
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    tr!(
+                        "workbench-extensions-lsp-consent-changed-since",
+                        server = spec.name.as_str()
+                    )
+                    .to_string(),
+                ),
+            );
         }
-        let Some(command) = resolved.filter(|command| command.is_absolute()) else {
+        // It runs from the snapshot of the package granted, held against
+        // collection and hashed again, never the live directory.
+        let Some(held) = self.snapshots.hold(&grant.invocation.package_hash) else {
+            return refuse(
+                self,
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    tr!(
+                        "workbench-extensions-lsp-consent-snapshot-missing",
+                        server = spec.name.as_str()
+                    )
+                    .to_string(),
+                ),
+            );
+        };
+        let command = if in_package {
+            Some(granted_command.clone())
+        } else {
+            resolved.filter(|command| command.is_absolute())
+        };
+        let Some(command) = command else {
             self.record(&spec.name, root, grant.invocation, None, cancel);
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -1077,8 +1248,51 @@ impl ServerLauncher for ConsentGate {
                 .to_string(),
             ));
         };
+        let flag_value = |arg: &'_ str| {
+            arg.strip_prefix('-')
+                .and_then(|flag| flag.split_once('='))
+                .map(|(_, value)| value.to_owned())
+        };
+        // Fails closed: nothing that names the live package is run.
+        let names_live = std::iter::once(command.to_string_lossy().into_owned())
+            .chain(
+                spec.args
+                    .iter()
+                    .flat_map(|arg| std::iter::once(arg.clone()).chain(flag_value(arg))),
+            )
+            .any(|name| unbound(&grant, &name, &held.dir));
+        if names_live {
+            return refuse(
+                self,
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    tr!(
+                        "workbench-extensions-lsp-consent-snapshot-missing",
+                        server = spec.name.as_str()
+                    )
+                    .to_string(),
+                ),
+            );
+        }
+        let inside = |name: &str| rebase(&grant, name, &held.dir);
         let bound = ServerSpec {
-            command,
+            command: inside(&command.to_string_lossy()).map_or(command, PathBuf::from),
+            args: spec
+                .args
+                .iter()
+                .map(|arg| {
+                    if let Some(path) = inside(arg) {
+                        return path.to_string_lossy().into_owned();
+                    }
+                    if let Some((flag, value)) =
+                        arg.strip_prefix('-').and_then(|flag| flag.split_once('='))
+                        && let Some(path) = inside(value)
+                    {
+                        return format!("-{flag}={}", path.display());
+                    }
+                    arg.clone()
+                })
+                .collect(),
             ..spec.clone()
         };
         let mut io = match self.inner.launch(&bound, root, cancel) {
@@ -1095,6 +1309,8 @@ impl ServerLauncher for ConsentGate {
             at: (spec.name.clone(), root.to_owned()),
             id,
             attempts: self.attempts.clone(),
+            hold: Some(held.hold),
+            snapshots: self.snapshots.clone(),
         });
         Ok(io)
     }
@@ -1107,6 +1323,9 @@ struct Tracked {
     at: (String, PathBuf),
     id: u64,
     attempts: Arc<Mutex<Attempts>>,
+    /// Keeps its snapshot from being collected while it runs.
+    hold: Option<Hold>,
+    snapshots: Snapshots,
 }
 
 impl ServerProcess for Tracked {
@@ -1123,6 +1342,17 @@ impl ServerProcess for Tracked {
     }
 }
 
+/// What a [`Tracked`] process is once its own has been dropped.
+struct Gone;
+
+impl ServerProcess for Gone {
+    fn exited(&mut self) -> Pin<Box<dyn Future<Output = ExitInfo> + Send + '_>> {
+        Box::pin(std::future::ready(ExitInfo::default()))
+    }
+
+    fn kill(&mut self) {}
+}
+
 impl Drop for Tracked {
     fn drop(&mut self) {
         if let Some(attempt) = lock(&self.attempts).last.get_mut(&self.at)
@@ -1130,5 +1360,32 @@ impl Drop for Tracked {
         {
             attempt.running = None;
         }
+        // The process is torn down and reaped (its own destructor) before
+        // its snapshot is let go, and only then collected.
+        drop(std::mem::replace(&mut self.inner, Box::new(Gone)));
+        self.hold = None;
+        self.snapshots.collect_in_background();
     }
+}
+
+/// Where the file `name` names in `grant`'s package is in `snapshot`: the
+/// same relative path. `name` is an argument (or a flag's value, or the
+/// executable); `None` if it doesn't name a file inside the package.
+fn rebase(grant: &Grant, name: &str, snapshot: &Path) -> Option<PathBuf> {
+    // As evaluation bound it in the snapshot, whatever the live directory
+    // holds now.
+    if let Some(hashed) = grant.invocation.script_hashes.get(name) {
+        let recorded = Path::new(hashed.split_once(' ')?.1);
+        return Some(snapshot.join(recorded.strip_prefix(&grant.dir).ok()?));
+    }
+    let path = snapshot.join(name_in_package(&grant.dir, name, false)?);
+    // An absolute name is the package's even if the file is gone from the
+    // snapshot (it then fails there, not in the live directory).
+    (Path::new(name).is_absolute() || path.is_file()).then_some(path)
+}
+
+/// Whether `name` is an absolute path into the live package that
+/// [`rebase`] can't bind: a launch with it would reach the live directory.
+fn unbound(grant: &Grant, name: &str, snapshot: &Path) -> bool {
+    Path::new(name).starts_with(&grant.dir) && rebase(grant, name, snapshot).is_none()
 }
