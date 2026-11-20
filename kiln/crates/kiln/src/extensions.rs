@@ -104,31 +104,148 @@ pub(crate) type OnExtensions = Box<dyn FnMut(&ExtensionSet, &mut App)>;
 pub(crate) type OnNotice = Box<dyn FnMut(&LicenseNotice, &mut App)>;
 
 /// The files of an extension the app reads, relative to its directory.
-pub(crate) type FilesOf = Box<dyn Fn(&Manifest) -> Vec<PathBuf>>;
+/// Called on a background thread.
+pub(crate) type FilesOf = std::sync::Arc<dyn Fn(&Manifest) -> Vec<PathBuf> + Send + Sync>;
 
-/// Each extension's listed files' canonical paths, sizes and times, by the
-/// extension's directory: the cheap check, made on the UI thread.
-type Fingerprints = BTreeMap<PathBuf, Vec<Option<(PathBuf, u64, Option<std::time::SystemTime>)>>>;
+/// A file bigger than this is never read: it's hashed by its size and
+/// modification time.
+const HASH_MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// What a listed path is, as `symlink_metadata` says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum EntryKind {
+    File {
+        len: u64,
+        modified: Option<std::time::SystemTime>,
+    },
+    /// Whether it can be listed (a `read_dir` opens).
+    Dir {
+        listable: bool,
+    },
+    /// Its unfollowed target.
+    Symlink(Result<PathBuf, std::io::ErrorKind>),
+    Other,
+    Missing,
+    Error(std::io::ErrorKind),
+}
+
+/// A listed path, relative to its extension's directory and not
+/// canonicalized.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Entry {
+    path: PathBuf,
+    kind: EntryKind,
+    /// For a regular file, or a link to one, inside the extension's
+    /// directory: its canonical path, size and time, which
+    /// [`hash_files`] reads.
+    content: Option<(PathBuf, u64, Option<std::time::SystemTime>)>,
+}
+
+/// Each extension's listed entries, by the extension's directory.
+type Fingerprints = BTreeMap<PathBuf, Vec<Entry>>;
 
 /// The hash of each listed file's contents, by canonical path.
 type Hashes = BTreeMap<PathBuf, Option<u64>>;
 
-/// Hashes the contents of the files `fingerprints` has. Reads them all, so
-/// it's for a background thread; a file that can't be read has none.
+/// What is at `dir/path`, with no contents read.
+fn entry_of(dir: &Path, root: Option<&Path>, path: PathBuf) -> Entry {
+    let full = dir.join(&path);
+    let path = path
+        .strip_prefix(dir)
+        .map(Path::to_path_buf)
+        .unwrap_or(path);
+    let kind = match fs::symlink_metadata(&full) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => EntryKind::Missing,
+        Err(e) => EntryKind::Error(e.kind()),
+        Ok(m) if m.is_symlink() => EntryKind::Symlink(fs::read_link(&full).map_err(|e| e.kind())),
+        Ok(m) if m.is_dir() => EntryKind::Dir {
+            listable: fs::read_dir(&full).is_ok(),
+        },
+        Ok(m) if m.is_file() => EntryKind::File {
+            len: m.len(),
+            modified: m.modified().ok(),
+        },
+        Ok(_) => EntryKind::Other,
+    };
+    let content = matches!(kind, EntryKind::File { .. } | EntryKind::Symlink(_))
+        .then(|| {
+            let canonical = kiln_core::platform::canonicalize(&full).ok()?;
+            canonical.starts_with(root?).then_some(())?;
+            let meta = fs::metadata(&canonical).ok().filter(|m| m.is_file())?;
+            Some((canonical, meta.len(), meta.modified().ok()))
+        })
+        .flatten();
+    Entry {
+        path,
+        kind,
+        content,
+    }
+}
+
+/// The entries of the files `files_of` lists for each of `manifests`. Walks
+/// the disk, so it's for a background thread.
+fn fingerprint_of(files_of: &FilesOf, manifests: &[Manifest]) -> Fingerprints {
+    manifests
+        .iter()
+        .map(|manifest| {
+            let root = kiln_core::platform::canonicalize(&manifest.dir).ok();
+            let entries = files_of(manifest)
+                .into_iter()
+                .map(|path| entry_of(&manifest.dir, root.as_deref(), path))
+                .collect();
+            (manifest.dir.clone(), entries)
+        })
+        .collect()
+}
+
+/// Hashes the contents of the files `fingerprints` has, through a fixed-size
+/// buffer; a file over [`HASH_MAX_FILE_BYTES`] is hashed by its size and
+/// time, unread. Reads them all, so it's for a background thread; a file
+/// that can't be read has none.
 fn hash_files(fingerprints: &Fingerprints) -> Hashes {
-    use std::hash::Hasher;
-    let paths = fingerprints.values().flatten().flatten().map(|(p, ..)| p);
-    paths
-        .map(|path| {
-            let hash = fs::read(path).ok().map(|bytes| {
-                // `DefaultHasher::new()` has fixed keys: equal bytes hash equal.
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                hasher.write(&bytes);
-                hasher.finish()
-            });
+    let contents = fingerprints
+        .values()
+        .flatten()
+        .filter_map(|e| e.content.as_ref());
+    contents
+        .map(|(path, len, modified)| {
+            let hash = hash_content(*len, *modified, || fs::File::open(path));
             (path.clone(), hash)
         })
         .collect()
+}
+
+/// The size of the buffer a file is hashed through: the most of it held.
+const HASH_BUFFER_BYTES: usize = 64 * 1024;
+
+/// The hash of a file `len` bytes long: of its contents, read through one
+/// [`HASH_BUFFER_BYTES`] buffer by the reader `open` gives; or, over
+/// [`HASH_MAX_FILE_BYTES`], of its size and time, `open` never called.
+fn hash_content<R: std::io::Read>(
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    open: impl FnOnce() -> std::io::Result<R>,
+) -> Option<u64> {
+    use std::hash::Hasher;
+    // `DefaultHasher::new()` has fixed keys: equal bytes hash equal.
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    if len > HASH_MAX_FILE_BYTES {
+        hasher.write_u64(len);
+        if let Some(since) = modified.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) {
+            hasher.write_u128(since.as_nanos());
+        }
+        return Some(hasher.finish());
+    }
+    let mut reader = std::io::Read::take(open().ok()?, HASH_MAX_FILE_BYTES);
+    let mut buffer = vec![0u8; HASH_BUFFER_BYTES];
+    loop {
+        match std::io::Read::read(&mut reader, &mut buffer) {
+            Ok(0) => return Some(hasher.finish()),
+            Ok(n) => hasher.write(&buffer[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
 }
 
 /// What [`crate::Config`] says of extensions, for [`crate::init`].
@@ -623,34 +740,6 @@ impl ExtensionSource {
         changed
     }
 
-    /// The size and modification time of each file the app lists for each
-    /// enabled extension ([`crate::Config::extension_files`]): a file that's
-    /// missing, isn't a regular file, or leads outside the extension's
-    /// directory has none. Reads no contents: a rewrite that keeps a file's
-    /// size and modification time is found by [`hash_files`], which
-    /// [`ExtensionSource::check_contents`] runs off the main thread.
-    fn fingerprint(&self) -> Fingerprints {
-        let Some(files) = &self.files_of else {
-            return Fingerprints::new();
-        };
-        let mut out = Fingerprints::new();
-        for manifest in self.enabled().extensions() {
-            let root = kiln_core::platform::canonicalize(&manifest.dir).ok();
-            let stamps = files(manifest)
-                .into_iter()
-                .map(|path| {
-                    let canonical =
-                        kiln_core::platform::canonicalize(&manifest.dir.join(path)).ok()?;
-                    canonical.starts_with(root.as_ref()?).then_some(())?;
-                    let meta = fs::metadata(&canonical).ok().filter(|m| m.is_file())?;
-                    Some((canonical, meta.len(), meta.modified().ok()))
-                })
-                .collect();
-            out.insert(manifest.dir.clone(), stamps);
-        }
-        out
-    }
-
     /// Gives the themes to the pair's layers, which lay them in.
     fn apply_themes(&mut self, cx: &mut App) {
         self.install_themes();
@@ -672,7 +761,6 @@ impl ExtensionSource {
     /// launch with one shows them.
     fn apply(&mut self, cx: &mut App) {
         publish_loaded(&self.joined(), cx);
-        self.fingerprints = self.fingerprint();
         self.hashes = None;
         self.dirty = false;
         let enabled = self.enabled();
@@ -728,7 +816,7 @@ impl ExtensionSource {
     /// only read again: installing applies them.
     fn disable(this: &Rc<RefCell<Self>>, ids: BTreeSet<String>, cx: &mut App) {
         let previous = this.borrow().diagnostics();
-        let stamps = {
+        let hashing = {
             let mut source = this.borrow_mut();
             if source.disabled == ids {
                 return;
@@ -750,15 +838,15 @@ impl ExtensionSource {
             }
             if source.files_of.is_none() {
                 source.apply(cx);
-                None
+                false
             } else {
                 // Told once the files are hashed, as after a rescan.
                 source.dirty = true;
-                Some(source.fingerprint())
+                true
             }
         };
-        if let Some(stamps) = stamps {
-            Self::hash(this, stamps, cx);
+        if hashing {
+            Self::hash(this, cx);
         }
         let diagnostics = this.borrow().diagnostics();
         replace_diagnostics(cx, &previous, diagnostics);
@@ -818,19 +906,19 @@ impl ExtensionSource {
             cx.set_global(SkippedGlobal(skipped));
         }
         Self::watch_workspace(this, cx);
-        let stamps = {
+        let hashing = {
             let mut source = this.borrow_mut();
             if source.files_of.is_none() {
                 source.apply(cx);
-                None
+                false
             } else {
                 publish_loaded(&source.joined(), cx);
                 source.dirty = true;
-                Some(source.fingerprint())
+                true
             }
         };
-        if let Some(stamps) = stamps {
-            Self::hash(this, stamps, cx);
+        if hashing {
+            Self::hash(this, cx);
         }
         let diagnostics = this.borrow().diagnostics();
         replace_diagnostics(cx, &previous, diagnostics);
@@ -918,48 +1006,51 @@ impl ExtensionSource {
             }
             return;
         }
-        let stamps = source.fingerprint();
-        source.dirty |= rescanned || stamps != source.fingerprints;
+        source.dirty |= rescanned;
         drop(source);
-        Self::hash(this, stamps, cx);
+        Self::hash(this, cx);
     }
 
-    /// Hashes the contents of the files in `stamps` on a background thread,
-    /// then applies the extensions, with `stamps` as their fingerprint, if
-    /// they were loaded or a reload found a change in the manifests or the
-    /// files' sizes and times (`dirty`), or the contents differ from the
-    /// last applied's. Applying after the hashing, not before, means the
-    /// hashes can't be of bytes the app never saw, and a rewrite after it
-    /// is a change the next reload sees. Hashes for a check since replaced
-    /// are dropped; `dirty` stays until the extensions are applied.
-    fn hash(this: &Rc<RefCell<Self>>, stamps: Fingerprints, cx: &mut App) {
+    /// Lists the enabled extensions' files and hashes their contents on a
+    /// background thread, then applies the extensions, with what was
+    /// walked as their fingerprint, if they were loaded or a reload found a
+    /// change in the manifests (`dirty`), or the listing or contents differ
+    /// from the last applied's. Applying after the hashing, not before,
+    /// means the hashes can't be of bytes the app never saw, and a rewrite
+    /// after it is a change the next reload sees. A result for a walk since
+    /// replaced is dropped; `dirty` stays until the extensions are applied.
+    fn hash(this: &Rc<RefCell<Self>>, cx: &mut App) {
         let (task, generation) = {
             let mut source = this.borrow_mut();
+            let Some(files_of) = source.files_of.clone() else {
+                return;
+            };
             source.generation += 1;
             let generation = source.generation;
-            let task = cx.background_executor().spawn({
-                let stamps = stamps.clone();
-                async move { hash_files(&stamps) }
+            let manifests = source.enabled().extensions().to_vec();
+            let task = cx.background_executor().spawn(async move {
+                let stamps = fingerprint_of(&files_of, &manifests);
+                let hashes = hash_files(&stamps);
+                (stamps, hashes)
             });
             (task, generation)
         };
         let this = this.clone();
         cx.spawn(async move |cx| {
-            let hashes = task.await;
+            let (stamps, hashes) = task.await;
             cx.update(|cx| {
                 let mut source = this.borrow_mut();
                 if source.generation != generation {
                     return;
                 }
-                let differs = source.hashes.as_ref() != Some(&hashes);
+                let differs =
+                    source.fingerprints != stamps || source.hashes.as_ref() != Some(&hashes);
                 if !(source.dirty || differs) {
                     return;
                 }
                 log::info!(target: log_target(cx), "extensions reloaded");
                 source.apply(cx);
-                // What `apply` fingerprinted may be newer than what was
-                // hashed: keep the older, so a change between is seen.
-                source.fingerprints = stamps.clone();
+                source.fingerprints = stamps;
                 source.hashes = Some(hashes);
             });
         })
@@ -981,7 +1072,7 @@ impl ConfigSource for Shared {
     }
 
     fn install(&mut self, cx: &mut App) {
-        let stamps = {
+        {
             let mut source = self.0.borrow_mut();
             source.installed = true;
             source.apply_themes(cx);
@@ -993,9 +1084,8 @@ impl ConfigSource for Shared {
             // be of bytes it never saw: a rewrite after it is a change.
             publish_loaded(&source.joined(), cx);
             source.dirty = true;
-            source.fingerprint()
-        };
-        ExtensionSource::hash(&self.0, stamps, cx);
+        }
+        ExtensionSource::hash(&self.0, cx);
     }
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
@@ -1345,5 +1435,77 @@ pub(crate) fn set_laid(cx: &mut App, diagnostics: Vec<Diagnostic>, publish: bool
     let previous = std::mem::replace(&mut files.0.borrow_mut().laid, diagnostics.clone());
     if publish {
         replace_diagnostics(cx, &previous, diagnostics);
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+    use std::{cell::Cell, io, rc::Rc};
+
+    /// `len` zero bytes, counting what's read and the largest read asked.
+    struct Counting {
+        left: u64,
+        read: Rc<Cell<u64>>,
+        largest: Rc<Cell<usize>>,
+    }
+
+    impl io::Read for Counting {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.largest.set(self.largest.get().max(buf.len()));
+            let n = (buf.len() as u64).min(self.left) as usize;
+            buf[..n].fill(0);
+            self.left -= n as u64;
+            self.read.set(self.read.get() + n as u64);
+            Ok(n)
+        }
+    }
+
+    fn hash(len: u64) -> (Option<u64>, u64, usize, bool) {
+        let read = Rc::new(Cell::new(0));
+        let largest = Rc::new(Cell::new(0));
+        let opened = Cell::new(false);
+        let hash = hash_content(len, None, || {
+            opened.set(true);
+            Ok(Counting {
+                left: len,
+                read: read.clone(),
+                largest: largest.clone(),
+            })
+        });
+        (hash, read.get(), largest.get(), opened.get())
+    }
+
+    #[test]
+    fn a_file_over_the_limit_is_never_opened_or_read() {
+        let (hash, read, largest, opened) = hash(HASH_MAX_FILE_BYTES + 1);
+        assert!(hash.is_some());
+        assert_eq!((read, largest, opened), (0, 0, false));
+    }
+
+    #[test]
+    fn a_streamed_file_is_read_through_the_fixed_buffer() {
+        let len = 10 * HASH_BUFFER_BYTES as u64 + 5;
+        let (hash, read, largest, opened) = hash(len);
+        assert!(hash.is_some());
+        assert_eq!((read, opened), (len, true));
+        assert_eq!(largest, HASH_BUFFER_BYTES);
+    }
+
+    #[test]
+    fn a_file_at_the_limit_is_read_whole_and_a_longer_read_is_cut_off() {
+        // A file that grew past the limit after its size was taken.
+        let read = Rc::new(Cell::new(0));
+        let largest = Rc::new(Cell::new(0));
+        let hash = hash_content(1, None, || {
+            Ok(Counting {
+                left: HASH_MAX_FILE_BYTES * 2,
+                read: read.clone(),
+                largest: largest.clone(),
+            })
+        });
+        assert!(hash.is_some());
+        assert_eq!(read.get(), HASH_MAX_FILE_BYTES);
+        assert_eq!(largest.get(), HASH_BUFFER_BYTES);
     }
 }

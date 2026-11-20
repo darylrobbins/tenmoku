@@ -467,12 +467,15 @@ impl Config {
     /// ones its manifest's tables name, relative to its directory. When one
     /// changes on disk, or comes or goes, with its manifest the same,
     /// [`Config::on_extensions`] is called again. Without it, only a change
-    /// to a manifest or its diagnostics is.
+    /// to a manifest or its diagnostics is. `f` and the walk of the listed
+    /// paths run on a background thread, never the main one: each is recorded
+    /// by path, type and link target, so a retargeted link or an added or
+    /// removed directory counts as a change too.
     pub fn extension_files(
         mut self,
-        f: impl Fn(&kiln_core::Manifest) -> Vec<std::path::PathBuf> + 'static,
+        f: impl Fn(&kiln_core::Manifest) -> Vec<std::path::PathBuf> + Send + Sync + 'static,
     ) -> Self {
-        self.extensions.files_of = Some(Box::new(f));
+        self.extensions.files_of = Some(std::sync::Arc::new(f));
         self
     }
 

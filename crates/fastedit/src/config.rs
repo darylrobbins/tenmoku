@@ -688,7 +688,8 @@ fn server_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
     let Some(table) = manifest.app.get("lsp").and_then(toml::Value::as_table) else {
         return Vec::new();
     };
-    let mut files = package_files(&manifest.dir);
+    let (mut files, dirs) = package_entries(&manifest.dir);
+    files.extend(dirs);
     for value in table.values() {
         let Ok(settings) = value.clone().try_into::<LspServerSettings>() else {
             continue;
@@ -706,23 +707,25 @@ fn server_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
 }
 
 /// Every file and symlink under `dir`, by path, not following a symlink
-/// into a directory. A directory that can't be listed contributes none.
-/// It runs where kiln fingerprints the files, so it stops after
-/// [`fe_workbench::PACKAGE_MAX_FILES`] entries, files and directories
-/// alike: past that the package is too large for consent to be given on
-/// ([`fe_workbench::Invocation::package_hash`] is then "incomplete" and
-/// never granted), so a longer list would only cost time.
-fn package_files(dir: &Path) -> Vec<PathBuf> {
-    package_files_limited(dir, fe_workbench::PACKAGE_MAX_FILES)
+/// into a directory, stopping after `max` entries. A file of any size is
+/// listed, so adding or removing a big one is seen; kiln hashes one over
+/// [`fe_workbench::PACKAGE_MAX_FILE_BYTES`] by size and time, unread.
+#[allow(dead_code)]
+pub(crate) fn package_files_limited(dir: &Path, max: usize) -> Vec<PathBuf> {
+    package_entries_limited(dir, max).0
 }
 
-/// [`package_files`], stopping after `max` entries. A file of any size is
-/// listed, so adding or removing a big one is seen; kiln may read such a
-/// file whole to hash it, before consent refuses the package
-/// ([`fe_workbench::PACKAGE_MAX_FILE_BYTES`]), a known limit that follow-up
-/// T2026 fixes.
-pub(crate) fn package_files_limited(dir: &Path, max: usize) -> Vec<PathBuf> {
+/// The files ([`package_files_limited`]) and every directory under `dir`, empty ones
+/// included, within the same [`fe_workbench::PACKAGE_MAX_FILES`] entries.
+fn package_entries(dir: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    package_entries_limited(dir, fe_workbench::PACKAGE_MAX_FILES)
+}
+
+/// The files and the directories under `dir`, stopping after `max`
+/// entries of either.
+fn package_entries_limited(dir: &Path, max: usize) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut files = Vec::new();
+    let mut dirs = Vec::new();
     let mut seen = 0usize;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -732,16 +735,19 @@ pub(crate) fn package_files_limited(dir: &Path, max: usize) -> Vec<PathBuf> {
         for entry in read.filter_map(Result::ok) {
             seen += 1;
             if seen > max {
-                return files;
+                return (files, dirs);
             }
             match entry.file_type() {
-                Ok(kind) if kind.is_dir() => stack.push(entry.path()),
+                Ok(kind) if kind.is_dir() => {
+                    dirs.push(entry.path());
+                    stack.push(entry.path());
+                }
                 Ok(_) => files.push(entry.path()),
                 Err(_) => {}
             }
         }
     }
-    files
+    (files, dirs)
 }
 
 /// Logs what [`fe_gpui::keymap_report`] finds in the keymap in use.
