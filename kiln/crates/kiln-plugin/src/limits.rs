@@ -76,8 +76,11 @@ pub const JOB_MEMORY_CAP: u64 = 2 << 30;
 /// The most all running jobs may hold together, however much RAM there is.
 pub const ALL_JOBS_MEMORY_CAP: u64 = 4 << 30;
 
-/// The most a plugin's data quota may be declared as: reserved for the data store (B7).
+/// The most a plugin's data quota may be declared as.
 pub const DATA_QUOTA_CEILING: u64 = 2 << 30;
+
+/// A plugin's data quota unless its manifest declares another.
+pub const DATA_QUOTA_DEFAULT: u64 = 64 << 20;
 
 /// One plugin's background limits: what a job may use. A manifest's
 /// `[contributes.plugin.background]` declares them, the host's [`Ceilings`] clamp them.
@@ -87,7 +90,8 @@ pub struct BackgroundLimits {
     pub wall: Duration,
     /// Memory per job, in bytes.
     pub memory_bytes: u64,
-    /// The plugin data quota, in bytes. Reserved: parsed and kept, nothing enforces it yet.
+    /// The plugin data quota, in bytes, up to [`DATA_QUOTA_CEILING`]: `None` for
+    /// [`DATA_QUOTA_DEFAULT`]. See [`Self::data_quota`].
     pub data_bytes: Option<u64>,
 }
 
@@ -102,9 +106,13 @@ impl Default for BackgroundLimits {
 }
 
 impl BackgroundLimits {
-    /// Whether `self` asks for more than `granted` on `wall` or `memory_bytes`: the limits an
-    /// update must ask the user about again. Lowering one, or the reserved data quota, never
-    /// counts.
+    /// The data quota in force, in bytes: what is declared, or the default.
+    pub fn data_quota(&self) -> u64 {
+        self.data_bytes.unwrap_or(DATA_QUOTA_DEFAULT)
+    }
+
+    /// Whether `self` asks for more than `granted` on `wall`, `memory_bytes` or the data quota:
+    /// the limits an update must ask the user about again. Lowering one never counts.
     pub fn raises(&self, granted: &Self) -> Vec<BackgroundLimit> {
         let mut raised = Vec::new();
         if self.memory_bytes > granted.memory_bytes {
@@ -112,6 +120,9 @@ impl BackgroundLimits {
         }
         if self.wall > granted.wall {
             raised.push(BackgroundLimit::Wall);
+        }
+        if self.data_quota() > granted.data_quota() {
+            raised.push(BackgroundLimit::Data);
         }
         raised
     }
@@ -122,6 +133,7 @@ impl BackgroundLimits {
 pub enum BackgroundLimit {
     Memory,
     Wall,
+    Data,
 }
 
 /// A limit declared past what the host allows, and what it was clamped to.

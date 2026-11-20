@@ -301,4 +301,27 @@ fn the_prompt_names_declared_background_limits_and_the_ceiling() {
         ),
         "{detail}"
     );
+    // With no data quota declared, the default is what is asked about.
+    assert!(
+        detail.contains("Keeps up to 64 MB of data of its own on disk"),
+        "{detail}"
+    );
+
+    // A declared data quota is named with the most that is allowed.
+    let pending = PendingPluginGrant {
+        background: Some((
+            BackgroundLimits {
+                data_bytes: Some(256 << 20),
+                ..declared
+            },
+            Ceilings::for_ram(16 << 30),
+        )),
+        ..install(&["buffer.read"])
+    };
+    let (_, detail) = plugin_prompt_text(&pending);
+    assert!(
+        detail
+            .contains("Keeps up to 256 MB of data of its own on disk (the most allowed is 2 GB)."),
+        "{detail}"
+    );
 }

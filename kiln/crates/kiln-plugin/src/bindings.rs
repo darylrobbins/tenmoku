@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use wasmtime::component::{HasSelf, Linker};
 
-use crate::{commands, events, fs, jobs, net, process, secrets};
+use crate::{commands, data, events, fs, jobs, net, process, secrets};
 
 wasmtime::component::bindgen!({
     world: "extension",
@@ -53,6 +53,7 @@ pub mod jobs_world {
             "kiln:extension/process": crate::bindings::kiln::extension::process,
             "kiln:extension/net": crate::bindings::kiln::extension::net,
             "kiln:extension/secrets": crate::bindings::kiln::extension::secrets,
+            "kiln:extension/data": crate::bindings::kiln::extension::data,
         },
         additional_derives: [PartialEq],
     });
@@ -78,6 +79,7 @@ pub struct HostState {
     pub process: process::State,
     pub net: net::State,
     pub secrets: secrets::State,
+    pub data: data::State,
     pub jobs: jobs::State,
 }
 
@@ -94,6 +96,7 @@ impl HostState {
             process: process::State::default(),
             net: net::State::default(),
             secrets: secrets::State::default(),
+            data: data::State::default(),
             jobs: jobs::State::default(),
         }
     }

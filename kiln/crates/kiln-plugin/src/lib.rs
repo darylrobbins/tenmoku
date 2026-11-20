@@ -7,6 +7,7 @@ pub mod bindings;
 pub mod cache;
 pub mod commands;
 pub mod compat;
+pub mod data;
 pub mod engine;
 pub mod events;
 pub mod fs;

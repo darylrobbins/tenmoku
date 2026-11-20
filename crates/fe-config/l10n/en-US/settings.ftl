@@ -488,7 +488,8 @@ settings-extensions-disabled =
 
 settings-extensions-plugin_limits =
     Limits for one installed plugin, by its ID, over what its manifest
-    declares: `background_memory` and `background_wall` for its jobs,
+    declares: `background_memory`, `background_wall` and `background_data`
+    for its jobs and its stored data,
     `call_deadline_ms` and `memory` for what you wait on. A value past
     what this computer allows is lowered to it. A project file can't
     set them.

@@ -47,6 +47,7 @@ workbench-extensions-plugin-adds = This version asks for more than you granted. 
 workbench-extensions-plugin-keeps = It keeps:
 workbench-extensions-plugin-more-access-question = Allow { $name } { $version } more access?
 workbench-extensions-plugin-background = Runs background jobs using up to { $memory } of memory and { $wall } each (this computer allows up to { $ceiling }).
+workbench-extensions-plugin-background-data = Keeps up to { $size } of data of its own on disk (the most allowed is { $ceiling }).
 workbench-extensions-plugin-minutes = { $count } minutes
 workbench-extensions-plugin-seconds = { $count } seconds
 workbench-extensions-plugin-gb = { $count } GB
@@ -111,10 +112,14 @@ workbench-extensions-plugin-uninstall-detail =
     { $id } { $version }
     From: { $dir }
 
-    Its stored secrets are deleted from the keychain, what you granted it is forgotten, and its folder is removed. This can't be undone.
+    Its stored secrets are deleted from the keychain and its stored data from disk, what you granted it is forgotten, and its folder is removed. This can't be undone.
 workbench-extensions-plugin-cant-uninstall = Can't uninstall { $name }
 workbench-extensions-plugin-uninstalled = Uninstalled { $name }
 workbench-extensions-plugin-secrets-kept = Its stored secrets couldn't be deleted ({ $error }), so it stays installed.
+workbench-extensions-plugin-data-kept = Its stored data couldn't be deleted ({ $error }), so it stays installed.
+workbench-extensions-plugin-cant-clear-data = Can't clear { $name }'s data
+workbench-extensions-plugin-data-cleared = Cleared { $name }'s stored data
+workbench-extensions-plugin-data-cleared-detail = Files it kept for itself, such as an index a background job built, are deleted. It builds them again as it needs them.
 workbench-extensions-plugin-manifest-unreadable = { $path } can't be read: { $error }
 workbench-extensions-plugin-replaced = { $dir } no longer holds it: it was replaced while you were asked.
 workbench-extensions-plugin-busy = It's being revoked or uninstalled already.

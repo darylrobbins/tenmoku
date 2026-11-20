@@ -12,10 +12,14 @@
 //!   ([`hold_plugin`]): it unloads and nothing of it is asked or recorded.
 //!   Once that's settled its grant record is forgotten ([`revoke`]): it
 //!   stays stopped, and asks again the next time it loads.
+//! - **Clear Data.** Extensions: Clear Plugin Data deletes the files the
+//!   plugin keeps for itself under `plugin-data/<id>/` ([`clear_data`]),
+//!   under the lock of its data store's counter, so no write of a running
+//!   plugin or job races it; it isn't stopped.
 //! - **Uninstall.** Extensions: Uninstall Plugin asks first, saying its
-//!   stored secrets are deleted ([`confirm_uninstall`]). Confirmed, it's
-//!   held likewise; once settled, if its directory still holds it, its
-//!   secrets are deleted ([`PluginSecrets::delete_all`]), its grant record
+//!   stored secrets and data are deleted ([`confirm_uninstall`]). Confirmed,
+//!   it's held likewise; once settled, if its directory still holds it, its
+//!   data directory ([`PluginData::remove`]) and secrets are deleted ([`PluginSecrets::delete_all`]), its grant record
 //!   forgotten and its extension directory removed: a symlink's link, never
 //!   what it points at. One whose secrets can't be deleted stays installed,
 //!   grants and all, and is as it was before, running again if it ran; the
@@ -41,6 +45,7 @@ use kiln::core::{
 use kiln_l10n::tr;
 use kiln_plugin::{
     bindings::Error,
+    data::PluginData,
     grants::{GrantStore, Version},
     manifest::{ExtensionOrigin, PluginManifest},
     secrets::PluginSecrets,
@@ -344,6 +349,38 @@ pub(crate) fn revoke(id: &str, name: &str, cx: &mut App) {
     .detach();
 }
 
+/// Deletes plugin `name`'s (`id`) stored data, off the main thread, under the lock of its data
+/// store's counter: a running plugin and its jobs share that counter, so none of their writes
+/// races it. The plugin keeps running, and starts again from an empty store.
+pub(crate) fn clear_data(id: &str, name: &str, cx: &mut App) {
+    let Some(state_dir) = stores(cx).state_dir.clone() else {
+        return notify_error(cx, cant_clear_data(name), no_state_dir());
+    };
+    let (id, name) = (id.to_owned(), name.to_owned());
+    cx.spawn(async move |cx| {
+        let cleared = cx
+            .background_spawn(async move {
+                // Opened here: it takes the store's lock and counts its files.
+                PluginData::open(&state_dir, &id)?.clear()
+            })
+            .await;
+        cx.update(|cx| match cleared {
+            Ok(()) => Workbench::notify(
+                cx,
+                log::Level::Info,
+                tr!(
+                    "workbench-extensions-plugin-data-cleared",
+                    name = name.as_str()
+                )
+                .into(),
+                Some(tr!("workbench-extensions-plugin-data-cleared-detail").into()),
+            ),
+            Err(error) => notify_error(cx, cant_clear_data(&name), error_text(&error).to_owned()),
+        });
+    })
+    .detach();
+}
+
 /// The uninstall confirmation's question and detail for `plugin`.
 pub(crate) fn uninstall_prompt_text(plugin: &PluginRow) -> (String, String) {
     let (major, minor, patch) = plugin.version;
@@ -386,6 +423,8 @@ enum Failure {
     Replaced(String),
     /// Its secrets weren't deleted: nothing else was touched.
     Secrets(Error),
+    /// Its data wasn't deleted: nothing else was touched.
+    Data(Error),
     /// Its grant record wasn't forgotten, or its directory removed.
     Other(String),
 }
@@ -396,7 +435,11 @@ enum Failure {
 /// is as it was before.
 fn uninstall(plugin: PluginRow, cx: &mut App) {
     let stores = stores(cx);
-    let (Some(grants), Some(secrets)) = (stores.grants(), stores.secrets(&plugin.id)) else {
+    let (Some(grants), Some(secrets), Some(state_dir)) = (
+        stores.grants(),
+        stores.secrets(&plugin.id),
+        stores.state_dir.clone(),
+    ) else {
         return notify_error(cx, cant_uninstall(&plugin.name), no_state_dir());
     };
     let Some(token) = hold_plugin(&plugin.id, cx) else {
@@ -411,6 +454,10 @@ fn uninstall(plugin: PluginRow, cx: &mut App) {
         let removed = cx
             .background_spawn(async move {
                 check_still_installed(&dir, &id).map_err(Failure::Replaced)?;
+                // Its data first: the likelier to fail, and before anything else is gone.
+                PluginData::open(&state_dir, &id)
+                    .and_then(|data| data.remove())
+                    .map_err(Failure::Data)?;
                 secrets.delete_all().map_err(Failure::Secrets)?;
                 (grants.forget(&id)).map_err(|error| Failure::Other(error.to_string()))?;
                 remove_extension_dir(&dir).map_err(|error| {
@@ -435,6 +482,11 @@ fn uninstall(plugin: PluginRow, cx: &mut App) {
                 }
                 Err(Failure::Secrets(error)) => tr!(
                     "workbench-extensions-plugin-secrets-kept",
+                    error = error_text(&error)
+                )
+                .into(),
+                Err(Failure::Data(error)) => tr!(
+                    "workbench-extensions-plugin-data-kept",
                     error = error_text(&error)
                 )
                 .into(),
@@ -503,7 +555,7 @@ fn settled(id: &str, cx: &mut App) -> (oneshot::Receiver<()>, Option<Subscriptio
     (receiver, Some(following))
 }
 
-fn error_text(error: &Error) -> &str {
+pub(crate) fn error_text(error: &Error) -> &str {
     match error {
         Error::Unimplemented(message)
         | Error::Denied(message)
@@ -524,6 +576,10 @@ fn no_state_dir() -> String {
 
 fn cant_revoke(name: &str) -> String {
     tr!("workbench-extensions-plugin-cant-revoke", name = name).into()
+}
+
+fn cant_clear_data(name: &str) -> String {
+    tr!("workbench-extensions-plugin-cant-clear-data", name = name).into()
 }
 
 fn cant_uninstall(name: &str) -> String {

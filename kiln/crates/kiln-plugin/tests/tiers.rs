@@ -199,16 +199,27 @@ fn tiers_raising_background_limits_is_an_escalation() {
         }
     }
 
-    // Lowering, or the reserved data quota, never asks.
+    // Lowering never asks, the data quota included.
     let lowered = BackgroundLimits {
         memory_bytes: 64 * MIB,
         wall: Duration::from_secs(60),
-        data_bytes: Some(GIB),
+        data_bytes: Some(MIB),
     };
     assert_eq!(
         evaluate_background(Some(&record), &caps, &lowered),
         Decision::Load(caps.clone())
     );
+
+    // Raising the data quota past what was accepted (the default 64 MiB when none) asks.
+    let more_data = BackgroundLimits {
+        data_bytes: Some(GIB),
+        ..lowered
+    };
+    assert!(matches!(
+        evaluate_background(Some(&record), &caps, &more_data),
+        Decision::Escalation { .. }
+    ));
+    assert_eq!(more_data.raises(&lowered), vec![BackgroundLimit::Data]);
 
     // A record that accepted nothing accepts the defaults: asking for more asks.
     let plain = GrantRecord {

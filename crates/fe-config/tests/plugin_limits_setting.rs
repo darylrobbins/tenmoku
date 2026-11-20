@@ -29,6 +29,40 @@ fn plugin_limits_user_layer_applies() {
 }
 
 #[test]
+fn plugin_data_quota_is_read_and_held_to_two_gib() {
+    let store =
+        load_user("[extensions.plugin_limits.\"acme.cargo\"]\nbackground_data = \"256MiB\"\n");
+    assert_eq!(store.diagnostics(), []);
+    let settings = store.settings();
+    let limits = &settings.extensions.plugin_limits["acme.cargo"];
+    assert_eq!(limits.background_data_bytes(), Some(256 << 20));
+
+    let store =
+        load_user("[extensions.plugin_limits.\"acme.cargo\"]\nbackground_data = \"3GiB\"\n");
+    let settings = store.settings();
+    let limits = &settings.extensions.plugin_limits["acme.cargo"];
+    assert_eq!(limits.background_data_bytes(), Some(2 << 30));
+    assert!(
+        store
+            .diagnostics()
+            .iter()
+            .any(|d| d.severity == Severity::Warning && d.message.contains("background_data")),
+        "{:?}",
+        store.diagnostics()
+    );
+
+    // Not a size: dropped with a warning.
+    let store =
+        load_user("[extensions.plugin_limits.\"acme.cargo\"]\nbackground_data = \"lots\"\n");
+    let settings = store.settings();
+    assert_eq!(
+        settings.extensions.plugin_limits["acme.cargo"].background_data_bytes(),
+        None
+    );
+    assert!(!store.diagnostics().is_empty());
+}
+
+#[test]
 fn plugin_limits_project_layer_is_ignored() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project.toml");

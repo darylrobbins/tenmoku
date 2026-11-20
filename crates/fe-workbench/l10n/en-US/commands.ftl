@@ -454,6 +454,7 @@ command-workbench-tab_switcher_previous = Switch Tab Backward
 command-workbench-toggle_zen_mode = Toggle Zen Mode
 command-workbench-trust_folder = Trust This Folder
 command-workbench-uninstall_plugin = Extensions: Uninstall Plugin
+command-workbench-clear_plugin_data = Extensions: Clear Plugin Data
 command-workbench-unpin_tab = Unpin Tab
 command-workbench-untrust_folder = Untrust This Folder
 

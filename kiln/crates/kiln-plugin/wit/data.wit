@@ -1,0 +1,44 @@
+package kiln:extension@1.1.0;
+
+/// The plugin's own data files, kept by the host in `<state dir>/plugin-data/<plugin id>/`. The
+/// plugin reaches them only through this interface, never through WASI, so the host can charge
+/// every byte against the plugin's quota before it is written. No grant is needed, and another
+/// plugin's files are out of reach. Both the interactive instance and a job's instance see the
+/// same files and share one quota, so the interactive instance reads what a job wrote after the
+/// job has ended.
+///
+/// The quota is 64 MiB unless the manifest declares `background.data`, up to 2 GiB. A plugin
+/// holds at most 10,000 files. A call that would take the plugin past either is `failed`, with
+/// nothing written. A plugin over a lowered quota keeps reading and deleting.
+interface data {
+    use types.{error};
+
+    /// A flat name: 1 to 128 characters of `a-z`, `0-9`, `.`, `_` and `-`, not starting with
+    /// `.`. Any other is `invalid-argument`.
+    type name = string;
+
+    /// At most 16 MiB from `offset`; fewer at the end of the file. `not-found` when the file
+    /// doesn't exist.
+    read: func(file: name, offset: u64, len: u32) -> result<list<u8>, error>;
+
+    /// Writes `bytes` (at most 16 MiB) at `offset`, growing the file as needed (a gap reads as
+    /// zeros and counts toward the quota). Refused whole, with nothing written, when the growth
+    /// would take the plugin past its quota.
+    write: func(file: name, offset: u64, bytes: list<u8>) -> result<_, error>;
+
+    /// Replaces the file with `bytes` (at most 16 MiB) atomically: a temporary file renamed
+    /// over it. The new size is charged while the old file still exists.
+    replace: func(file: name, bytes: list<u8>) -> result<_, error>;
+
+    /// Cuts the file to `len` bytes, or grows it with zeros. `not-found` when it doesn't exist.
+    truncate: func(file: name, len: u64) -> result<_, error>;
+
+    /// Deleting a file that doesn't exist succeeds.
+    delete: func(file: name) -> result<_, error>;
+
+    /// Every file, with its size, in name order.
+    %list: func() -> result<list<tuple<name, u64>>, error>;
+
+    /// Bytes used and the quota.
+    usage: func() -> tuple<u64, u64>;
+}

@@ -15,10 +15,11 @@
 //! row has to say. An extension that failed to load isn't listed: its
 //! diagnostics are in the config problems list.
 //!
-//! Extensions: Revoke Plugin Grants, Extensions: Uninstall Plugin and
-//! Extensions: Show Plugin Log open it over the user's plugins only
-//! ([`open_next_for`]), Enter revoking or uninstalling the plugin picked,
-//! or opening its log.
+//! Extensions: Revoke Plugin Grants, Extensions: Uninstall Plugin,
+//! Extensions: Clear Plugin Data and Extensions: Show Plugin Log open it
+//! over the user's plugins only ([`open_next_for`]), Enter revoking,
+//! uninstalling or clearing the data of the plugin picked, or opening its
+//! log.
 
 use std::{collections::VecDeque, path::PathBuf};
 
@@ -447,6 +448,8 @@ pub(crate) enum Purpose {
     Uninstall,
     /// Extensions: Show Plugin Log, over the user's plugins.
     ShowLog,
+    /// Extensions: Clear Plugin Data, over the user's plugins.
+    ClearData,
 }
 
 /// What the picker opens for next, once.
@@ -700,6 +703,11 @@ impl PickerDelegate for ExtensionsPicker {
             (Purpose::Uninstall, Some(plugin)) => {
                 self.closed(window, cx);
                 plugin_manage::confirm_uninstall(&plugin, window, cx);
+                return true;
+            }
+            (Purpose::ClearData, Some(plugin)) => {
+                self.closed(window, cx);
+                plugin_manage::clear_data(&plugin.id, &plugin.name, cx);
                 return true;
             }
             (Purpose::ShowLog, Some(plugin)) => {

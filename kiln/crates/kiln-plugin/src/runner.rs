@@ -404,10 +404,22 @@ impl Plugin {
                 grants: grants.clone(),
                 world,
                 commands: host.commands.for_jobs(),
-                host: host.jobs.workers().unwrap_or_else(|| {
-                    let id = id.to_owned();
-                    Arc::new(move || HostState::new(guest_log(&id)))
-                }),
+                host: {
+                    let base = host.jobs.workers().unwrap_or_else(|| {
+                        let id = id.to_owned();
+                        Arc::new(move || HostState::new(guest_log(&id)))
+                    });
+                    // Every worker store shares the interactive store's data counter: one
+                    // quota for the plugin, whatever makes the worker's other slices.
+                    match host.data.clone() {
+                        data if data.is_set() => Arc::new(move || {
+                            let mut worker = base();
+                            worker.data = data.clone();
+                            worker
+                        }),
+                        _ => base,
+                    }
+                },
             });
             let launcher: Launcher = Arc::new(move |launch| workers.launch(launch));
             let jobs = (host.jobs.host()).attach(id, grants, host.jobs.limits(), launcher);

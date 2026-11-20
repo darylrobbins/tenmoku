@@ -1301,6 +1301,13 @@ impl Workbench {
         self.pick_plugin(Purpose::Uninstall, cx.window, cx.cx);
     }
 
+    /// Extensions: Clear Plugin Data
+    #[command(id = "workbench.clear_plugin_data")]
+    fn clear_plugin_data(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        self.pick_plugin(Purpose::ClearData, cx.window, cx.cx);
+    }
+
     /// Extensions: Install from File or Folder…
     #[command(id = "workbench.install_extension")]
     fn install_extension_command(&mut self, cx: &mut Cx<Self>) {

@@ -16,6 +16,7 @@ world extension {
     import process;
     import net;
     import secrets;
+    import data;
 
     /// Called once after instantiation, before anything else. An error unloads the plugin.
     export init: func() -> result<_, error>;

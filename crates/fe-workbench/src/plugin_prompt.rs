@@ -17,7 +17,7 @@ use gpui::{App, PromptLevel, SharedString, Task, Window};
 use kiln_l10n::tr;
 use kiln_plugin::{
     grants::{ProgramIdentity, Version, needs_wildcard_acceptance},
-    limits::{BackgroundLimits, Ceilings},
+    limits::{BackgroundLimits, Ceilings, DATA_QUOTA_CEILING},
     warnings::{Warning, combination_warnings, describe},
 };
 
@@ -212,6 +212,9 @@ pub fn plugin_prompt_text(pending: &PendingPluginGrant) -> (String, String) {
     if let Some((declared, ceilings)) = &pending.background {
         detail.push('\n');
         push_line(&mut detail, background_text(declared, ceilings));
+        // The quota in force, the default included: an update that drops a small declared
+        // quota raises it to the default, and that is asked about.
+        push_line(&mut detail, data_text(declared.data_quota()));
     }
     // The warnings are for everything it would hold, since what was
     // granted before can combine with what's added.
@@ -295,6 +298,15 @@ fn background_text(declared: &BackgroundLimits, ceilings: &Ceilings) -> SharedSt
         memory = size_text(memory),
         wall = wall.to_string(),
         ceiling = size_text(ceilings.job_memory_bytes)
+    )
+}
+
+/// The line naming the data quota a manifest declares, and the most any plugin may have.
+fn data_text(declared: u64) -> SharedString {
+    tr!(
+        "workbench-extensions-plugin-background-data",
+        size = size_text(declared.min(DATA_QUOTA_CEILING)),
+        ceiling = size_text(DATA_QUOTA_CEILING)
     )
 }
 

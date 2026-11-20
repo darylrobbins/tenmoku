@@ -31,6 +31,7 @@ use kiln::{
     platform::config::batch_channel,
 };
 use kiln_plugin::{
+    data::PluginData,
     grants::GrantStore,
     manifest::{ExtensionOrigin, PluginManifest},
     secrets::PluginSecrets,
@@ -196,6 +197,11 @@ impl Fixture {
         GrantStore::new(self.state().join(GRANTS_FILE))
     }
 
+    /// Plugin `id`'s data store, the one its running stores share.
+    fn data(&self, id: &str) -> PluginData {
+        PluginData::open(&self.state(), id).unwrap()
+    }
+
     fn secrets(&self) -> PluginSecrets {
         let service = fe_config::paths::app_id().reverse_dns;
         let index = self.state().join(SECRETS_INDEX_FILE);
@@ -235,6 +241,8 @@ struct Setup {
     other: bool,
     /// The plugin host isn't handed the extensions: it hasn't found them.
     unhosted: bool,
+    /// The plugin's manifest declares this data quota, and the user accepted it.
+    data: Option<(&'static str, u64)>,
 }
 
 /// A second plugin's id.
@@ -252,6 +260,7 @@ fn start_with(
         lsp,
         other,
         unhosted,
+        data,
     } = setup;
     // Plugins run on threads of their own.
     cx.executor().allow_parking();
@@ -272,6 +281,14 @@ fn start_with(
         }
     } else {
         write_plugin(&plugin_dir, ID, "Tool", lsp);
+    }
+    if let Some((declared, _)) = data {
+        let manifest = plugin_dir.join("extension.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str(&format!(
+            "\n[contributes.plugin.background]\ndata = \"{declared}\"\n"
+        ));
+        fs::write(&manifest, text).unwrap();
     }
     if other {
         write_plugin(&extensions.join("other"), OTHER, "Other", false);
@@ -298,6 +315,13 @@ fn start_with(
             .unwrap();
     }
     fixture.secrets().set("token", "s3cret").unwrap();
+    if let Some((_, bytes)) = data {
+        let accepted = kiln_plugin::limits::BackgroundLimits {
+            data_bytes: Some(bytes),
+            ..Default::default()
+        };
+        fixture.store().accept_background(ID, accepted).unwrap();
+    }
 
     let (_sender, batches) = batch_channel();
     let plugin = plugin_kind();
@@ -479,6 +503,8 @@ fn uninstalls(cx: &mut TestAppContext, linked: bool, junction: bool) {
     };
     let (fixture, workbench, mut cx) = start_with(cx, setup);
     let target = dunce::canonicalize(&fixture.plugin_dir).unwrap();
+    fixture.data(ID).write("index", 0, b"stored").unwrap();
+    fixture.data(OTHER).write("index", 0, b"kept").unwrap();
     pick_plugin("workbench.uninstall_plugin", &workbench, &mut cx);
     cx.simulate_prompt_answer("Uninstall");
     until(&mut cx, "the directory to go", |_| {
@@ -486,6 +512,10 @@ fn uninstalls(cx: &mut TestAppContext, linked: bool, junction: bool) {
     });
     draw(&mut cx);
     assert!(cx.update(|_, cx| unloaded(cx)));
+    // Its data goes with it, and only its own.
+    assert!(!fixture.state().join("plugin-data").join(ID).exists());
+    assert_eq!(fixture.data(ID).usage().0, 0);
+    assert_eq!(fixture.data(OTHER).read("index", 0, 10).unwrap(), b"kept");
     assert_eq!(fixture.keychain.count(), 0);
     assert_eq!(fixture.secrets().names().unwrap(), Vec::<String>::new());
     assert_eq!(fixture.store().get(ID).unwrap(), None);
@@ -497,6 +527,65 @@ fn uninstalls(cx: &mut TestAppContext, linked: bool, junction: bool) {
             .iter()
             .any(|toast| toast.starts_with("Uninstalled Tool")),
         "{shown:?}"
+    );
+}
+
+/// The plugin runs, loaded from its manifest, with no `PluginData` held by the test before the
+/// load: the quota in force is the one on the store the running plugin holds.
+fn loaded_quota(declared: &'static str, bytes: u64, cx: &mut TestAppContext) -> u64 {
+    let setup = Setup {
+        preview: true,
+        data: Some((declared, bytes)),
+        ..Setup::default()
+    };
+    let (fixture, _workbench, mut cx) = start_with(cx, setup);
+    until(&mut cx, "the plugin to run", |cx| {
+        matches!(state_of(cx), Some(PluginState::Running))
+    });
+    fixture.data(ID).usage().1
+}
+
+#[gpui::test]
+fn a_declared_data_quota_lowered_below_the_default_reaches_the_running_plugin(
+    cx: &mut TestAppContext,
+) {
+    assert_eq!(loaded_quota("1MiB", 1 << 20, cx), 1 << 20);
+}
+
+#[gpui::test]
+fn a_declared_data_quota_raised_above_the_default_reaches_the_running_plugin(
+    cx: &mut TestAppContext,
+) {
+    assert_eq!(loaded_quota("256MiB", 256 << 20, cx), 256 << 20);
+}
+
+#[gpui::test]
+fn clear_data_deletes_the_plugins_files_and_keeps_it_running(cx: &mut TestAppContext) {
+    let (fixture, workbench, mut cx) = start(cx, true, false);
+    let data = fixture.data(ID);
+    data.set_quota(1000);
+    data.write("index", 0, &[1; 300]).unwrap();
+    data.replace("cache", &[2; 200]).unwrap();
+    fixture.data(OTHER).write("index", 0, b"kept").unwrap();
+    assert_eq!(data.usage(), (500, 1000));
+    pick_plugin("workbench.clear_plugin_data", &workbench, &mut cx);
+    until(&mut cx, "the data to go", |_| data.usage().0 == 0);
+    assert_eq!(data.list().unwrap(), vec![]);
+    // The counter the running plugin's stores share is the one that was cleared.
+    data.write("index", 0, &[3; 1000]).unwrap();
+    assert_eq!(fixture.data(OTHER).read("index", 0, 10).unwrap(), b"kept");
+    let shown = toasts(&workbench, &mut cx);
+    assert!(
+        shown
+            .iter()
+            .any(|toast| toast.starts_with("Cleared Tool's stored data")),
+        "{shown:?}"
+    );
+    assert!(cx.update(|_, cx| !unloaded(cx)));
+    assert_eq!(
+        fixture.secrets().get("token").unwrap().as_deref(),
+        Some("s3cret"),
+        "only its data goes"
     );
 }
 

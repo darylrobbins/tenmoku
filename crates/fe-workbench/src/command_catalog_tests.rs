@@ -392,6 +392,7 @@ const LISTED_ANYWHERE: &[&str] = &[
     "window.zoom",
     "workbench.change_encoding",
     "workbench.change_line_ending",
+    "workbench.clear_plugin_data",
     "workbench.clear_recent",
     "workbench.close_all_editors",
     "workbench.close_folder",

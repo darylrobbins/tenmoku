@@ -851,7 +851,7 @@
             "$ref": "#/$defs/PluginLimitsSettings"
           },
           "default": {},
-          "description": "Limits for one installed plugin, by its ID, over what its manifest\ndeclares: `background_memory` and `background_wall` for its jobs,\n`call_deadline_ms` and `memory` for what you wait on. A value past\nwhat this computer allows is lowered to it. A project file can't\nset them.",
+          "description": "Limits for one installed plugin, by its ID, over what its manifest\ndeclares: `background_memory`, `background_wall` and `background_data`\nfor its jobs and its stored data,\n`call_deadline_ms` and `memory` for what you wait on. A value past\nwhat this computer allows is lowered to it. A project file can't\nset them.",
           "type": "object"
         },
         "plugins_preview": {
@@ -1361,6 +1361,14 @@
     "PluginLimitsSettings": {
       "description": "One plugin's limits in `[extensions.plugin_limits.\"<id>\"]`: each unset\nkey leaves the manifest's value, or the default, as it is.",
       "properties": {
+        "background_data": {
+          "default": null,
+          "description": "The most data the plugin may keep for itself on disk, as \"256MiB\"\n(KiB, MiB or GiB), up to 2GiB. Lowered below what it holds, it\ncan read and delete but not add.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "background_memory": {
           "default": null,
           "description": "The memory one background job may hold, as \"512MiB\" (KiB, MiB or\nGiB), from 1MiB up to 2GiB or a quarter of this computer's RAM.",

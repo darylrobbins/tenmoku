@@ -98,13 +98,16 @@ use kiln_plugin::{
     cache::ComponentCache,
     commands::{CallPlugin, CommandHost, PluginCommand},
     compat::{self, World},
+    data::PluginData,
     engine::PluginEngine,
     fs::Workspace,
     grants::{
         Decision, GrantRecord, GrantStore, ProgramIdentity, Prompt, evaluate_background,
         resolve_program,
     },
-    limits::{BackgroundLimits, Ceilings, Limits, PROGRAM_DEADLINE, StoreLimiter},
+    limits::{
+        BackgroundLimits, Ceilings, DATA_QUOTA_CEILING, Limits, PROGRAM_DEADLINE, StoreLimiter,
+    },
     manifest::{ExtensionOrigin, PluginManifest},
     runner::{Call, CallError, Diagnostic, LoadError, Reason, Reply},
     secrets::PluginSecrets,
@@ -742,8 +745,16 @@ fn effective_limits(
         if let Some(secs) = user.background_wall_secs() {
             background.wall = Duration::from_secs(secs);
         }
+        if let Some(bytes) = user.background_data_bytes() {
+            background.data_bytes = Some(bytes);
+        }
     }
-    (limits, ceilings.clamp(background).0)
+    let (mut background, _) = ceilings.clamp(background);
+    // The data quota's ceiling is the same on every computer.
+    background.data_bytes = background
+        .data_bytes
+        .map(|bytes| bytes.min(DATA_QUOTA_CEILING));
+    (limits, background)
 }
 
 /// The host's directories.
@@ -1604,6 +1615,7 @@ fn start_load(id: &str, cx: &mut App) {
             &grants,
             &cancel,
             &formatting,
+            background.data_quota(),
         );
         if let Ok((plugin, ..)) = &started {
             lock(plugin).background = background;
@@ -1854,12 +1866,14 @@ impl LoadContext {
         cancel: &Arc<AtomicBool>,
     ) -> Result<Started, LoadFailure> {
         let formatting = PluginFormatting::default();
-        self.load_with(artifact, World::CURRENT, grants, cancel, &formatting)
+        let quota = artifact.manifest.background.data_quota();
+        self.load_with(artifact, World::CURRENT, grants, cancel, &formatting, quota)
     }
 
     /// Compiles and starts `artifact`'s plugin against `world` with
-    /// `grants`, its formatters registered on `formatting`, unless `cancel`
-    /// is set first: blocking, for the background executor.
+    /// `grants`, its formatters registered on `formatting` and its data
+    /// store held to `data_quota` bytes, unless `cancel` is set first:
+    /// blocking, for the background executor.
     fn load_with(
         &self,
         artifact: &Artifact,
@@ -1867,6 +1881,7 @@ impl LoadContext {
         grants: &fe_command::Grants,
         cancel: &Arc<AtomicBool>,
         formatting: &PluginFormatting,
+        data_quota: u64,
     ) -> Result<Started, LoadFailure> {
         let cancelled = || cancel.load(Ordering::Acquire);
         let failed = |message: String| {
@@ -1889,6 +1904,17 @@ impl LoadContext {
             let service = fe_config::paths::app_id().reverse_dns;
             let secrets = PluginSecrets::new(self.secrets.clone(), service, id.clone(), index);
             kiln.secrets = kiln_plugin::secrets::State::new(secrets);
+        }
+        // The data store sits beside the secrets' index, in the state directory.
+        if let Some(state_dir) = self.secrets_index.as_deref().and_then(Path::parent) {
+            // The directory's one counter, shared with Clear Data and, once jobs run from
+            // here, with each worker store: counted from disk at every load.
+            let data = PluginData::open(state_dir, id)
+                .map_err(|error| failed(crate::plugin_manage::error_text(&error).to_owned()))?;
+            // The quota in force, the manifest's or the user's over it, set on the store the
+            // plugin runs with, before its `init` can write.
+            data.set_quota(data_quota);
+            kiln.data = kiln_plugin::data::State::new(data);
         }
         kiln.net = kiln_plugin::net::State::new(grants, &limits, Box::new(FeNet::new(grants)));
         // A program run has its own limit, which the call's deadline doesn't count.
@@ -3147,6 +3173,32 @@ mod programs_tests {
     }
 
     #[test]
+    fn a_users_data_quota_is_held_to_the_ceiling_over_the_manifests() {
+        let manifest = BackgroundLimits {
+            data_bytes: Some(1 << 30),
+            ..BackgroundLimits::default()
+        };
+        let ceilings = Ceilings::for_ram(16 << 30);
+        let user = |data: &str| fe_config::settings::PluginLimitsSettings {
+            background_data: Some(data.into()),
+            ..Default::default()
+        };
+        // The manifest's, with no setting; the user's over it; a ceiling of 2 GiB.
+        let (_, background) = effective_limits(Limits::default(), &manifest, None, &ceilings);
+        assert_eq!(background.data_quota(), 1 << 30);
+        let (_, background) = effective_limits(
+            Limits::default(),
+            &manifest,
+            Some(&user("64MiB")),
+            &ceilings,
+        );
+        assert_eq!(background.data_quota(), 64 << 20);
+        let (_, background) =
+            effective_limits(Limits::default(), &manifest, Some(&user("8GiB")), &ceilings);
+        assert_eq!(background.data_quota(), 2 << 30);
+    }
+
+    #[test]
     fn a_lowered_user_limit_beats_the_manifest_and_a_raised_one_stops_at_the_ceiling() {
         let manifest = BackgroundLimits {
             memory_bytes: 1 << 30,
@@ -3159,6 +3211,7 @@ mod programs_tests {
             background_wall: Some(wall.into()),
             call_deadline_ms: Some(250),
             memory: Some("128MiB".into()),
+            background_data: None,
         };
 
         // No setting: the manifest's, held to the ceilings.

@@ -379,21 +379,28 @@ impl PluginManifest {
         let (limits, clamped) = ceilings.clamp(self.background);
         let warnings = clamped
             .iter()
-            .map(|clamped| match clamped.limit {
-                BackgroundLimit::Memory => tr!(
-                    "kiln-plugin-background-memory-clamped",
-                    id = self.id.as_str(),
-                    declared = clamped.declared / (1 << 20),
-                    ceiling = clamped.ceiling / (1 << 20)
-                )
-                .to_string(),
-                BackgroundLimit::Wall => tr!(
-                    "kiln-plugin-background-wall-clamped",
-                    id = self.id.as_str(),
-                    declared = clamped.declared / 60,
-                    ceiling = clamped.ceiling / 60
-                )
-                .to_string(),
+            .filter_map(|clamped| match clamped.limit {
+                BackgroundLimit::Memory => Some(
+                    tr!(
+                        "kiln-plugin-background-memory-clamped",
+                        id = self.id.as_str(),
+                        declared = clamped.declared / (1 << 20),
+                        ceiling = clamped.ceiling / (1 << 20)
+                    )
+                    .to_string(),
+                ),
+                BackgroundLimit::Wall => Some(
+                    tr!(
+                        "kiln-plugin-background-wall-clamped",
+                        id = self.id.as_str(),
+                        declared = clamped.declared / 60,
+                        ceiling = clamped.ceiling / 60
+                    )
+                    .to_string(),
+                ),
+                // A data quota past its ceiling is refused when the manifest is parsed, so
+                // `Ceilings::clamp` never clamps one.
+                BackgroundLimit::Data => None,
             })
             .collect();
         (limits, warnings)

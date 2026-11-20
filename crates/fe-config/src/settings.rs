@@ -136,7 +136,8 @@ pub struct ExtensionsSettings {
     /// it may do before it runs.
     pub plugins_preview: bool,
     /// Limits for one installed plugin, by its ID, over what its manifest
-    /// declares: `background_memory` and `background_wall` for its jobs,
+    /// declares: `background_memory`, `background_wall` and `background_data`
+    /// for its jobs and its stored data,
     /// `call_deadline_ms` and `memory` for what you wait on. A value past
     /// what this computer allows is lowered to it. A project file can't
     /// set them.
@@ -154,6 +155,10 @@ pub struct PluginLimitsSettings {
     /// How long one background job runs before it is cancelled, as "30m"
     /// (s or m), from 1s up to 60m.
     pub background_wall: Option<String>,
+    /// The most data the plugin may keep for itself on disk, as "256MiB"
+    /// (KiB, MiB or GiB), up to 2GiB. Lowered below what it holds, it
+    /// can read and delete but not add.
+    pub background_data: Option<String>,
     /// How long one call may take of the plugin's own time, in
     /// milliseconds, from 50 to 1000.
     pub call_deadline_ms: Option<u64>,
@@ -180,6 +185,8 @@ fn host_background_memory_ceiling() -> u64 {
     background_memory_ceiling(kiln_core::platform::physical_ram_bytes().unwrap_or(4 << 30))
 }
 pub const PLUGIN_BACKGROUND_WALL_MAX_SECS: u64 = 60 * 60;
+/// The most a plugin's data quota may be (`DATA_QUOTA_CEILING`).
+pub const PLUGIN_DATA_MAX: u64 = 2 << 30;
 pub const PLUGIN_MEMORY_MAX: u64 = 256 << 20;
 pub const PLUGIN_CALL_DEADLINE_MS: std::ops::RangeInclusive<u64> = 50..=1000;
 const PLUGIN_BACKGROUND_MEMORY_MIN: u64 = 1 << 20;
@@ -227,6 +234,11 @@ impl PluginLimitsSettings {
     /// `background_wall` in seconds, if set.
     pub fn background_wall_secs(&self) -> Option<u64> {
         (self.background_wall.as_deref()).and_then(parse_plugin_wall_secs)
+    }
+
+    /// `background_data` in bytes, if set.
+    pub fn background_data_bytes(&self) -> Option<u64> {
+        self.background_data.as_deref().and_then(parse_plugin_size)
     }
 
     /// `memory` in bytes, if set.
@@ -2542,6 +2554,7 @@ fn clamp_plugin_limits_to(layer: &mut Layer, memory_ceiling: u64) {
             (1, PLUGIN_BACKGROUND_WALL_MAX_SECS),
             &|secs| format!("{secs}s"),
         );
+        check("background_data", entry, &size, (0, PLUGIN_DATA_MAX), &mib);
         check(
             "call_deadline_ms",
             entry,

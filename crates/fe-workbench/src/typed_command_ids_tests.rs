@@ -261,6 +261,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "workbench",
     ),
     (
+        "workbench.clear_plugin_data",
+        "Extensions: Clear Plugin Data",
+        "workbench",
+    ),
+    (
         "workbench.install_extension",
         "Extensions: Install from File or Folder…",
         "workbench",
