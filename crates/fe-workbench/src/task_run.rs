@@ -23,7 +23,9 @@
 //! `compiler-artifact` messages (docs/decisions/r1b9dw3g0g-debugger.md §7).
 //! The lines come from the pty as the program wrote them
 //! ([`fe_terminal::OutputTap`]), whatever the grid wraps or its scrollback
-//! drops. Its tab is an ordinary task tab, matcher and all.
+//! drops; on Windows from the grid's logical lines, since ConPTY breaks a
+//! long line's bytes at every row (docs/decisions/5zq8ddv1m3-read-runs-on-windows-keep-a-long-output.md).
+//! Its tab is an ordinary task tab, matcher and all.
 
 use std::{
     cell::RefCell,

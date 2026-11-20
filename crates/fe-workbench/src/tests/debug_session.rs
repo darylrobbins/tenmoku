@@ -782,13 +782,16 @@ fn changing_log_payloads_applies_to_the_next_session(cx: &mut TestAppContext) {
     debug.fake(0);
     debug.wait_state("running", |state| *state == SessionState::Running);
     let program = format!("{}/target/debug/main", debug.root.display());
-    assert!(!debug.log().contains(&program), "metadata only");
+    // The log holds the path as JSON writes it (`\\` on Windows).
+    let escaped = serde_json::to_string(&program).unwrap();
+    let escaped = &escaped[1..escaped.len() - 1];
+    assert!(!debug.log().contains(escaped), "metadata only");
 
     debug.set_log_payloads(true);
     let on = debug.debugger();
     assert!(on.read_with(debug.cx, |debugger, _| debugger.settings().log_payloads));
     assert!(
-        !debug.log().contains(&program),
+        !debug.log().contains(escaped),
         "the running session's is as it was"
     );
 
@@ -797,8 +800,6 @@ fn changing_log_payloads_applies_to_the_next_session(cx: &mut TestAppContext) {
     debug.start("main");
     debug.fake(1);
     debug.wait_state("running again", |state| *state == SessionState::Running);
-    let escaped = serde_json::to_string(&program).unwrap();
-    let escaped = &escaped[1..escaped.len() - 1];
     assert!(debug.log().contains(escaped), "{}", debug.log());
 }
 
@@ -1150,12 +1151,10 @@ fn a_read_run_keeps_its_output_whatever_the_scrollback(cx: &mut TestAppContext) 
         terminal.set_settings(&settings, cx);
     });
     let built = debug.root.join("target").join("debug").join("tool");
-    // Longer than the grid is wide. On Windows the ConPTY path truncates a
-    // long line (the CI run kept ~230 characters), so there it stays short.
-    let src_len = if cfg!(windows) { 20 } else { 3000 };
+    // Longer than the grid is wide.
     let artifact = serde_json::json!({
         "reason": "compiler-artifact",
-        "target": {"name": "tool", "kind": ["bin"], "src_path": "x".repeat(src_len)},
+        "target": {"name": "tool", "kind": ["bin"], "src_path": "x".repeat(3000)},
         "executable": built.to_string_lossy(),
     })
     .to_string();
