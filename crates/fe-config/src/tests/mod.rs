@@ -5,6 +5,7 @@ mod locale;
 mod lsp;
 mod settings;
 mod template_theme_names;
+mod terminal_profiles;
 mod watch;
 
 use std::{fs, path::PathBuf};

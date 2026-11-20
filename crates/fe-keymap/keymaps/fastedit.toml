@@ -1045,6 +1045,14 @@ keys = { macos = "ctrl-shift-`", default = "ctrl-~" }
 command = "terminal.new"
 context = "workbench"
 
+# terminal.new_with_profile has no key of its own. Bound with a profile, it
+# starts that one without asking, as Windows Terminal's newTab does:
+#   [[bindings]]
+#   keys = "ctrl-alt-1"
+#   command = "terminal.new_with_profile"
+#   args = { profile = "PowerShell 7" }
+#   context = "workbench"
+
 # Cycling the terminals reuses the editor-tab keys (workbench.next_tab and
 # previous_tab), so these are terminal-only: with a terminal focused they
 # outrank the workbench bindings, and elsewhere the editor tabs keep them.

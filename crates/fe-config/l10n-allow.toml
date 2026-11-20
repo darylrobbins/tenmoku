@@ -82,7 +82,7 @@ reason = "PROJECT_CHAT, the en-US text of config-project-chat-ignored"
 
 [[literal]]
 file = "src/settings.rs"
-text = "terminal.shell and terminal.shell_args in project files are ignored: a folder can't choose the program its terminal runs"
+text = "terminal.shell, terminal.shell_args, terminal.profiles and terminal.default_profile in project files are ignored: a folder can't choose the program its terminal runs"
 reason = "PROJECT_TERMINAL_SHELL, the en-US text of config-project-terminal-shell-ignored"
 
 [[literal]]

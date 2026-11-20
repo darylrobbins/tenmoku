@@ -202,6 +202,10 @@ settings-template-terminal-font_size = ⟦settings-template-terminal-font_size�
 
 settings-template-terminal-font_fallbacks = ⟦settings-template-terminal-font_fallbacks⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
 
+settings-template-terminal-default_profile = ⟦settings-template-terminal-default_profile⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
+settings-template-terminal-profiles = ⟦settings-template-terminal-profiles⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
+
 settings-template-chat-model = ⟦settings-template-chat-model⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.
 
 settings-template-chat-effort = ⟦settings-template-chat-effort⟧ Ŧĥîś ŀîñê ĩś ŀōñĝ ēñōūĝĥ ţō ŵŕāƥ āţ ēîĝĥţŷ čōŀūmñś, şō ţĥē ŵŕāƥƥîñĝ îś ţēśţēđ ţōō.

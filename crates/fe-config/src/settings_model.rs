@@ -268,7 +268,11 @@ impl SettingsModel {
             key.as_slice(),
             ["chat", ..]
                 | ["theme", ..]
-                | ["terminal", "shell" | "shell_args"]
+                | [
+                    "terminal",
+                    "shell" | "shell_args" | "profiles" | "default_profile",
+                    ..
+                ]
                 | ["vim", "shell" | "remap"]
                 | ["workbench", "icon_theme" | "locale"]
         ) && match key.as_slice() {
@@ -433,7 +437,7 @@ fn applied_project(project: &Table) -> Table {
         table.insert("debug".into(), toml::Value::Table(kept));
     }
     for (name, keys) in [
-        ("terminal", &["shell", "shell_args"][..]),
+        ("terminal", &crate::settings::TERMINAL_USER_ONLY[..]),
         ("vim", &["shell", "remap"]),
         ("workbench", &["icon_theme", "locale"]),
     ] {

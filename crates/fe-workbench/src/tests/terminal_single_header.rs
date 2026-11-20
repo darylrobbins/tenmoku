@@ -96,9 +96,17 @@ fn new_and_close_stay_reachable_with_one_terminal(cx: &mut TestAppContext) {
     started(&sessions(&workbench, cx)[0], cx);
     draw(cx);
 
-    // The dock strip's trailing controls: `+`, kill, then the dock's own.
+    // The dock strip's trailing controls: `+`, its caret, kill, then the
+    // dock's own.
     let (title, controls) = header(&workbench, cx);
-    assert_eq!(&controls[..2], ["terminal-new-button", "terminal-kill"]);
+    assert_eq!(
+        &controls[..3],
+        [
+            "terminal-new-button",
+            "terminal-profiles-button",
+            "terminal-kill"
+        ]
+    );
     assert_eq!(controls.last().map(String::as_str), Some(HIDE_BUTTON));
     let plus = cx.debug_bounds("icon-button:terminal-new-button").unwrap();
     let kill = cx.debug_bounds("icon-button:terminal-kill").unwrap();
@@ -233,7 +241,14 @@ fn second_terminal_brings_the_session_row_back_and_closing_to_one_removes_it(
     assert_eq!(session_top(cx), title.bottom());
     assert!(active_and_focused(&workbench, 0, cx));
     let (_, controls) = header(&workbench, cx);
-    assert_eq!(&controls[..2], ["terminal-new-button", "terminal-kill"]);
+    assert_eq!(
+        &controls[..3],
+        [
+            "terminal-new-button",
+            "terminal-profiles-button",
+            "terminal-kill"
+        ]
+    );
 
     // And two again brings it back.
     new_session(&workbench, cx);
