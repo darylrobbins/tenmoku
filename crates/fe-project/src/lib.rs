@@ -59,7 +59,8 @@ pub use ignore_check::{
 pub use listing::{Entry, EntryKind, Listed, Listing, open_file_under};
 pub use search::{
     FileMatches, GlobError, LineMatch, PathFilter, Replacer, SearchError, SearchOptions,
-    SearchQuery, SearchSummary, is_word_char, search, search_excluding, search_filtered,
+    SearchQuery, SearchSummary, WalkControl, WalkSummary, WalkedFile, is_word_char, search,
+    search_excluding, search_filtered, walk_files,
 };
 pub use tree::{FileTree, NodeId, Row, TreeOptions, TreeStats};
 pub use watcher::{FsChange, ProjectWatcher};

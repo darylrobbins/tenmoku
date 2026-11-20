@@ -19,14 +19,13 @@ use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
     BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch,
 };
-use ignore::{
-    DirEntry, WalkState,
-    gitignore::{Gitignore, GitignoreBuilder},
-};
-
-use crate::listing;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
 mod replace;
+mod walk;
+
+use walk::Pre;
+pub use walk::{WalkControl, WalkSummary, WalkedFile, walk_files};
 
 pub use replace::Replacer;
 
@@ -545,12 +544,8 @@ fn search_inner(
     sink: impl FnMut(Vec<FileMatches>),
 ) -> Result<SearchSummary, SearchError> {
     let matcher = query.matcher()?;
-    // Files are opened under the root without following a symlink, so it's
-    // reached through none.
-    let open_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let shared = Shared {
         root,
-        open_root: &open_root,
         excluded,
         filter,
         matcher,
@@ -586,28 +581,41 @@ fn search_inner(
     Ok(summary)
 }
 
+/// What the walk asks before opening a file: skip the excluded one, and stop
+/// at the cap.
+fn pre_open(shared: &Shared<'_>, rel: &Path) -> Pre {
+    if shared.excluded == Some(rel) {
+        shared.files_searched.fetch_add(1, Ordering::Relaxed);
+        return Pre::Skip;
+    }
+    if shared.found.load(Ordering::Relaxed) >= shared.max {
+        shared.truncated.store(true, Ordering::Relaxed);
+        return Pre::Stop;
+    }
+    shared.files_searched.fetch_add(1, Ordering::Relaxed);
+    Pre::Open
+}
+
 /// Walks on the calling thread, in path order, flushing full batches only.
 fn search_sequential<F: FnMut(Vec<FileMatches>)>(
     shared: &Shared<'_>,
     collector: &mut Collector<'_, F>,
 ) {
     let mut searchers = Searchers::new();
-    let walker = shared
-        .walk_builder()
-        .sort_by_file_name(|a, b| a.cmp(b))
-        .build();
-    for entry in walker {
-        // Unreadable entries are skipped, as the tree shows nothing for them.
-        let Ok(entry) = entry else {
-            continue;
-        };
-        match shared.search_entry(&mut searchers, &entry) {
-            Outcome::Quit => break,
-            Outcome::Skip => {}
-            Outcome::Found(file) => collector.add(file),
-            Outcome::Error(path, message) => collector.summary.errors.push((path, message)),
-        }
-    }
+    walk::walk_sequential(
+        shared.root,
+        shared.filter,
+        shared.cancel,
+        &|rel| pre_open(shared, rel),
+        |opened| {
+            match shared.search_opened(&mut searchers, opened) {
+                Outcome::Skip => {}
+                Outcome::Found(file) => collector.add(file),
+                Outcome::Error(path, message) => collector.summary.errors.push((path, message)),
+            }
+            WalkControl::Continue
+        },
+    );
 }
 
 /// Searches on the walker's threads, scoped to this call, and collects on
@@ -618,27 +626,27 @@ fn search_parallel<F: FnMut(Vec<FileMatches>)>(
     collector: &mut Collector<'_, F>,
 ) {
     let (tx, rx) = mpsc::channel();
-    let walker = shared.walk_builder().threads(threads).build_parallel();
     thread::scope(|scope| {
         scope.spawn(|| {
-            walker.run(|| {
-                let tx = tx.clone();
-                let mut searchers = Searchers::new();
-                Box::new(move |entry| {
-                    let Ok(entry) = entry else {
-                        return WalkState::Continue;
-                    };
-                    match shared.search_entry(&mut searchers, &entry) {
-                        Outcome::Quit => WalkState::Quit,
-                        Outcome::Skip => WalkState::Continue,
+            walk::walk_parallel(
+                shared.root,
+                threads,
+                shared.filter,
+                shared.cancel,
+                &|rel| pre_open(shared, rel),
+                || {
+                    let tx = tx.clone();
+                    let mut searchers = Searchers::new();
+                    move |opened| match shared.search_opened(&mut searchers, opened) {
+                        Outcome::Skip => WalkControl::Continue,
                         outcome => match tx.send(outcome) {
-                            Ok(()) => WalkState::Continue,
+                            Ok(()) => WalkControl::Continue,
                             // The collector stopped listening.
-                            Err(_) => WalkState::Quit,
+                            Err(_) => WalkControl::Stop,
                         },
                     }
-                })
-            });
+                },
+            );
             drop(tx);
         });
         loop {
@@ -659,7 +667,7 @@ fn search_parallel<F: FnMut(Vec<FileMatches>)>(
             match outcome {
                 Outcome::Found(file) => collector.add(file),
                 Outcome::Error(path, message) => collector.summary.errors.push((path, message)),
-                Outcome::Quit | Outcome::Skip => {}
+                Outcome::Skip => {}
             }
         }
         // Dropping the receiver makes the walker's threads quit at their
@@ -718,8 +726,6 @@ fn read_start(file: &fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
 
 /// What searching one walk entry came to.
 enum Outcome {
-    /// Stop the walk: cancelled, or the cap is reached.
-    Quit,
     /// Nothing to deliver.
     Skip,
     Found(FileMatches),
@@ -729,8 +735,6 @@ enum Outcome {
 /// What the walker's threads share.
 struct Shared<'a> {
     root: &'a Path,
-    /// `root` canonicalized, which files are opened under.
-    open_root: &'a Path,
     /// A file not to search, relative to `root`.
     excluded: Option<&'a Path>,
     filter: &'a PathFilter,
@@ -746,72 +750,12 @@ struct Shared<'a> {
 }
 
 impl Shared<'_> {
-    /// The listing walk, not entering what the filter excludes.
-    fn walk_builder(&self) -> ignore::WalkBuilder {
-        let root = self.root.to_path_buf();
-        let filter = self.filter.clone();
-        listing::walk_builder(self.root, move |entry| {
-            if filter.exclude.is_none() || entry.depth() == 0 {
-                return true;
-            }
-            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-            let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
-            !filter.excludes(rel, is_dir)
-        })
-    }
-
-    fn search_entry(&self, searchers: &mut Searchers, entry: &DirEntry) -> Outcome {
-        if self.cancel.load(Ordering::Relaxed) {
-            return Outcome::Quit;
-        }
-        // Regular files only: no directories, symlinks (never followed, as
-        // in the tree) or FIFOs (which would block).
-        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
-            return Outcome::Skip;
-        }
-        let path = entry.path();
-        let rel = path.strip_prefix(self.root).unwrap_or(path);
-        if !self.filter.is_empty() {
-            // A file given as the root is filtered by its name.
-            let name = Path::new(self.root.file_name().unwrap_or_default());
-            let filtered = if rel.as_os_str().is_empty() {
-                name
-            } else {
-                rel
-            };
-            if !self.filter.includes(filtered)
-                || (rel.as_os_str().is_empty() && self.filter.excludes(filtered, false))
-            {
-                return Outcome::Skip;
-            }
-        }
-        if self.excluded == Some(rel) {
-            self.files_searched.fetch_add(1, Ordering::Relaxed);
-            return Outcome::Skip;
-        }
-        if self.found.load(Ordering::Relaxed) >= self.max {
-            self.truncated.store(true, Ordering::Relaxed);
-            return Outcome::Quit;
-        }
-        self.files_searched.fetch_add(1, Ordering::Relaxed);
-        // Opened without following a symlink at any component below the
-        // root, and without blocking on a FIFO, in case either replaced the
-        // file or a directory above it since the walk saw it.
-        let opened = match (rel.as_os_str().is_empty(), self.open_root.parent()) {
-            // The root itself, a file: under its directory.
-            (true, Some(dir)) => {
-                let name = self.open_root.file_name().unwrap_or_default();
-                listing::open_file_under(dir, Path::new(name))
-            }
-            _ => listing::open_file_under(self.open_root, rel),
-        };
-        let file = match opened {
+    /// Searches one file the walk opened (or reports it didn't open).
+    fn search_opened(&self, searchers: &mut Searchers, opened: walk::Opened) -> Outcome {
+        let WalkedFile { path, rel, file } = match opened {
             Ok(file) => file,
-            Err(err) => return Outcome::Error(path.to_path_buf(), err.to_string()),
+            Err((path, message)) => return Outcome::Error(path, message),
         };
-        if !file.metadata().is_ok_and(|meta| meta.is_file()) {
-            return Outcome::Skip;
-        }
         let utf16 = is_utf16(&file);
         let mut sink = FileSink {
             shared: self,
@@ -827,7 +771,7 @@ impl Shared<'_> {
             &mut searchers.plain
         };
         if let Err(err) = searcher.search_file(&self.matcher, &file, &mut sink) {
-            return Outcome::Error(path.to_path_buf(), err.to_string());
+            return Outcome::Error(path, err.to_string());
         }
         if sink.binary {
             self.binary_skipped.fetch_add(1, Ordering::Relaxed);
@@ -838,7 +782,7 @@ impl Shared<'_> {
         }
         self.found.fetch_add(sink.count, Ordering::Relaxed);
         Outcome::Found(FileMatches {
-            path: path.to_path_buf(),
+            path,
             rel: rel.to_string_lossy().into_owned(),
             lines: sink.lines,
         })
