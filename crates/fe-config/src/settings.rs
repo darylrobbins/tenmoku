@@ -346,6 +346,14 @@ pub struct TerminalSettings {
     /// Fonts to take a character from when the terminal's font lacks it, in
     /// order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
     pub font_fallbacks: Vec<String>,
+    /// The profile a new terminal starts, by name: one found on this
+    /// machine ("PowerShell 7", "Command Prompt", "Git Bash", a WSL distro's
+    /// name, "zsh") or one of `profiles`. Empty runs `shell`, else your login
+    /// shell.
+    pub default_profile: String,
+    /// Your own terminal profiles, which the `+` button's menu lists with
+    /// the ones found on this machine. One named as a found one replaces it.
+    pub profiles: Vec<TerminalProfileSettings>,
 }
 
 impl Default for TerminalSettings {
@@ -357,8 +365,59 @@ impl Default for TerminalSettings {
             font_family: None,
             font_size: None,
             font_fallbacks: Vec::new(),
+            default_profile: String::new(),
+            profiles: Vec::new(),
         }
     }
+}
+
+impl TerminalSettings {
+    /// The profiles a terminal can start: `detected`, the ones found on this
+    /// machine, each replaced in place by the user's profile of its name
+    /// (`name_of`, ignoring ASCII case), then the user's others in order,
+    /// each made by `from_user`. A user profile without a name or a command
+    /// is left out; of two with one name, the later wins.
+    pub fn profiles_over<T>(
+        &self,
+        detected: Vec<T>,
+        name_of: impl Fn(&T) -> &str,
+        from_user: impl Fn(&TerminalProfileSettings) -> T,
+    ) -> Vec<T> {
+        let mut profiles = detected;
+        let usable = (self.profiles.iter()).filter(|profile| {
+            !profile.name.trim().is_empty() && !profile.command.trim().is_empty()
+        });
+        for user in usable {
+            let name = user.name.trim();
+            match (profiles.iter()).position(|profile| name_of(profile).eq_ignore_ascii_case(name))
+            {
+                Some(ix) => profiles[ix] = from_user(user),
+                None => profiles.push(from_user(user)),
+            }
+        }
+        profiles
+    }
+}
+
+/// A terminal profile of your own, as `[[terminal.profiles]]`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TerminalProfileSettings {
+    /// What the profile menu calls it, and `default_profile` names it by.
+    pub name: String,
+    /// The program it runs.
+    pub command: String,
+    /// The program's arguments.
+    pub args: Vec<String>,
+    /// The folder it starts in. Unset starts where a new terminal would.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// What it adds to the program's environment.
+    pub env: BTreeMap<String, String>,
+    /// An icon's name from the app's icon set, such as "terminal" or
+    /// "square-terminal". Unset uses the terminal's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Settings for the colour theme. The theme is the app's, not a window's,
@@ -2617,17 +2676,23 @@ fn drop_chat(layer: &mut Layer) {
     layer.diagnostics.push(warning);
 }
 
-/// The warning for each `terminal.shell` and `terminal.shell_args` a project
-/// file sets, in en-US.
-pub const PROJECT_TERMINAL_SHELL: &str = "terminal.shell and terminal.shell_args in project files are ignored: a folder can't choose the program its terminal runs";
+/// The warning for each `terminal.shell`, `terminal.shell_args`,
+/// `terminal.profiles` and `terminal.default_profile` a project file sets,
+/// in en-US.
+pub const PROJECT_TERMINAL_SHELL: &str = "terminal.shell, terminal.shell_args, terminal.profiles and terminal.default_profile in project files are ignored: a folder can't choose the program its terminal runs";
 
-/// Drops a project layer's `terminal.shell` and `terminal.shell_args`, with a
+/// The `terminal` keys a project file may not set: [`PROJECT_TERMINAL_SHELL`]'s.
+pub(crate) const TERMINAL_USER_ONLY: [&str; 4] =
+    ["shell", "shell_args", "profiles", "default_profile"];
+
+/// Drops a project layer's `terminal.shell`, `terminal.shell_args`,
+/// `terminal.profiles` and `terminal.default_profile`, with a
 /// [`PROJECT_TERMINAL_SHELL`] warning at each; its other `terminal` keys stay.
 fn drop_terminal_shell(layer: &mut Layer) {
     let Some(toml::Value::Table(terminal)) = layer.table.get_mut("terminal") else {
         return;
     };
-    let dropped: Vec<&str> = ["shell", "shell_args"]
+    let dropped: Vec<&str> = TERMINAL_USER_ONLY
         .into_iter()
         .filter(|key| terminal.remove(*key).is_some())
         .collect();

@@ -348,6 +348,7 @@ command-terminal-move_to_bottom = Move Terminal to Bottom
 command-terminal-move_to_left = Move Terminal to Left
 command-terminal-move_to_right = Move Terminal to Right
 command-terminal-new = New Terminal
+command-terminal-new_with_profile = New Terminal with Profile…
 command-terminal-next = Next Terminal
 command-terminal-next_prompt = Terminal: Next Prompt
 command-terminal-previous = Previous Terminal

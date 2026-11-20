@@ -2179,6 +2179,18 @@ impl Workbench {
         self.new_terminal(cx.window, cx.cx);
     }
 
+    /// New Terminal with Profile…
+    ///
+    /// Starts a terminal from the profile its `profile` argument names, or
+    /// asks which.
+    #[command(id = "terminal.new_with_profile")]
+    fn new_terminal_with_profile_command(&mut self, cx: &mut Cx<Self>) {
+        self.ran(cx);
+        let profile = kiln::current_invocation(cx.cx)
+            .and_then(|invocation| Some(invocation.args.get("profile")?.as_str()?.to_owned()));
+        self.new_terminal_with_profile(profile, cx.window, cx.cx);
+    }
+
     /// Kill Terminal
     #[command(id = "terminal.close")]
     fn close_terminal_command(&mut self, cx: &mut Cx<Self>) {

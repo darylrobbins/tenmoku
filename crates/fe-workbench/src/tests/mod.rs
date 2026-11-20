@@ -205,6 +205,7 @@ mod tabs;
 mod task_defs_python;
 mod terminal_b3;
 mod terminal_plus;
+mod terminal_profiles;
 mod terminal_single_header;
 mod test_ask_agent;
 mod test_failure_detail;

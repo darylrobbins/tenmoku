@@ -450,6 +450,11 @@ const MOVED: &[(&str, &str, &str)] = &[
     ("find.replace_all", "Replace All", "find_bar"),
     ("terminal.toggle", "Toggle Terminal", "workbench"),
     ("terminal.new", "New Terminal", "workbench"),
+    (
+        "terminal.new_with_profile",
+        "New Terminal with Profile…",
+        "workbench",
+    ),
     ("terminal.close", "Kill Terminal", "workbench"),
     ("terminal.next", "Next Terminal", "workbench"),
     ("terminal.previous", "Previous Terminal", "workbench"),

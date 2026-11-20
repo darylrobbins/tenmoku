@@ -94,14 +94,18 @@ fn wait() -> Step {
 
 /// Checks the header the last frame drew: one session draws no strip of
 /// its own, so the dock's strip is the one header row and its trailing
-/// controls start with the panel's `+` and kill (T415). Fails the scene if
-/// they don't.
+/// controls start with the panel's `+`, its caret's menu of profiles and
+/// kill (T415). Fails the scene if they don't.
 fn one_header() -> Step {
     Box::new(|workbench, _, cx| {
         let dock = workbench.terminal_dock().read(cx);
         let controls = dock.dock().drawn().controls();
         let ids: Vec<_> = controls.iter().map(|(id, _)| id.as_str()).collect();
-        if !ids.starts_with(&["terminal-new-button", "terminal-kill"]) {
+        if !ids.starts_with(&[
+            "terminal-new-button",
+            "terminal-profiles-button",
+            "terminal-kill",
+        ]) {
             fail(format!(
                 "the dock strip doesn't carry + and kill with one session: {ids:?}"
             ));

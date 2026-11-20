@@ -562,6 +562,12 @@ settings-status_bar-visible =
 
 settings-terminal = The terminal panel.
 
+settings-terminal-default_profile =
+    The profile a new terminal starts, by name: one found on this
+    machine ("PowerShell 7", "Command Prompt", "Git Bash", a WSL distro's
+    name, "zsh") or one of `profiles`. Empty runs `shell`, else your login
+    shell.
+
 settings-terminal-font_fallbacks =
     Fonts to take a character from when the terminal's font lacks it, in
     order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
@@ -571,6 +577,10 @@ settings-terminal-font_family = The terminal's font family. Unset uses the edito
 settings-terminal-font_size =
     The terminal's font size, in points. Unset, 12, the design's small
     code size.
+
+settings-terminal-profiles =
+    Your own terminal profiles, which the `+` button's menu lists with
+    the ones found on this machine. One named as a found one replaces it.
 
 settings-terminal-scrollback =
     How many lines the terminal keeps above the screen. Applies to

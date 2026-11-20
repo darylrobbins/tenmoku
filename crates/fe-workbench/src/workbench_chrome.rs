@@ -29,7 +29,7 @@ use crate::{
     pane_group::{Axis, Destination, Direction, RESIZE_STEP},
     pane_toolbar::ToolbarRequest,
     picker::Picker,
-    terminal_panel::{RenameTerminal, TERMINAL, TerminalPanel, TerminalPanelEvent},
+    terminal_panel::{PickProfile, RenameTerminal, TERMINAL, TerminalPanel, TerminalPanelEvent},
     workbench::Palette,
 };
 use fe_command::Value;
@@ -199,6 +199,8 @@ impl Workbench {
                         workbench.ask_terminal_name(Some(id), window, cx)
                     }
                     TerminalPanelEvent::ShowRequested => workbench.show_terminal_dock(window, cx),
+                    // For an open picker of them.
+                    TerminalPanelEvent::ProfilesChanged => {}
                 },
             );
         // A tool window dropped on it, from the sidebar's rail, moves.
@@ -641,6 +643,46 @@ impl Workbench {
         self.terminal
             .update(cx, |terminal, cx| terminal.add(window, cx));
         self.show_terminal_dock(window, cx);
+    }
+
+    /// `terminal.new_with_profile`: with `profile`, shows the bottom dock with
+    /// a new session of the profile it names, focused, as `terminal.new`
+    /// does with the default one; an unknown name is a toast and starts
+    /// nothing. Without, asks which profile.
+    pub(crate) fn new_terminal_with_profile(
+        &mut self,
+        profile: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(profile) = profile else {
+            return self.ask_terminal_profile(window, cx);
+        };
+        let started = self.terminal.update(cx, |terminal, cx| {
+            terminal.add_profile(&profile, window, cx)
+        });
+        if started {
+            self.show_terminal_dock(window, cx);
+        }
+    }
+
+    /// Asks which profile to start a terminal from: Enter starts it, as
+    /// `terminal.new_with_profile` with its name does, and Escape starts
+    /// nothing.
+    fn ask_terminal_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_palette(window, cx);
+        let (workbench, terminal) = (cx.entity().downgrade(), self.terminal.clone());
+        let picker = cx.new(|cx| {
+            let delegate = PickProfile::new(workbench, &terminal, cx);
+            Picker::new(
+                delegate,
+                text!("workbench-terminal-profile-placeholder"),
+                fe_ui::ui_theme(cx),
+                cx,
+            )
+        });
+        picker.update(cx, |picker, cx| picker.show(window, cx));
+        self.show_palette(Palette::Rename, picker, window, cx);
     }
 
     /// `terminal.close`: drops the active session.
