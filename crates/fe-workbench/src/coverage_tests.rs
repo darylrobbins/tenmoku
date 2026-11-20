@@ -11,10 +11,12 @@ use std::{
 
 use fe_project::FsChange;
 
+#[cfg(unix)]
+use crate::coverage::load_report;
 use crate::coverage::{
     CoverageError, CoverageReport, CoverageSource, Limits, LineCover, MAX_FILES, MAX_GLOB_MATCHES,
     MAX_LINE_RECORDS, MAX_XML_BYTES, POLL_INTERVAL, discover, discover_limited, find_report,
-    glob_match, is_foreign_absolute, load_report, normalize, parse_report,
+    glob_match, is_foreign_absolute, normalize, parse_report,
 };
 
 /// A project folder, and its canonical path, which reports' paths resolve
