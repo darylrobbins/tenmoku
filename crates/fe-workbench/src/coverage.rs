@@ -1448,6 +1448,10 @@ struct WatchPlaces {
     places: Vec<(PathBuf, Vec<String>)>,
     names: Vec<Vec<char>>,
     roots: [PathBuf; 2],
+    /// Folders on the way to a report, and their canonical targets, as
+    /// found now and as last remembered: a change at or under one is owed
+    /// a look even once it's gone.
+    dirs: Vec<PathBuf>,
 }
 
 impl WatchPlaces {
@@ -1469,7 +1473,7 @@ impl WatchPlaces {
                     glob_match(&glob, &part)
                 })
         });
-        if in_place {
+        if in_place || self.dirs.iter().any(|dir| path.starts_with(dir)) {
             return true;
         }
         let inside = self.roots.iter().any(|root| path.starts_with(root));
@@ -1516,6 +1520,9 @@ pub struct CoverageSource {
     dirty: bool,
     /// A look for a newer report is owed.
     rediscover: bool,
+    /// The folders a searched path passes through (a glob's matches too)
+    /// and their canonical targets, as of the last look for a report.
+    known_dirs: Vec<PathBuf>,
     next_check: Option<Instant>,
     next_discover: Option<Instant>,
     #[cfg(test)]
@@ -1554,6 +1561,7 @@ impl CoverageSource {
             watching: false,
             dirty: true,
             rediscover: true,
+            known_dirs: Vec::new(),
             next_check: None,
             next_discover: None,
             #[cfg(test)]
@@ -1634,7 +1642,11 @@ impl CoverageSource {
                         .is_some_and(|(found, canonical)| path == found || path == canonical);
                     // The followed report changing can change which is
                     // newest, so it's looked for again too.
-                    let places = places.get_or_insert_with(|| self.watch_places());
+                    let places = places.get_or_insert_with(|| {
+                        let mut places = self.watch_places();
+                        places.dirs.extend(self.known_dirs.iter().cloned());
+                        places
+                    });
                     if followed || places.could_be_report(path) {
                         self.dirty = true;
                         self.rediscover = true;
@@ -1674,6 +1686,7 @@ impl CoverageSource {
         let mut canonical_dirs: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
         let mut places = WatchPlaces::default();
         for pattern in patterns {
+            self.folders_on_the_way(&pattern, &mut places.dirs);
             places.places.push((root.clone(), pattern.clone()));
             places
                 .places
@@ -1707,6 +1720,48 @@ impl CoverageSource {
         places
     }
 
+    /// Every folder `pattern`'s leading parts reach, wildcards listed
+    /// (at most [`MAX_GLOB_MATCHES`] a part, as the search lists), with
+    /// canonical targets.
+    fn folders_on_the_way(&self, pattern: &[String], out: &mut Vec<PathBuf>) {
+        let mut dirs = vec![self.root.clone()];
+        let mut globbed = false;
+        for part in pattern.iter().take(pattern.len().saturating_sub(1)) {
+            if has_glob(part) {
+                globbed = true;
+                let glob: Vec<char> = part.chars().collect();
+                let mut next = Vec::new();
+                for dir in &dirs {
+                    let Ok(entries) = fs::read_dir(dir) else {
+                        continue;
+                    };
+                    for entry in entries.flatten() {
+                        let name: Vec<char> = entry.file_name().to_string_lossy().chars().collect();
+                        if next.len() < MAX_GLOB_MATCHES && glob_match(&glob, &name) {
+                            next.push(dir.join(entry.file_name()));
+                        }
+                    }
+                }
+                dirs = next;
+            } else {
+                dirs.iter_mut().for_each(|dir| dir.push(part));
+            }
+            for dir in &dirs {
+                // A plain folder is covered by the places; a wildcard's
+                // match, or a symlink's target, isn't.
+                if globbed {
+                    out.push(dir.clone());
+                }
+                let relative = dir.strip_prefix(&self.root).unwrap_or(dir);
+                if let Ok(canonical) = dunce::canonicalize(dir)
+                    && canonical != self.canonical_root.join(relative)
+                {
+                    out.push(canonical);
+                }
+            }
+        }
+    }
+
     /// Lands a finished load, and checks the report when a check is due
     /// at `now`. True when the report or the error changed.
     pub fn poll(&mut self, now: Instant) -> bool {
@@ -1731,6 +1786,7 @@ impl CoverageSource {
             self.rediscover = false;
             self.next_discover = Some(now + DISCOVER_INTERVAL);
             changed |= self.discover();
+            self.known_dirs = self.watch_places().dirs;
         }
         self.dirty = false;
         self.next_check = Some(now + POLL_INTERVAL);
@@ -1772,12 +1828,15 @@ impl CoverageSource {
         }
         match discover(&self.root, self.setting.as_deref()) {
             Ok(path) => {
+                // A symlink repointed leaves the spelled path as it was but
+                // not the file: the report is loaded again, whatever its
+                // stamp.
+                let canonical = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
                 if self
                     .path
                     .as_ref()
-                    .is_none_or(|(followed, _)| *followed != path)
+                    .is_none_or(|(followed, was)| *followed != path || *was != canonical)
                 {
-                    let canonical = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
                     self.path = Some((path, canonical));
                     self.stamp = None;
                 }
