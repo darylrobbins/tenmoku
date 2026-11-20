@@ -1,8 +1,8 @@
 ---
 task_uid: "01m7tcz874j4zppb5zq8ddv1m3"
 task: "T1976"
-rev: 1
-type: "bugfix"
+rev: 2
+type: "chore"
 complexity: "m"
 criteria:
   - id: "C1"
