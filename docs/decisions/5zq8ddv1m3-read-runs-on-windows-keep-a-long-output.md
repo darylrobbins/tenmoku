@@ -99,3 +99,37 @@ sessions don't use `GridTap`.
   written as cargo writes it.
 - `tests::debug_session::a_read_run_keeps_its_output_whatever_the_scrollback`
   is back to a 3000-char `src_path` on every OS.
+
+## CI runs
+
+All on the lead's draft PR #10 (`ci/t1976-windows`).
+
+- **Before the fix**:
+  [run 44621966050](https://github.com/tenmoku-editor/tenmoku/actions/runs/44621966050)
+  at 861a4f928, with the probe and the 3000-char `src_path` but no fix. The
+  [windows job 135905693750](https://github.com/tenmoku-editor/tenmoku/actions/runs/44621966050/job/135905693750)
+  fails `fe-terminal::conpty_long_line an_80_column_session_taps_a_3200_char_line_whole`
+  and `fe-workbench tests::debug_session::a_read_run_keeps_its_output_whatever_the_scrollback`.
+  T1973's
+  [run 44558333306](https://github.com/tenmoku-editor/tenmoku/actions/runs/44558333306)
+  at 152a3d2e1 failed the read-run test the same way.
+- **After the fix**:
+  [run 44644534814](https://github.com/tenmoku-editor/tenmoku/actions/runs/44644534814)
+  at 23ff84602.
+  - [windows job 135983646619](https://github.com/tenmoku-editor/tenmoku/actions/runs/44644534814/job/135983646619)
+    passes `conpty_long_line` (`child` and
+    `an_80_column_session_taps_a_3200_char_line_whole`), the read-run test
+    (21.9 s), and `changing_log_payloads_applies_to_the_next_session`.
+  - [linux job 135983646474](https://github.com/tenmoku-editor/tenmoku/actions/runs/44644534814/job/135983646474)
+    and the macOS
+    [check job 135983646893](https://github.com/tenmoku-editor/tenmoku/actions/runs/44644534814/job/135983646893)
+    pass the read-run test and both `pty_loop::tests::a_grid_tap_*` tests.
+    macOS passes all 11,278 tests.
+- **Failures that are on main too**: Windows fails three
+  `tests::run_process` cancel tests (`a_cancel_kills_on_time_while_the_sink_is_blocked`,
+  `a_cancel_kills_on_time_while_the_main_thread_is_behind`,
+  `cancel_kills_the_whole_process_group`). Linux fails
+  `fe-project::fs_ops_undo another_entry_in_its_place_in_the_trash_is_not_taken`.
+  Main's
+  [run 44617679647](https://github.com/tenmoku-editor/tenmoku/actions/runs/44617679647)
+  at this lane's base, 301b20dc6, fails the same four.
