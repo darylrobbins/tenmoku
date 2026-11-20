@@ -39,7 +39,7 @@ use crate::document::Admitted;
 use crate::event::{LspError, ServerId, not_open};
 use crate::manager::LspManager;
 use crate::readiness::Readiness;
-use crate::server::send_request;
+use crate::server::{send_raw_request, send_request};
 
 /// The most abandoned requests a session may have unanswered; one more
 /// recycles it.
@@ -421,6 +421,40 @@ where
         wrap,
         _result: PhantomData,
     })
+}
+
+/// Request `method`, whatever it is, with JSON `params`, answering
+/// `answer` with `wrap` of the id it went with and its reply, as [`call`]
+/// does for a typed request (custom.rs).
+pub(crate) fn call_raw<A: Send + 'static>(
+    answer: oneshot::Sender<A>,
+    method: String,
+    params: serde_json::Value,
+    wrap: impl FnOnce(i32, Result<Reply<serde_json::Value>, LspError>) -> A + Send + 'static,
+) -> Issue {
+    Box::new(Call {
+        answer,
+        params,
+        #[cfg(test)]
+        method: interned(&method),
+        send: move |socket: &ServerSocket, params| send_raw_request(socket, method, params).boxed(),
+        wrap,
+        _result: PhantomData,
+    })
+}
+
+/// `method` as a `&'static str`, for [`Issuer::method`]: each distinct one
+/// is kept for the rest of the test run.
+#[cfg(test)]
+fn interned(method: &str) -> &'static str {
+    static METHODS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut methods = METHODS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(kept) = methods.iter().find(|kept| **kept == method) {
+        return kept;
+    }
+    let kept: &'static str = Box::leak(method.to_owned().into_boxed_str());
+    methods.push(kept);
+    kept
 }
 
 struct Call<P, T, A, S, W> {

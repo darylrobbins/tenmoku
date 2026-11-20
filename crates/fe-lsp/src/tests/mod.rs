@@ -23,6 +23,7 @@ mod progress;
 mod provider_wait;
 mod pull_diagnostics;
 mod python_servers;
+mod raw_methods;
 mod readiness;
 mod registration;
 mod registry;

@@ -9,8 +9,8 @@
 //! - **Waiting.** The request is made on the main thread, which hands the plugin's thread its
 //!   future; the plugin's thread waits for it until its call's deadline ([`CallDeadline`]) or the
 //!   plugin unloads, and no longer. The future is dropped then, which cancels the request.
-//! - **Known limit.** fe-lsp sends only the methods in its `raw_requests!` and `raw_notices!`
-//!   allowlists (`crates/fe-lsp/src/custom.rs`); any other is `failed` here, with its reason.
+//! - **Any method.** fe-lsp sends whatever method the plugin names (`crates/fe-lsp/src/custom.rs`);
+//!   which ones a plugin may send is fe-plugin's `is_routed` to judge.
 
 use std::{
     future::Future,
@@ -312,3 +312,7 @@ fn wait<T>(future: impl Future<Output = T>, stop: &Stop, deadline: Instant) -> R
 #[cfg(test)]
 #[path = "plugin_lsp_tests.rs"]
 mod plugin_lsp_tests;
+
+#[cfg(test)]
+#[path = "plugin_lsp_raw_tests.rs"]
+mod plugin_lsp_raw_tests;

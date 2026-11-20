@@ -1,52 +1,21 @@
 //! Notifications to every server of a manager that concern no one
 //! document (`workspace/didChangeWatchedFiles`, file operations).
 
+use std::borrow::Cow;
+
 use async_lsp::ServerSocket;
 use lsp_types::ServerCapabilities;
-use lsp_types::notification::Notification;
 use serde_json::Value;
 
 use crate::event::ServerId;
 use crate::manager::LspManager;
 use crate::server::Command;
 
-/// Declares a notification whose params stay JSON, for [`send`] to look up
-/// by method name (async-lsp types its notifications at compile time).
-macro_rules! raw_notifications {
-    ($($name:ident = $method:literal),* $(,)?) => {
-        $(
-            enum $name {}
-            impl Notification for $name {
-                type Params = Value;
-                const METHOD: &'static str = $method;
-            }
-        )*
-
-        /// Queues `method` on `socket`; false if it isn't one of those fe-lsp sends.
-        pub(crate) fn send(socket: &ServerSocket, method: &str, params: Value) -> bool {
-            match method {
-                $($method => {
-                    // If the loop has gone, `loop_done` says so.
-                    let _ = socket.notify::<$name>(params);
-                    true
-                })*
-                _ => {
-                    let sent = crate::custom::send_notice(socket, method, params);
-                    if !sent {
-                        log::warn!("no notification {method} to send");
-                    }
-                    sent
-                }
-            }
-        }
-    };
-}
-
-raw_notifications! {
-    DidChangeWatchedFiles = "workspace/didChangeWatchedFiles",
-    DidCreateFiles = "workspace/didCreateFiles",
-    DidRenameFiles = "workspace/didRenameFiles",
-    DidDeleteFiles = "workspace/didDeleteFiles",
+/// Queues notification `method`, whatever it is, on `socket`: the editor's
+/// own and a plugin's (custom.rs) alike.
+pub(crate) fn send(socket: &ServerSocket, method: &str, params: Value) {
+    // If the loop has gone, `loop_done` says so.
+    let _ = socket.notify_raw(method.to_owned(), params);
 }
 
 impl LspManager {
@@ -67,7 +36,13 @@ impl LspManager {
                 continue;
             };
             // A server that has gone has nothing to be told.
-            self.send(id, Command::Notify { method, params });
+            self.send(
+                id,
+                Command::Notify {
+                    method: Cow::Borrowed(method),
+                    params,
+                },
+            );
         }
     }
 }

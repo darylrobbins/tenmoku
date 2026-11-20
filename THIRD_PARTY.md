@@ -87,7 +87,7 @@ One line per class of shipped non-code asset. Result: one gap, fixed in this car
 - Themes: `tenmoku-*` are our own; `vscode-*` and `catppuccin-*` each have a row above and a NOTICE entry (MIT). No gap.
 - Icons: Lucide (ISC, Feather-derived MIT) and Material Icon Theme (MIT), each with its LICENSE file under `kiln/crates/kiln-ui/assets/`. Gap found and fixed: eight Lucide icons (`chevron-down`, `cloud`, `fold-vertical`, `list-x`, `refresh-cw`, `rotate-ccw`, `tag`, `unfold-vertical`) shipped with no row; they are now in the icons table, the count is 68 and the Feather classification is updated.
 - Grammars and queries: every grammar crate is in the table below with its licence; adapted queries have rows above, the rest are ours. No gap.
-- Vendored crates: each of the nine under `vendor/` has a LICENSE file and a footnote below. No gap.
+- Vendored crates: each of the ten under `vendor/` has a LICENSE file and a footnote below. No gap.
 
 ## Tree-sitter grammars and highlight queries
 
@@ -467,6 +467,7 @@ We delete `Versions/B/XPCServices` from our copy (Tenmoku is not sandboxed) and 
 
 Run `cargo deny list` for every crate and its license. Release builds must ship
 the license texts. Generating `THIRD_PARTY_LICENSES` is a release-checklist item.
+One dependency is patched: `async-lsp` 0.2.4¹⁷, fe-lsp's language-server client.
 
 ¹² Vendored in `vendor/tree-sitter-gitignore/` as a path dependency, because
 crates.io has no upstream crate (only a third-party republish, which we don't
@@ -501,3 +502,11 @@ ours. The licence is upstream's. The vendored README says how to update it.
 the query. `crates/fe-grammar-csv/{csv,tsv}/src/` is what tree-sitter CLI 0.25
 generates from it, as with every grammar here; its `tree_sitter/` headers come from
 the CLI (MIT). We don't use `tree-sitter-csv` from crates.io.
+
+¹⁷ Vendored in `vendor/async-lsp/` and used through `[patch.crates-io]`. It's
+0.2.4 (upstream commit `da6ef29`), `MIT OR Apache-2.0`, with a fastedit patch to
+`src/lib.rs` alone: its sockets get `request_raw` and `notify_raw`, which send a
+method named at run time through the same path as the typed sends, so plugins can
+send any language-server method. Both licence files, `LICENSE-MIT` and
+`LICENSE-APACHE`, are upstream's and kept. It ships no NOTICE file, so NOTICE has
+no entry for it. The vendored README lists the changes and says when to drop it.

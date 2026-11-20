@@ -41,7 +41,7 @@ const PLUGIN: &str = "acme";
 const METHOD: &str = "fastedit-test/custom";
 const NOTICE: &str = "fastedit-test/notice";
 
-fn grants() -> Grants {
+pub(super) fn grants() -> Grants {
     ["lsp:rust-analyzer", "buffer.read", "fs.read:workspace"]
         .into_iter()
         .map(|capability| Capability::parse(capability).unwrap())
@@ -50,7 +50,7 @@ fn grants() -> Grants {
 
 /// Runs `call` on a thread of its own, as a plugin's thread calls, and returns what it did, the
 /// main thread taking jobs meanwhile.
-fn on_plugin_thread<R: Send + 'static>(
+pub(super) fn on_plugin_thread<R: Send + 'static>(
     s: &mut Lsp,
     call: impl FnOnce() -> R + Send + 'static,
 ) -> R {
@@ -134,7 +134,7 @@ fn a_plugins_lsp_request_reaches_the_fake_servers_session(cx: &mut TestAppContex
     });
     assert_eq!(answer.unwrap(), "{\"answered\":true}");
 
-    // A root no window has, and a method fe-lsp can't send, are refused.
+    // A root no window has, and a method the editor routes itself, are refused.
     let (missing, mut plugin) = on_plugin_thread(&mut s, move || {
         let missing = plugin.request(
             "rust-analyzer".into(),
@@ -145,18 +145,15 @@ fn a_plugins_lsp_request_reaches_the_fake_servers_session(cx: &mut TestAppContex
         (missing, plugin)
     });
     assert!(matches!(missing, Err(Error::NotFound(_))), "{missing:?}");
-    let unsendable = on_plugin_thread(&mut s, move || {
+    let routed = on_plugin_thread(&mut s, move || {
         plugin.request(
             "rust-analyzer".into(),
             Target::Buffer(buffer),
-            "experimental/unknownMethod".into(),
+            "textDocument/hover".into(),
             "null".into(),
         )
     });
-    assert!(
-        matches!(unsendable, Err(Error::Failed(_))),
-        "{unsendable:?}"
-    );
+    assert!(matches!(routed, Err(Error::Denied(_))), "{routed:?}");
 }
 
 #[test]

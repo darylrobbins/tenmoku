@@ -48,6 +48,7 @@
 //!   a status event.
 
 use kiln_l10n::tr;
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -186,9 +187,10 @@ pub(crate) enum Command {
     Configure(serde_json::Value),
     /// A notification on no document in particular, sent in order with the
     /// requests and document sync queued before it (notify.rs), with the
-    /// params the session's registrations leave it (watched_files.rs).
+    /// params the session's registrations leave it (watched_files.rs). The
+    /// method is the editor's own, or any a plugin names (custom.rs).
     Notify {
-        method: &'static str,
+        method: Cow<'static, str>,
         params: serde_json::Value,
     },
     /// Drain every open document: a backstop tick queued it, behind the
@@ -1307,13 +1309,18 @@ impl Actor {
                 }
             }
             Command::Notify { method, params } => {
-                let sent = {
-                    let session = lock(&self.session);
-                    watched_files::for_session(method, params, &session.registrations)
+                let sent = match method {
+                    Cow::Borrowed(method) => {
+                        let session = lock(&self.session);
+                        watched_files::for_session(method, params, &session.registrations)
+                            .map(|(method, params)| (Cow::Borrowed(method), params))
+                    }
+                    // A plugin's (custom.rs) goes as named: never taken for the
+                    // editor's own files-changed marker.
+                    Cow::Owned(method) => Some((Cow::Owned(method), params)),
                 };
-                if let Some((method, params)) = sent
-                    && crate::notify::send(&self.socket, method, params)
-                {
+                if let Some((method, params)) = sent {
+                    crate::notify::send(&self.socket, &method, params);
                     let _ = self.socket.emit(Taken);
                     self.sent += 1;
                     if method == DidChangeWatchedFiles::METHOD {
@@ -1974,7 +1981,25 @@ pub(crate) fn send_request<R: Request>(
     params: R::Params,
 ) -> impl Future<Output = async_lsp::Result<R::Result>> + Send + 'static {
     let socket = socket.clone();
-    let mut reply = Box::pin(async move { socket.request::<R>(params).await });
+    polled_once(async move { socket.request::<R>(params).await })
+}
+
+/// As [`send_request`], for request `method`, whatever it is, with JSON
+/// `params` and result (custom.rs). Its id comes from the same counter.
+pub(crate) fn send_raw_request(
+    socket: &ServerSocket,
+    method: String,
+    params: serde_json::Value,
+) -> impl Future<Output = async_lsp::Result<serde_json::Value>> + Send + 'static {
+    let socket = socket.clone();
+    polled_once(async move { socket.request_raw(method, params).await })
+}
+
+/// `reply`, polled once now, so a request is sent in issue order.
+fn polled_once<T: Send + 'static>(
+    reply: impl Future<Output = T> + Send + 'static,
+) -> impl Future<Output = T> + Send + 'static {
+    let mut reply = Box::pin(reply);
     match reply
         .as_mut()
         .poll(&mut Context::from_waker(futures::task::noop_waker_ref()))
