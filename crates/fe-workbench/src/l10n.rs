@@ -34,5 +34,6 @@ kiln_l10n::resources! {
         "../l10n/en-US/build_runs.ftl",
         "../l10n/en-US/inbox.ftl",
         "../l10n/en-US/debug.ftl",
+        "../l10n/en-US/coverage.ftl",
     ],
 }

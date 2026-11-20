@@ -33,6 +33,7 @@ mod chat_tool_loop;
 mod closed_editors;
 mod color_literals;
 mod config_problems;
+pub mod coverage;
 pub mod debug_breakpoints;
 pub mod debug_gutter;
 mod debug_hover;
@@ -413,6 +414,8 @@ mod close_others_tests;
 mod closed_editors_tests;
 #[cfg(test)]
 mod command_catalog_tests;
+#[cfg(test)]
+mod coverage_tests;
 #[cfg(test)]
 mod extension_snippets_tests;
 #[cfg(test)]
