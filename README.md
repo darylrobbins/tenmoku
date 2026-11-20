@@ -4,7 +4,8 @@ Tenmoku is a native code editor for macOS, Windows and Linux, written in Rust
 on [GPUI](https://www.gpui.rs/) (rendered with Metal on macOS). It is a small, curated
 editor with the parts of an IDE you reach for every day (a project tree,
 language-server features, git, a terminal) and no embedded web runtime. 69 languages come as grammar extensions, beside the
-built-in ones. More at [tenmoku.dev](https://tenmoku.dev). It is
+built-in ones. More at [tenmoku.dev](https://tenmoku.dev); the user guide is at
+[tenmoku.dev/docs](https://tenmoku.dev/docs). It is
 pre-1.0: expect rough edges, and settings and the plugin API may change.
 
 ## Install

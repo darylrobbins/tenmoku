@@ -1,0 +1,9 @@
+[book]
+title = "Tenmoku User Guide"
+src = "src"
+language = "en"
+
+[output.html]
+# Published at https://tenmoku.dev/docs; mdBook needs this for its 404 page.
+site-url = "/docs/"
+git-repository-url = "https://github.com/tenmoku-editor/tenmoku"
