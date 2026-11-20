@@ -184,9 +184,9 @@ pub use kiln_plugin::grants::GrantStore;
 pub use kiln_shell::MenuBarView;
 pub use lsp::{extension_servers, set_lsp_settings, set_server_launcher};
 pub use lsp_consent::{
-    CONSENT_FILE, ExtensionConsent, ExtensionServer, Invocation, PendingConsent,
-    decline_extension_server, grant_extension_server, pending_extension_consents,
-    set_extension_consent_file, set_extension_servers,
+    CONSENT_FILE, ExtensionConsent, ExtensionServer, Invocation, PACKAGE_MAX_FILE_BYTES,
+    PACKAGE_MAX_FILES, PendingConsent, decline_extension_server, grant_extension_server,
+    pending_extension_consents, set_extension_consent_file, set_extension_servers,
 };
 pub use open::{
     ConfigDirOverride, DocumentRoute, file_identity, open_documents, path_of_url, route_document,
@@ -423,6 +423,8 @@ mod external_format_wiring_tests;
 mod grammar_prompt_tests;
 #[cfg(test)]
 mod list_vim_keys_tests;
+#[cfg(test)]
+mod lsp_consent_package_tests;
 #[cfg(test)]
 mod lsp_consent_relaunch_tests;
 #[cfg(test)]

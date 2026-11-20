@@ -1,6 +1,7 @@
 # Extensions and plugins for kiln apps
 
 **Status: accepted** (user, 2026-10-21; §12). Task T839.
+**Revision 2026-11-19 (T1978):** LSP launch consent now binds the whole installed extension package (a SHA-256 over every file under its directory, `node_modules` included, symlinks not followed, whole content always hashed, an unreadable or over 200,000-entry / 2 GiB / 256 MiB-a-file package is "incomplete" and never granted), not only the script files the arguments name; this closes review finding T839 F5, which approval had overridden. Known limit: kiln may read an oversized file (over 256 MiB, which consent refuses) whole while hashing it before that refusal; bounding that is follow-up T2026, and running granted servers from package snapshots is T2024.
 Amends `app-framework.md` §8 ("There's no themes directory or picker by name")
 by reference; that file isn't edited here (T401 holds it).
 
@@ -78,9 +79,26 @@ Two stages.
    and asks again before the new one starts (as §7 decision 3 does for plugins).
    An interpreter as the executable (`node`, `python`, `sh`, `bash`, `deno`…) is
    flagged as able to run arbitrary code, since its arguments can be a script or
-   `-e`; the prompt says so, and a changed script file the arguments name
-   inside the extension's directory counts as a changed specification (consent
-   records its content hash). Workspace extensions get this only after folder
+   `-e`; the prompt says so, and a change to any file in the installed
+   extension package counts as a changed specification: consent records the
+   content hash of each script file the arguments name (for the prompt's
+   changed-script warning) and a SHA-256 over every file under the extension's
+   directory (sorted relative paths and contents), so a module the named script
+   imports can't change under an unchanged `node server.js`. The package hash
+   includes `node_modules` and everything else that could run, follows no
+   symlink (its target's bytes are hashed), and hashes the native bytes of every
+   path, so names differing only in invalid UTF-8 differ. It is never given on
+   less than the whole content: a package that can't be read completely (a
+   directory that can't be listed, a missing file, a special file) or is
+   past 200,000 entries (files, directories and symlinks, as the reload
+   watcher counts them), 2 GiB in all, or 256 MiB in one file hashes as "incomplete", which no grant
+   matches and which can't be granted, so its server isn't started. The reload
+   watcher lists every file whatever its size, so an oversized file's addition
+   or removal is seen; kiln may still read such a file whole while hashing it,
+   before consent refuses the package, a known limit that follow-up T2026
+   fixes (bounded hash reads, size and mtime fingerprints for oversized
+   files). A grant stored without it fails closed and asks again.
+   Hashing runs off the main thread. Workspace extensions get this only after folder
    trust (§3). kiln owns the package format, discovery,
    validation, hot reload and the contributions kiln understands (themes,
    keymaps, menus); each app owns the kinds that are its own (fastedit: `lsp`,
@@ -436,7 +454,7 @@ Author guide: `docs/plugins/authoring.md`.
 | VS Code risk | This design |
 |---|---|
 | Extensions run in a Node host with full Node access: files, network, child processes, as the user | No ambient authority. WASM instance with preopened dirs only, host-checked `net:<host>` and `process.spawn:<program>`, CPU and memory limits. |
-| Malicious or hijacked marketplace extensions, and auto-update shipping a bad version | Stage 1 has no plugin API or native code; its execution is sandboxed grammar WASM and host-spawned LSP servers whose effective invocation (executable, arguments, environment, script hash) the user is shown and re-asked about on any change (§1). Stage 2 has no auto-update that widens rights: an update asking for new or wider capabilities stops and asks (decision 3); signing and registry review are decided with the registry (§8). |
+| Malicious or hijacked marketplace extensions, and auto-update shipping a bad version | Stage 1 has no plugin API or native code; its execution is sandboxed grammar WASM and host-spawned LSP servers whose effective invocation (executable, arguments, environment, named-script hashes, and a hash of the whole installed package) the user is shown and re-asked about on any change (§1). Stage 2 has no auto-update that widens rights: an update asking for new or wider capabilities stops and asks (decision 3); signing and registry review are decided with the registry (§8). |
 | Data exfiltration: read workspace, then send it anywhere | Network is per host and enforced by the host; `buffer.read` plus `net` shows the combination warning (decision 4); `net:*` needs the extreme warning and shows as full access (decision 2). |
 | Webviews: arbitrary HTML and script in the editor | No webviews. Panels are a declarative view tree rendered by the host (§7). |
 | Workspace config that runs code (tasks, debug launch, workspace-recommended extensions) | Workspace extensions only after folder trust and only for grammars, LSP and snippets (§3); a workspace can't install or grant a code plugin; stage-2 plugins install in the user dir only. |

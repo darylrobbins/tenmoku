@@ -7,8 +7,10 @@
 //!
 //! - **What's consented to.** A server's [`Invocation`]: the executable as
 //!   the launcher would resolve it, its arguments, the environment it sets,
-//!   and the content of each file inside the extension's directory that its
-//!   arguments (or its executable) name. What doesn't change what runs, its
+//!   the content of each file inside the extension's directory that its
+//!   arguments (or its executable) name, and a hash of the whole installed
+//!   package (every file under that directory), so a changed module those
+//!   scripts import is a change too. What doesn't change what runs, its
 //!   languages, settings, initialization options, root markers and
 //!   readiness, isn't part of it.
 //! - **Withheld until granted.** [`set_extension_servers`] works out each
@@ -118,6 +120,14 @@ pub struct Invocation {
     /// another file is a change even if both files are named.
     #[serde(default)]
     pub script_hashes: BTreeMap<String, String>,
+    /// A SHA-256 in hex over every file under the extension's directory
+    /// (see [`package_hash`]), so a changed module a named script imports is
+    /// a change too. Empty in a grant stored before this existed, which
+    /// never equals a computed one: such a grant fails closed and asks again.
+    /// [`PACKAGE_INCOMPLETE`] if the package couldn't be read whole: never
+    /// granted, so it never matches a grant.
+    #[serde(default)]
+    pub package_hash: String,
 }
 
 impl Invocation {
@@ -130,7 +140,9 @@ impl Invocation {
     pub fn of(spec: &ServerSpec, extension_dir: &Path, resolved_command: Option<&Path>) -> Self {
         let command = resolved_command.unwrap_or(&spec.command).to_owned();
         let mut script_hashes = BTreeMap::new();
+        let mut package = PACKAGE_INCOMPLETE.to_owned();
         if let Ok(dir) = dunce::canonicalize(extension_dir) {
+            package = package_hash(&dir);
             let named = spec.args.iter().flat_map(|arg| {
                 let value = arg
                     .strip_prefix('-')
@@ -153,6 +165,7 @@ impl Invocation {
             args: spec.args.clone(),
             env: spec.env.iter().cloned().collect(),
             script_hashes,
+            package_hash: package,
         }
     }
 
@@ -167,6 +180,135 @@ impl Invocation {
         let unversioned =
             name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-');
         INTERPRETERS.contains(&name) || INTERPRETERS.contains(&unversioned)
+    }
+}
+
+/// What [`package_hash`] is when it couldn't read the whole package. It
+/// never equals a granted hash (a grant of it is refused, and a stored
+/// grant has either a real hash or none), so a server whose package can't
+/// be read completely is neither started nor matched to a grant.
+pub(crate) const PACKAGE_INCOMPLETE: &str = "incomplete";
+
+/// The most entries (files, directories and symlinks alike), and bytes of
+/// content, [`package_hash`] reads. A package beyond either is [incomplete](PACKAGE_INCOMPLETE), not hashed by
+/// size and time: consent is never given on less than the content.
+pub const PACKAGE_MAX_FILES: usize = 200_000;
+const PACKAGE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// The most content one file may have: the reload watcher reads a listed
+/// file whole to hash it, so a bigger one is neither listed there nor
+/// consented to ([incomplete](PACKAGE_INCOMPLETE)).
+pub const PACKAGE_MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// `name` as bytes, losslessly: the platform's own encoding, so two names
+/// that differ only in invalid UTF-8 differ.
+fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        name.as_bytes().to_vec()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        name.encode_wide().flat_map(u16::to_le_bytes).collect()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        name.to_string_lossy().into_owned().into_bytes()
+    }
+}
+
+/// A SHA-256 in hex over everything under the canonical directory `dir`:
+/// each entry's relative path (sorted, by its native bytes) and, for a
+/// file, its whole content, so an added, removed, renamed or changed file
+/// changes it. `node_modules` and the like are included, as they run too.
+/// A symlink is never followed: its target's bytes are hashed, so one
+/// pointing out of `dir` can't pull in anything outside, and a loop can't
+/// hang the walk. [`PACKAGE_INCOMPLETE`] if anything can't be read, or the
+/// package is past [`PACKAGE_MAX_FILES`] or [`PACKAGE_MAX_BYTES`]. Reads the
+/// whole package: call it off the main thread.
+fn package_hash(dir: &Path) -> String {
+    package_hash_limited(
+        dir,
+        PACKAGE_MAX_FILES,
+        PACKAGE_MAX_BYTES,
+        PACKAGE_MAX_FILE_BYTES,
+    )
+}
+
+/// [`package_hash`] with the limits given, for tests to reach them.
+pub(crate) fn package_hash_limited(
+    dir: &Path,
+    max_entries: usize,
+    max_bytes: u64,
+    max_file_bytes: u64,
+) -> String {
+    package_hash_of(dir, max_entries, max_bytes, max_file_bytes)
+        .unwrap_or_else(|| PACKAGE_INCOMPLETE.to_owned())
+}
+
+fn package_hash_of(
+    dir: &Path,
+    max_entries: usize,
+    max_bytes: u64,
+    max_file_bytes: u64,
+) -> Option<String> {
+    let mut hasher = Sha256::new();
+    let (mut seen, mut bytes) = (0usize, 0u64);
+    let mut stack = vec![(dir.to_path_buf(), PathBuf::new())];
+    while let Some((path, rel)) = stack.pop() {
+        let mut entries = fs::read_dir(&path)
+            .ok()?
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        entries.sort_by_key(|entry| os_bytes(&entry.file_name()));
+        // Pushed in reverse so the walk visits them in sorted order.
+        let mut subdirs = Vec::new();
+        for entry in entries {
+            // Every entry counts, as the reload watcher counts them, so a
+            // package it truncates is one that's refused here.
+            seen += 1;
+            if seen > max_entries {
+                return None;
+            }
+            let rel = rel.join(entry.file_name());
+            let rel_bytes = os_bytes(rel.as_os_str());
+            let meta = fs::symlink_metadata(entry.path()).ok()?;
+            let kind = meta.file_type();
+            if kind.is_symlink() {
+                let target = fs::read_link(entry.path()).ok()?;
+                feed(
+                    &mut hasher,
+                    b'l',
+                    &[&rel_bytes, &os_bytes(target.as_os_str())],
+                );
+            } else if kind.is_dir() {
+                feed(&mut hasher, b'd', &[&rel_bytes]);
+                subdirs.push((entry.path(), rel));
+            } else if kind.is_file() {
+                bytes = bytes.saturating_add(meta.len());
+                if meta.len() > max_file_bytes || bytes > max_bytes {
+                    return None;
+                }
+                let hash = hash_file(&entry.path())?;
+                feed(&mut hasher, b'f', &[&rel_bytes, hash.as_bytes()]);
+            } else {
+                // A socket, device or the like: not something to grant.
+                return None;
+            }
+        }
+        stack.extend(subdirs.into_iter().rev());
+    }
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+/// Feeds `hasher` one entry: a tag byte, then each part length-prefixed, so
+/// no two entries run together.
+fn feed(hasher: &mut Sha256, tag: u8, parts: &[&[u8]]) {
+    hasher.update([tag]);
+    for part in parts {
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part);
     }
 }
 
@@ -517,6 +659,10 @@ pub(crate) fn granted_extension_servers(cx: &App) -> Vec<GrantedServer> {
 /// written to the consent file before this returns, and holds for this
 /// session even if that write fails, which is returned.
 pub fn grant_extension_server(cx: &mut App, pending: &PendingConsent) -> io::Result<()> {
+    if pending.invocation.package_hash == PACKAGE_INCOMPLETE {
+        // The whole package couldn't be read: nothing complete to consent to.
+        return Err(io::ErrorKind::InvalidData.into());
+    }
     decide(cx, pending, Decision::Granted)
 }
 

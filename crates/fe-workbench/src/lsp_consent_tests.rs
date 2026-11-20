@@ -151,6 +151,7 @@ fn entry(dir: &str, name: &str, decision: Decision) -> Entry {
             args: vec!["--stdio".into()],
             env: BTreeMap::from([("A".into(), "1".into())]),
             script_hashes: BTreeMap::from([("/ext/a.js".into(), "00ff".into())]),
+            package_hash: "aa11".into(),
         },
     }
 }

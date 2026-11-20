@@ -32,6 +32,7 @@ fn invocation(command: &str, args: &[&str]) -> Invocation {
         args: args.iter().map(|arg| (*arg).to_owned()).collect(),
         env: [("ZLS_LOG".to_owned(), "info".to_owned())].into(),
         script_hashes: Default::default(),
+        package_hash: String::new(),
     }
 }
 

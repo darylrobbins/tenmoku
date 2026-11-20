@@ -675,16 +675,20 @@ fn server_settings(
         .collect()
 }
 
-/// The files `manifest`'s language servers may run: each argument, and
-/// each `--flag=value`'s value, and each command, that names a path. kiln
-/// keeps those that are files inside the extension's directory, so that a
-/// change to a script loads the servers again, and its consent is asked
-/// for again.
+/// The files kiln watches for `manifest`'s language servers: every file
+/// under the extension's directory, whatever the arguments name, as a
+/// server's consent binds the whole installed package
+/// ([`fe_workbench::Invocation::package_hash`]), so a module a script
+/// imports, a file added or one removed loads the servers again and asks
+/// for consent again. Symlinks are listed, not followed into directories;
+/// kiln keeps those that are files inside the directory. Only for an
+/// extension that contributes a server. The commands and arguments that
+/// name paths are among them.
 fn server_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
     let Some(table) = manifest.app.get("lsp").and_then(toml::Value::as_table) else {
         return Vec::new();
     };
-    let mut files = Vec::new();
+    let mut files = package_files(&manifest.dir);
     for value in table.values() {
         let Ok(settings) = value.clone().try_into::<LspServerSettings>() else {
             continue;
@@ -698,6 +702,45 @@ fn server_files(manifest: &kiln::core::Manifest) -> Vec<PathBuf> {
         }
     }
     files.retain(|file| !file.as_os_str().is_empty());
+    files
+}
+
+/// Every file and symlink under `dir`, by path, not following a symlink
+/// into a directory. A directory that can't be listed contributes none.
+/// It runs where kiln fingerprints the files, so it stops after
+/// [`fe_workbench::PACKAGE_MAX_FILES`] entries, files and directories
+/// alike: past that the package is too large for consent to be given on
+/// ([`fe_workbench::Invocation::package_hash`] is then "incomplete" and
+/// never granted), so a longer list would only cost time.
+fn package_files(dir: &Path) -> Vec<PathBuf> {
+    package_files_limited(dir, fe_workbench::PACKAGE_MAX_FILES)
+}
+
+/// [`package_files`], stopping after `max` entries. A file of any size is
+/// listed, so adding or removing a big one is seen; kiln may read such a
+/// file whole to hash it, before consent refuses the package
+/// ([`fe_workbench::PACKAGE_MAX_FILE_BYTES`]), a known limit that follow-up
+/// T2026 fixes.
+pub(crate) fn package_files_limited(dir: &Path, max: usize) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut seen = 0usize;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.filter_map(Result::ok) {
+            seen += 1;
+            if seen > max {
+                return files;
+            }
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => stack.push(entry.path()),
+                Ok(_) => files.push(entry.path()),
+                Err(_) => {}
+            }
+        }
+    }
     files
 }
 

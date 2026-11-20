@@ -153,11 +153,101 @@ fn a_malformed_edit_keeps_the_last_good_server(cx: &mut TestAppContext) {
     assert_eq!(granted.len(), 1);
 
     // An argument that isn't a string passes kiln's schema check, but
-    // doesn't read as settings: the server keeps its last good ones, so
-    // it neither stops nor asks.
+    // doesn't read as settings: the server keeps its last good ones and
+    // doesn't stop. The manifest file itself changed, which is a change to
+    // the installed package, so it asks again about the same invocation.
     install(&extensions, "[1]");
     sender.send(vec![extensions.clone()]);
     cx.run_until_parked();
     assert_eq!(servers(cx), granted);
+    let again = pending(cx);
+    assert_eq!(again.len(), 1, "{again:#?}");
+    let previous = again[0].previous.as_ref().unwrap();
+    assert_eq!(again[0].invocation.args, previous.args);
+    assert_ne!(again[0].invocation.package_hash, previous.package_hash);
+}
+
+#[gpui::test]
+fn a_module_only_change_asks_again_through_the_watcher(cx: &mut TestAppContext) {
+    let state = tempfile::tempdir().unwrap();
+    let extensions = state.path().join("extensions");
+    // `server.js` imports `lib/util.js`; the manifest, script and arguments
+    // never change below.
+    install(&extensions, "[\"server.js\"]");
+    let zig = extensions.join("zig");
+    fs::create_dir_all(zig.join("lib")).unwrap();
+    fs::write(zig.join("server.js"), "require('./lib/util')\n").unwrap();
+    fs::write(zig.join("lib/util.js"), "exports.a = 1\n").unwrap();
+    let sender = load(cx, state.path());
+    for pending in pending(cx) {
+        cx.update(|cx| fe_workbench::grant_extension_server(cx, &pending))
+            .unwrap();
+    }
+    cx.run_until_parked();
+    let granted = servers(cx);
+    assert_eq!(granted.len(), 1);
     assert_eq!(pending(cx), []);
+
+    // Nothing changed: a batch asks nothing.
+    sender.send(vec![extensions.clone()]);
+    cx.run_until_parked();
+    assert_eq!(pending(cx), []);
+
+    let reasks = |cx: &mut TestAppContext, what: &str| {
+        sender.send(vec![extensions.clone()]);
+        cx.run_until_parked();
+        assert_eq!(servers(cx), granted, "{what}");
+        let again = pending(cx);
+        assert_eq!(again.len(), 1, "{what}: {again:#?}");
+        assert_eq!(
+            again[0].invocation.args,
+            again[0].previous.as_ref().unwrap().args
+        );
+        // Accepted, it's quiet again.
+        cx.update(|cx| fe_workbench::grant_extension_server(cx, &again[0]))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(pending(cx), [], "{what}");
+    };
+    // A changed module.
+    fs::write(zig.join("lib/util.js"), "exports.a = 2\n").unwrap();
+    reasks(cx, "a changed module");
+    // An added file.
+    fs::write(zig.join("lib/extra.js"), "").unwrap();
+    reasks(cx, "an added file");
+    // A removed one.
+    fs::remove_file(zig.join("lib/extra.js")).unwrap();
+    reasks(cx, "a removed file");
+}
+
+#[test]
+fn listing_a_package_stops_at_the_entry_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["a", "b", "c"] {
+        fs::create_dir_all(dir.path().join(name)).unwrap();
+        fs::write(dir.path().join(name).join("m.js"), "").unwrap();
+    }
+    // Three directories and three files.
+    assert_eq!(config::package_files_limited(dir.path(), 6).len(), 3);
+    let capped = config::package_files_limited(dir.path(), 4);
+    assert!(capped.len() < 3, "{capped:?}");
+}
+
+#[test]
+fn listing_a_package_includes_a_big_file_so_its_addition_and_removal_are_seen() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("small.js"), "12345").unwrap();
+    let before = config::package_files_limited(dir.path(), 100);
+    assert_eq!(before, [dir.path().join("small.js")]);
+    // Sparse: a file over the consent limit without the disk, only listed.
+    let big = dir.path().join("big.bin");
+    fs::File::create(&big)
+        .unwrap()
+        .set_len(fe_workbench::PACKAGE_MAX_FILE_BYTES + 1)
+        .unwrap();
+    let mut added = config::package_files_limited(dir.path(), 100);
+    added.sort();
+    assert_eq!(added, [big.clone(), dir.path().join("small.js")]);
+    fs::remove_file(&big).unwrap();
+    assert_eq!(config::package_files_limited(dir.path(), 100), before);
 }
