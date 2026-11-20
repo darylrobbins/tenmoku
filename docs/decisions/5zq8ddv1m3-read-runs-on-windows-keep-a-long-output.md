@@ -52,26 +52,38 @@ too.
 - **Rows that scroll away.** After each parser call, and before the shell
   state trims history to the scrollback, the tap hears the rows that call
   scrolled above the screen. A row above the screen is final: conhost has no
-  scrollback and can't address it again. A row marked `WRAPLINE` joins the
-  next. A row without it ends the logical line, which the tap hears with a
-  `\n`. Row text comes from alacritty's `bounds_to_string`, which handles
-  wide chars and tabs and trims trailing blanks. One parser call takes at
-  most `MAX_ADVANCE` bytes, so it scrolls fewer rows than the `HEADROOM` the
-  `Term` keeps past the scrollback, and no row is trimmed before it's heard,
-  even with scrollback 0.
+  scrollback and can't address it again. Each row's text goes to the tap as
+  it's heard. A row marked `WRAPLINE` continues on the next. A row without
+  it ends the logical line, and a `\n` follows. `Capture` assembles the line
+  and bounds it with its 16 MiB cap, as it does the pty's bytes, so a line
+  that never ends costs `GridTap` nothing (review F3). One parser call
+  takes at most `MAX_ADVANCE` bytes, so it scrolls fewer rows than the
+  `HEADROOM` the `Term` keeps past the scrollback, and no row is trimmed
+  before it's heard, even with scrollback 0.
+- **Row text** is read cell by cell (`row_text`), not through alacritty's
+  selection API: `bounds_to_string` widens a selection's ends around wide
+  chars, and at a leading spacer it reads the row above (review F2). A wide
+  char is heard once, its spacer and any leading spacer left out.
+  Zero-width chars follow their cell's char. A tab is heard once for the
+  blanks it moved over, and trailing blanks are trimmed.
 - **Exit.** As the loop ends, after a synchronized update is flushed and
   before the exit is published, the tap hears the screen's rows down to the
   last one with text. `Exited` waits for that exit, so `Capture` has every
-  line before it takes them.
+  line before it takes them. Nothing is heard after that, even if the
+  session resizes before its exit is read. The exit takes the terminal's
+  lock before the tap's, as a resize does (review F1).
 - **Resize.** `Terminal::resize` notes, before each step, where hearing goes
-  on: the logical line, counted from the grid's top, and the cells of it
-  already heard. After the reflow, and before the shell state trims, it finds
-  that place again. Rows the reflow put above the screen unheard are heard
-  then. Rows it brought back from history onto the screen are skipped when
-  they scroll away again.
+  on: the logical line, counted from the grid's top, and the text cells of it
+  already heard. A text cell is any cell but a leading spacer, which a reflow
+  adds or drops as wide chars move between rows (review F4). After the
+  reflow, and before the shell state trims, it finds that place again by
+  counting the same cells. Rows the reflow put above the screen unheard are
+  heard then. Rows it brought back from history onto the screen are skipped
+  when they scroll away again.
 
 Nothing else changes. `Capture` and its 16 MiB cap are as they were, and Unix
-sessions don't use `GridTap`.
+sessions don't use `GridTap`. The lock order is terminal, then shell state,
+then `GridTap`.
 
 ## Known limits
 
@@ -82,9 +94,20 @@ sessions don't use `GridTap`.
   this only happens if the panel is resized while the build runs.
 - **The alternate screen is not heard**, and on the primary grid the unheard
   rows of a cleared history (`CSI 3 J`) are lost. A build doesn't do either.
-- **What the grid can't keep isn't heard**: trailing blanks, and tabs
-  stand-in spaces count as the grid shows them. cargo's JSON escapes any tab
-  inside a string, so its messages are unaffected.
+- **What the grid can't keep isn't heard**: trailing blanks, and the blanks
+  after a tab, taken to the next stop every 8 columns (alacritty's default:
+  `Term`'s tab stops are private). cargo's JSON escapes any tab inside a
+  string, so its messages are unaffected.
+- **A resize while a line with wide chars is being written can shift the
+  rest of that line by a cell, in the grid itself.** alacritty 0.26's reflow
+  keeps the text, but it can leave the cursor one text cell off when it adds
+  or drops a leading spacer. A probe (420 feeds with a resize between each, at
+  37×7, 80×24 and 113×30) found the cursor's offset in its line going from
+  701 to 700, or from 479 to 480. The next char then overwrites a cell or
+  leaves a blank one. The screen shows the same line, and the tap hears what
+  the grid holds. ASCII lines, and lines finished before the resize, aren't
+  affected. Like repeated lines, this only happens if the panel is resized
+  while the build prints.
 
 ## Tests
 
@@ -92,8 +115,23 @@ sessions don't use `GridTap`.
   feeds a 3,200-char line in the byte pattern CI recorded, with conhost-style
   escapes in the lines that follow. It runs on every OS.
 - `pty_loop::tests::a_grid_tap_hears_each_line_once_as_resizes_reflow_it`
-  narrows and then widens the grid partway through a long line, with
-  scrollback 0 and 100.
+  narrows and then widens the grid partway through a long line of wide chars
+  and accents, with scrollback 0 and 100. It checks that the reflows moved
+  wide chars to the next row. Counting leading spacers as text fails it.
+- `pty_loop::tests::a_grid_tap_hears_a_wide_char_moved_off_the_first_row_once`
+  covers 79 chars and a wide char on an 80-column grid with no history:
+  `bounds_to_string`'s leading-spacer case.
+- `pty_loop::tests::a_grid_tap_hears_wide_chars_and_accents_whole_as_their_rows_scroll`
+  covers wide chars at row ends, with combining accents, scrolled away with
+  scrollback 0.
+- `pty_loop::tests::a_grid_tap_hands_on_a_line_without_its_end_row_by_row`
+  feeds 200 rows with no newline, which reach the tap before the line ends,
+  and then a normal line.
+- `session::grid_tap_tests::a_grid_tapped_session_resized_as_it_exits_hears_its_lines_and_ends`
+  runs a real Unix pty session with the grid tap on (`Terminal::spawn_hearing`).
+  It resizes it over and over as its child writes and exits, 20 times, and
+  fails if that deadlocks or a line isn't heard exactly once. With the old
+  lock order and a 5 ms pause in the exit's hearing, it deadlocks in round 0.
 - `crates/fe-terminal/tests/conpty_long_line.rs` (Windows) runs this test
   binary again as the child in an 80-column ConPTY session, so the line is
   written as cargo writes it.

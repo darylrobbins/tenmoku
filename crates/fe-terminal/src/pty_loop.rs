@@ -22,8 +22,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, OnResize, WindowSize};
-use alacritty_terminal::grid::{Dimensions, Grid};
-use alacritty_terminal::index::{Column, Line, Point};
+use alacritty_terminal::grid::{Dimensions, Grid, Row};
+use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::{Cell, Flags, LineLength as _};
 use alacritty_terminal::term::{Term, TermMode};
@@ -109,7 +109,7 @@ pub(crate) struct PtyLoop<P, U: EventListener> {
     tap: Option<OutputTap>,
     /// Hears the grid's lines as they leave the screen, in place of `tap`
     /// where the pty's bytes aren't the child's ([`GridTap`]). Locked after
-    /// `shell`.
+    /// `terminal` and `shell`, as `Terminal::resize` does.
     grid_tap: Option<Arc<Mutex<GridTap>>>,
 }
 
@@ -297,8 +297,10 @@ where
         self.end_sync(&mut feeder);
         // The lines still on the screen, before the exit lets a reader take
         // what was heard.
+        // The terminal first, as everywhere (`grid_tap`'s lock order).
         if let Some(grid_tap) = &self.grid_tap {
-            lock(grid_tap).flush(&self.terminal.lock());
+            let terminal = self.terminal.lock();
+            lock(grid_tap).flush(&terminal);
         }
         if child_exited {
             self.terminal.lock().exit();
@@ -570,8 +572,8 @@ impl Feeder {
 
 /// What a session's output tap hears where the pty's bytes aren't the
 /// child's (Windows, `session::GRID_TAP`): the grid's logical lines, each
-/// with a `\n`, as their rows go above the screen, and the screen's own as
-/// the loop ends.
+/// with a `\n`, row by row as their rows go above the screen, and the
+/// screen's own as the loop ends.
 ///
 /// ConPTY re-renders the child's output for a screen of its own, with no
 /// scrollback. As a wrapped row scrolls it sends `\r\n`, moves back to the
@@ -580,24 +582,29 @@ impl Feeder {
 /// a long line's bytes have a hard newline at each row, while the grid holds
 /// it whole. A row above the screen is final, out of ConPTY's reach.
 ///
-/// Each parser call scrolls fewer rows into history than the `Term` keeps
-/// past the scrollback (`shell::MAX_ADVANCE`), and they're heard before the
-/// shell state trims it, so none goes unheard. A resize reflows the grid:
-/// where hearing goes on is anchored to its logical line. Nothing is heard
-/// on the alternate screen, and a cleared history's unheard rows are lost.
+/// Each row goes to the tap as it's heard, so a line never written to its
+/// end is the tap's to bound, as with the pty's bytes. Each parser call
+/// scrolls fewer rows into history than the `Term` keeps past the scrollback
+/// (`shell::MAX_ADVANCE`), and they're heard before the shell state trims
+/// it, so none goes unheard. A resize reflows the grid: where hearing goes on
+/// is anchored to its logical line. Nothing is heard on the alternate
+/// screen, and a cleared history's unheard rows are lost.
 pub(crate) struct GridTap {
     tap: OutputTap,
     /// The primary grid's history before the parser call under way.
     history: Option<usize>,
-    /// The logical line whose rows have gone above the screen so far.
-    partial: String,
-    /// The rows at the top of the screen already heard, and then the cells
-    /// of the row after them: a resize brought them back out of history.
+    /// The rows at the top of the screen already heard, and then the
+    /// columns of the row after them: a resize brought them back out of
+    /// history.
     heard_rows: usize,
     heard_cells: usize,
     /// Where hearing goes on across a resize under way: the logical line,
-    /// counted from the grid's top, and how many of its cells were heard.
+    /// counted from the grid's top, and how many of its text cells
+    /// ([`text_cells`]) were heard.
     resizing: Option<(usize, usize)>,
+    /// The loop ended and the screen was heard: nothing more is, though
+    /// the session may yet resize.
+    ended: bool,
 }
 
 impl GridTap {
@@ -605,10 +612,10 @@ impl GridTap {
         GridTap {
             tap,
             history: None,
-            partial: String::new(),
             heard_rows: 0,
             heard_cells: 0,
             resizing: None,
+            ended: false,
         }
     }
 
@@ -633,42 +640,46 @@ impl GridTap {
         }
     }
 
-    /// Hears the screen's rows down to its last with text: the loop ends.
+    /// Hears the screen's rows down to its last with text, and then no
+    /// more: the loop ends.
     pub(crate) fn flush<T>(&mut self, term: &Term<T>) {
-        if term.mode().contains(TermMode::ALT_SCREEN) {
-            return;
+        if !term.mode().contains(TermMode::ALT_SCREEN) {
+            let grid = term.grid();
+            let rows = (0..grid.screen_lines() as i32)
+                .rev()
+                .find(|&line| grid[Line(line)].line_length() > Column(0))
+                .map_or(0, |last| last + 1);
+            self.hear(term, 0..rows);
         }
-        let grid = term.grid();
-        let rows = (0..grid.screen_lines() as i32)
-            .rev()
-            .find(|&line| grid[Line(line)].line_length() > Column(0))
-            .map_or(0, |last| last + 1);
-        self.hear(term, 0..rows);
-        if !self.partial.is_empty() {
-            (self.tap)(std::mem::take(&mut self.partial).as_bytes());
-        }
+        self.ended = true;
     }
 
     /// Notes where hearing goes on by logical line, before `term` resizes.
     pub(crate) fn before_resize<T>(&mut self, term: &Term<T>) {
         self.resizing = None;
-        if term.mode().contains(TermMode::ALT_SCREEN) {
+        if self.ended || term.mode().contains(TermMode::ALT_SCREEN) {
             return;
         }
         let grid = term.grid();
+        let columns = grid.columns();
         let starts = logical_starts(grid);
         let row = self.heard_rows as i32;
         let ix = starts
             .partition_point(|&start| start <= row)
             .saturating_sub(1);
-        let rows = (row - starts[ix]).max(0) as usize;
-        self.resizing = Some((ix, rows * grid.columns() + self.heard_cells));
+        let mut cells: usize = (starts[ix]..row)
+            .map(|line| text_cells(&grid[Line(line)], columns))
+            .sum();
+        if row <= grid.bottommost_line().0 {
+            cells += text_cells(&grid[Line(row)], self.heard_cells.min(columns));
+        }
+        self.resizing = Some((ix, cells));
     }
 
     /// Finds where hearing goes on after `term` resized, before history is
     /// trimmed: rows the reflow put above the screen unheard are heard now.
     pub(crate) fn after_resize<T>(&mut self, term: &Term<T>) {
-        let Some((ix, cells)) = self.resizing.take() else {
+        let Some((ix, mut cells)) = self.resizing.take() else {
             return;
         };
         if term.mode().contains(TermMode::ALT_SCREEN) {
@@ -681,8 +692,27 @@ impl GridTap {
             return;
         };
         let columns = grid.columns();
-        let row = start + (cells / columns) as i32;
-        self.heard_cells = cells % columns;
+        let (last, bottom) = (grid.last_column(), grid.bottommost_line().0);
+        // Down the line's rows, past the text cells heard.
+        let mut row = start;
+        loop {
+            let here = text_cells(&grid[Line(row)], columns);
+            let wraps = grid[Line(row)][last].flags.contains(Flags::WRAPLINE);
+            if cells < here || !wraps || row == bottom {
+                break;
+            }
+            cells -= here;
+            row += 1;
+        }
+        let line = &grid[Line(row)];
+        let mut column = 0;
+        while cells > 0 && column < columns {
+            if is_text(&line[Column(column)]) {
+                cells -= 1;
+            }
+            column += 1;
+        }
+        self.heard_cells = column;
         if row < 0 {
             self.heard_rows = 0;
             self.hear(term, row..0);
@@ -693,6 +723,9 @@ impl GridTap {
 
     /// Hears grid lines `lines`, top first, past those already heard.
     fn hear<T>(&mut self, term: &Term<T>, lines: Range<i32>) {
+        if self.ended {
+            return;
+        }
         let grid = term.grid();
         let last = grid.last_column();
         let mut heard = Vec::new();
@@ -701,11 +734,9 @@ impl GridTap {
                 self.heard_rows -= 1;
                 continue;
             }
-            let from = Column(std::mem::take(&mut self.heard_cells).min(last.0));
-            let row = term.bounds_to_string(Point::new(line, from), Point::new(line, last));
-            self.partial.push_str(&row);
-            if !grid[line][last].flags.contains(Flags::WRAPLINE) {
-                heard.extend_from_slice(std::mem::take(&mut self.partial).as_bytes());
+            let row = &grid[line];
+            row_text(row, std::mem::take(&mut self.heard_cells), &mut heard);
+            if !row[last].flags.contains(Flags::WRAPLINE) {
                 heard.push(b'\n');
             }
         }
@@ -713,6 +744,52 @@ impl GridTap {
             (self.tap)(&heard);
         }
     }
+}
+
+/// The columns between tab stops: alacritty's, unless the program set its
+/// own.
+const TAB_STOPS: usize = 8;
+
+/// Appends what `row` holds from column `from` to `text`, as the program
+/// wrote it: each char once, a wide char's spacer and a leading spacer (a
+/// wide char that didn't fit, on the next row) left out, zero-width chars
+/// after their cell's, a tab once for the blanks it moved over, and trailing
+/// blanks trimmed.
+fn row_text(row: &Row<Cell>, from: usize, text: &mut Vec<u8>) {
+    let mut tab = false;
+    let mut utf8 = [0; 4];
+    for column in from..row.line_length().0 {
+        let cell = &row[Column(column)];
+        // The blanks a tab moved over, up to the next stop.
+        if tab && column % TAB_STOPS != 0 && cell.c == ' ' {
+            continue;
+        }
+        tab = cell.c == '\t';
+        if cell
+            .flags
+            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+        {
+            continue;
+        }
+        let chars = std::iter::once(&cell.c).chain(cell.zerowidth().into_iter().flatten());
+        for c in chars {
+            text.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
+        }
+    }
+}
+
+/// Whether `cell` is part of the text, not a leading spacer: a reflow adds
+/// and drops those as wide chars move between rows.
+fn is_text(cell: &Cell) -> bool {
+    !cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+}
+
+/// The text cells ([`is_text`]) of `row` before column `end`: they keep
+/// their place in a logical line across a reflow.
+fn text_cells(row: &Row<Cell>, end: usize) -> usize {
+    (0..end)
+        .filter(|&column| is_text(&row[Column(column)]))
+        .count()
 }
 
 /// The grid lines each logical line starts on, top first.
@@ -1309,6 +1386,91 @@ mod tests {
         assert_eq!(heard_lines(&heard), expected);
     }
 
+    /// A line of wide chars and combining accents among ASCII, so some
+    /// wide char falls on a row's last column at any width.
+    fn wide_line() -> String {
+        (0..400)
+            .map(|i| format!("{i}長{}e\u{301}", "-".repeat(i % 7)))
+            .collect()
+    }
+
+    /// The grid's rows ending in a leading spacer: a wide char that didn't
+    /// fit, moved to the next row.
+    fn leading_spacers(term: &Term<Recorder>) -> usize {
+        let grid = term.grid();
+        let last = grid.last_column();
+        (grid.topmost_line().0..=grid.bottommost_line().0)
+            .filter(|&line| {
+                (grid[Line(line)][last].flags).contains(Flags::LEADING_WIDE_CHAR_SPACER)
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_grid_tap_hears_a_wide_char_moved_off_the_first_row_once() {
+        let GridTapped {
+            mut feeder,
+            mut shell,
+            mut term,
+            grid_tap,
+            heard,
+        } = grid_tapped(0);
+        // 長 doesn't fit in the last column: a leading spacer stands there.
+        let line = format!("{}長x", "a".repeat(79));
+        feed_reads(&mut feeder, &mut shell, &mut term, line.as_bytes(), 97);
+        assert_eq!(leading_spacers(&term), 1);
+        lock(&grid_tap).flush(&term);
+        assert_eq!(heard_lines(&heard), [line]);
+    }
+
+    #[test]
+    fn a_grid_tap_hears_wide_chars_and_accents_whole_as_their_rows_scroll() {
+        let GridTapped {
+            mut feeder,
+            mut shell,
+            mut term,
+            grid_tap,
+            heard,
+        } = grid_tapped(0);
+        let long = wide_line();
+        let after = numbered("after", 30);
+        let mut bytes = format!("{long}\r\n").into_bytes();
+        for line in &after {
+            bytes.extend(format!("{line}\r\n").as_bytes());
+        }
+        // Up to its first wide char that doesn't fit (row 15, byte 1741).
+        let (first, rest) = bytes.split_at(1_760);
+        feed_reads(&mut feeder, &mut shell, &mut term, first, 97);
+        assert!(leading_spacers(&term) > 0);
+        feed_reads(&mut feeder, &mut shell, &mut term, rest, 97);
+        lock(&grid_tap).flush(&term);
+        let expected: Vec<String> = [long].into_iter().chain(after).collect();
+        assert_eq!(heard_lines(&heard), expected);
+    }
+
+    #[test]
+    fn a_grid_tap_hands_on_a_line_without_its_end_row_by_row() {
+        let GridTapped {
+            mut feeder,
+            mut shell,
+            mut term,
+            grid_tap,
+            heard,
+        } = grid_tapped(0);
+        // 200 rows and no newline: the tap has them as they scroll, for its
+        // reader to bound, not when the line ends.
+        let unended = "x".repeat(80 * 200);
+        feed_reads(&mut feeder, &mut shell, &mut term, unended.as_bytes(), 97);
+        {
+            let heard = heard.lock().unwrap();
+            assert!(heard.len() >= 80 * 190, "{} bytes", heard.len());
+            assert!(!heard.contains(&b'\n'));
+        }
+        feed_reads(&mut feeder, &mut shell, &mut term, b"\r\nnext\r\n", 97);
+        lock(&grid_tap).flush(&term);
+        assert_eq!(heard_lines(&heard), [unended, "next".to_owned()]);
+    }
+
     /// Resizes as `Terminal::resize` does: rows, then columns.
     fn resize(
         term: &mut Term<Recorder>,
@@ -1343,7 +1505,8 @@ mod tests {
                 grid_tap,
                 heard,
             } = grid_tapped(scrollback);
-            let long = long_line();
+            // Wide chars and accents, so reflows move leading spacers too.
+            let long = wide_line();
             let before = numbered("before", 15);
             let after = numbered("after", 40);
             let mut bytes = Vec::new();
@@ -1359,11 +1522,16 @@ mod tests {
             let (first, rest) = bytes.split_at(before.len() * 10 + 1_500);
             let (second, third) = rest.split_at(1_000);
             feed_reads(&mut feeder, &mut shell, &mut term, first, 64);
+            let mut spacers = leading_spacers(&term);
             resize(&mut term, &mut shell, &grid_tap, 50, 6);
+            spacers += leading_spacers(&term);
             feed_reads(&mut feeder, &mut shell, &mut term, second, 64);
+            spacers += leading_spacers(&term);
             resize(&mut term, &mut shell, &grid_tap, 120, 14);
+            spacers += leading_spacers(&term);
             feed_reads(&mut feeder, &mut shell, &mut term, third, 64);
             lock(&grid_tap).flush(&term);
+            assert!(spacers > 0, "no wide char was moved to the next row");
             let expected: Vec<String> = (before.into_iter()).chain([long]).chain(after).collect();
             assert_eq!(heard_lines(&heard), expected, "scrollback {scrollback}");
         }

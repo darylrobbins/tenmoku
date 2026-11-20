@@ -31,12 +31,13 @@ use crate::vi;
 /// grid parses it ([`Terminal::spawn_tapped`]): on the pty's thread, so it
 /// should be quick.
 ///
-/// On Windows it hears the grid's text instead, each logical line with a
-/// `\n` as its rows go above the screen and the screen's last lines as the
-/// session ends: ConPTY's bytes are its own rendering of the child's output,
-/// which breaks a long line at every row it scrolls (`GRID_TAP`). So there
-/// it hears no escapes, a line's trailing blanks are trimmed, and a resize
-/// that ConPTY answers by drawing the screen again may repeat its lines.
+/// On Windows it hears the grid's text instead, a logical line row by row
+/// as its rows go above the screen, with a `\n` where it ends, and the
+/// screen's last lines as the session ends: ConPTY's bytes are its own
+/// rendering of the child's output, which breaks a long line at every row
+/// it scrolls (`GRID_TAP`). So there it hears no escapes, a line's trailing
+/// blanks are trimmed, and a resize that ConPTY answers by drawing the
+/// screen again may repeat its lines.
 pub type OutputTap = Arc<dyn Fn(&[u8]) + Send + Sync>;
 
 /// Whether a session's [`OutputTap`] hears the grid's lines rather than
@@ -389,6 +390,17 @@ impl Terminal {
         size: GridSize,
         tap: Option<OutputTap>,
     ) -> io::Result<(Terminal, async_channel::Receiver<TerminalEvent>)> {
+        Self::spawn_hearing(options, size, tap, GRID_TAP)
+    }
+
+    /// [`Terminal::spawn_tapped`], with `tap` hearing the grid's lines if
+    /// `grid` ([`GridTap`]), else the pty's bytes.
+    pub(crate) fn spawn_hearing(
+        options: TerminalOptions,
+        size: GridSize,
+        tap: Option<OutputTap>,
+        grid: bool,
+    ) -> io::Result<(Terminal, async_channel::Receiver<TerminalEvent>)> {
         let (events, receiver) = async_channel::unbounded();
         let window_size = size.window_size();
         let title = Arc::new(Mutex::new(TitleSlot {
@@ -491,7 +503,7 @@ impl Terminal {
         let (event_loop, sender) =
             PtyLoop::new(term.clone(), shell.clone(), listener.clone(), pty)?;
         let (tap, grid_tap) = match tap {
-            Some(tap) if GRID_TAP => (None, Some(Arc::new(Mutex::new(GridTap::new(tap))))),
+            Some(tap) if grid => (None, Some(Arc::new(Mutex::new(GridTap::new(tap))))),
             tap => (tap, None),
         };
         let event_loop = event_loop.with_tap(tap).with_grid_tap(grid_tap.clone());
@@ -854,5 +866,70 @@ mod console_title_tests {
     fn titles_are_kept_without_a_console() {
         assert_eq!(program_titles(&["build: x", "y"]), ["build: x", "y"]);
         assert!(!is_console_default_title("Terminal 1"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod grid_tap_tests {
+    use std::sync::{Arc, Mutex, mpsc};
+    use std::time::Duration;
+
+    use super::{GridSize, OutputTap, Terminal, TerminalEvent, TerminalOptions};
+
+    fn size(cols: u16, rows: u16) -> GridSize {
+        GridSize {
+            cols,
+            rows,
+            cell_width: 8,
+            cell_height: 16,
+        }
+    }
+
+    /// A session hearing the grid ([`super::GridTap`]), resized over and
+    /// over as its child writes and exits, hears each line whole and ends:
+    /// the exit's last hearing takes the locks in a resize's order.
+    #[test]
+    fn a_grid_tapped_session_resized_as_it_exits_hears_its_lines_and_ends() {
+        // ASCII: a resize while a line with wide chars is written can move
+        // the grid's own cursor a cell (the decision file's known limits).
+        let long: String = (0..320)
+            .map(|block| format!("{:09}|", block * 10))
+            .collect();
+        let script = format!("printf '%s\\n' first '{long}' last");
+        for round in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let options = TerminalOptions {
+                cwd: dir.path().to_owned(),
+                shell: Some(("/bin/sh".to_owned(), vec!["-c".to_owned(), script.clone()])),
+                scrollback: 0,
+                env: Default::default(),
+            };
+            let heard = Arc::new(Mutex::new(Vec::new()));
+            let tap: OutputTap = Arc::new({
+                let heard = heard.clone();
+                move |bytes: &[u8]| heard.lock().unwrap().extend_from_slice(bytes)
+            });
+            let (terminal, events) =
+                Terminal::spawn_hearing(options, size(80, 24), Some(tap), true).unwrap();
+            let (done, ended) = mpsc::channel();
+            std::thread::spawn(move || {
+                let sizes = [size(37, 7), size(80, 24), size(113, 30)];
+                let code = (0..).find_map(|i| {
+                    if let Ok(TerminalEvent::Exited(code)) = events.try_recv() {
+                        return Some(code);
+                    }
+                    terminal.resize(sizes[i % sizes.len()]);
+                    None
+                });
+                let _ = done.send(code.flatten());
+            });
+            let code = ended
+                .recv_timeout(Duration::from_secs(20))
+                .unwrap_or_else(|_| panic!("round {round}: resizing and exiting deadlocked"));
+            assert_eq!(code, Some(0), "round {round}");
+            let heard = String::from_utf8(heard.lock().unwrap().clone()).unwrap();
+            let lines: Vec<&str> = heard.lines().collect();
+            assert_eq!(lines, ["first", &long, "last"], "round {round}");
+        }
     }
 }
