@@ -392,10 +392,13 @@ fn a_next_failure_delayed_past_stop_changes_nothing_and_the_session_still_ends()
     let ended = harness.wait_ended();
     assert_eq!(ended.reason, EndReason::Stopped);
     let next = requests(&fake, "next")[0].seq;
-    assert!(fake.sent().iter().any(|message| {
-        matches!(message, Message::Response(response)
-            if response.request_seq == next && !response.success)
-    }));
+    // The fault answers on the terminate, which may land after the session ends.
+    fake.wait_until("the next's late failure", |_, sent| {
+        sent.iter().any(|message| {
+            matches!(message, Message::Response(response)
+                if response.request_seq == next && !response.success)
+        })
+    });
     assert_eq!(
         states_from(&harness, 1, |state| *state == SessionState::Resuming),
         [
