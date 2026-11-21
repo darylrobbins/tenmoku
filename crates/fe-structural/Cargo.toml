@@ -8,11 +8,24 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+fe-project.workspace = true
 fe-syntax.workspace = true
 log.workspace = true
+# The scan's literal prefilter (already in the lock).
+memchr = "2.8"
 regex.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true
+
+[features]
+# `scan::testing`: hooks the scan's tests use (a parse made to fail). Never on
+# in a release or normal build.
+test-support = []
+
+[dev-dependencies]
+# This crate's own integration tests use the hooks.
+fe-structural = { path = ".", features = ["test-support"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -2657,9 +2657,13 @@ dependencies = [
 name = "fe-structural"
 version = "0.2.5"
 dependencies = [
+ "fe-project",
+ "fe-structural",
  "fe-syntax",
  "log",
+ "memchr",
  "regex",
+ "tempfile",
  "thiserror 2.0.21",
  "tree-sitter",
 ]
