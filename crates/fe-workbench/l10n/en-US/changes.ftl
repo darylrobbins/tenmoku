@@ -102,3 +102,17 @@ workbench-changes-resize-box-rows = { $rows ->
     [one] { $rows } row
    *[other] { $rows } rows
 }
+
+## The pre-commit checks above the message (pre_commit_checks.rs): each
+## row is a project task's label, then where its check is.
+
+workbench-changes-check-nothing-staged = No staged changes
+workbench-changes-check-untrusted = Not run: this folder isn't trusted
+workbench-changes-check-unavailable = No task has this label
+workbench-changes-check-pending = Pending
+workbench-changes-check-running = Running
+workbench-changes-check-passed = Passed
+workbench-changes-check-failed = Failed
+workbench-changes-check-cancelled = Cancelled
+# The link that shows the check's run in the Runs panel.
+workbench-changes-check-show-run = Show Run

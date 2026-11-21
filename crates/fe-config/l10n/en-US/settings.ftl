@@ -16,6 +16,7 @@ settings-group-completion = Completion
 settings-group-minimap = Minimap
 settings-group-sticky_scroll = Sticky Scroll
 settings-group-extensions = Extensions
+settings-group-git = Git
 settings-group-lsp = LSP
 settings-group-remote = Remote
 settings-group-status_bar = Status Bar
@@ -499,6 +500,15 @@ settings-extensions-plugins_preview =
     Run code plugins (WebAssembly) from installed extensions. A preview:
     their API can change in any release. Each plugin still asks for what
     it may do before it runs.
+
+settings-git = Git, in the Changes panel.
+
+settings-git-pre_commit_checks =
+    The labels of project tasks to run, one at a time in this order, as
+    pre-commit checks above the commit message: each time the staged
+    files change and then stay as they are for 2 seconds, in a trusted
+    folder. A label no task has shows as unavailable. A failing check
+    doesn't stop a commit. Empty runs nothing.
 
 settings-lsp =
     Language servers. A project file may only turn them off, but in a

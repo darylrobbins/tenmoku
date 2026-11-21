@@ -132,6 +132,7 @@ use crate::{
     git::{self, GitState, Sync},
     pane_toolbar,
     picker::{self, PaletteOp},
+    pre_commit_checks::PreCommitChecks,
     workbench::git_commands::{GitCommand, git_remote},
 };
 
@@ -548,6 +549,8 @@ pub struct GitPanel {
     /// Where the panel's parts were last drawn, which a drag of the box's
     /// edge measures against.
     layout: Rc<PanelLayout>,
+    /// The pre-commit checks above the message box.
+    pub(crate) pre_commit: PreCommitChecks,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<TestHooks>>,
     /// The placeholder last drawn over the box, and the family it was set
@@ -573,6 +576,7 @@ impl GitPanel {
             None => Status::NotARepository,
         };
         Self {
+            pre_commit: PreCommitChecks::new(root.clone()),
             root,
             git: WeakEntity::new_invalid(),
             located: None,
@@ -769,6 +773,16 @@ impl GitPanel {
             self.entries.clear();
             cx.emit(GitPanelEvent::Listed);
         }
+        self.follow_staged(cx);
+    }
+
+    /// Hands the pre-commit checks the staged set as now listed: every
+    /// file staged in the repository, with how.
+    fn follow_staged(&mut self, cx: &mut Context<Self>) {
+        let staged = (self.listed.iter())
+            .filter_map(|status| Some((status.path.clone(), status.staged?)))
+            .collect();
+        self.pre_commit.staged(staged, self.git.clone(), cx);
     }
 
     /// Replaces the list with `statuses`, the repository's, each a change
@@ -874,6 +888,7 @@ impl GitPanel {
         if changed {
             cx.emit(GitPanelEvent::Listed);
         }
+        self.follow_staged(cx);
     }
 
     /// Lists `lanes`, each with pending work, below the user's groups,
@@ -2456,6 +2471,7 @@ impl GitPanel {
                 cx.stop_propagation();
             }
         }));
+        let checks = self.pre_commit.render(cx);
         let element = div()
             .relative()
             .flex_none()
@@ -2466,6 +2482,7 @@ impl GitPanel {
             .py_2()
             .border_b_1()
             .border_color(ui.border)
+            .children(checks)
             .child(
                 div()
                     .debug_selector(|| "commit-box".into())

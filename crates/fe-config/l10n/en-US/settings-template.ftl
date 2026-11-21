@@ -488,6 +488,13 @@ settings-template-debug-adapters-codelldb =
     argument holds ${"{"}port{"}"} for the port it listens on. A project file can't
     set them.
 
+settings-template-git-pre_commit_checks =
+    The labels of project tasks to run, one at a time in this order, as
+    pre-commit checks above the commit message: each time the staged files
+    change and then stay as they are for 2 seconds, in a trusted folder. A label
+    no task has shows as unavailable. A failing check doesn't stop a commit.
+    Empty runs nothing.
+
 settings-template-update-automatic_checks =
     Check for a newer Tenmoku in the background once a day and offer to install
     it. Check for Updates… always works.

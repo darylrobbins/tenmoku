@@ -157,6 +157,7 @@ workbench-settings-label-editor-wrap_mode = Wrap Mode
 workbench-settings-label-extensions-disabled = Disabled
 workbench-settings-label-extensions-plugin_limits = Plugin Limits
 workbench-settings-label-extensions-plugins_preview = Plugins Preview
+workbench-settings-label-git-pre_commit_checks = Pre-commit Checks
 workbench-settings-label-lsp-enabled = Enabled
 workbench-settings-label-lsp-max_file_bytes = Max File Bytes
 workbench-settings-label-lsp-python_environment = Python Environment

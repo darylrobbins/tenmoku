@@ -162,6 +162,7 @@ mod pane_maximize;
 mod pane_toolbar;
 mod pane_toolbar_no_path_item;
 mod pdf_notice;
+mod pre_commit_checks;
 mod problems_ask_agent;
 mod problems_b3;
 mod problems_detail;

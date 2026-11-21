@@ -932,6 +932,20 @@
       ],
       "type": "object"
     },
+    "GitSettings": {
+      "description": "`[git]`: the Changes panel's git.",
+      "properties": {
+        "pre_commit_checks": {
+          "default": [],
+          "description": "The labels of project tasks to run, one at a time in this order, as\npre-commit checks above the commit message: each time the staged\nfiles change and then stay as they are for 2 seconds, in a trusted\nfolder. A label no task has shows as unavailable. A failing check\ndoesn't stop a commit. Empty runs nothing.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "IconTheme": {
       "description": "`workbench.icon_theme`.",
       "oneOf": [
@@ -2474,6 +2488,13 @@
       "default": {},
       "description": "External formatters, by language name (`rust`, `python`,\n`typescript`, ...: the names `lsp.servers.<name>.languages` uses). A\nproject file can't set them: a cloned repo shouldn't choose a program\nto run on save.",
       "type": "object"
+    },
+    "git": {
+      "$ref": "#/$defs/GitSettings",
+      "default": {
+        "pre_commit_checks": []
+      },
+      "description": "Git, in the Changes panel."
     },
     "lsp": {
       "$ref": "#/$defs/LspSettings",

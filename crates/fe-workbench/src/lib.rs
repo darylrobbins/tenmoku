@@ -109,6 +109,7 @@ mod plugin_log;
 mod plugin_manage;
 mod plugin_paint;
 mod plugin_prompt;
+mod pre_commit_checks;
 mod preserve_case;
 mod process_group;
 mod project_panel;

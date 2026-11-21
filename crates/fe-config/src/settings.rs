@@ -55,6 +55,9 @@ pub struct Settings {
     /// The project tree.
     #[serde(default)]
     pub tree: TreeSettings,
+    /// Git, in the Changes panel.
+    #[serde(default)]
+    pub git: GitSettings,
     /// The AI chat.
     #[serde(default)]
     pub chat: ChatSettings,
@@ -265,6 +268,18 @@ impl Default for TreeSettings {
     fn default() -> Self {
         Self { show_ignored: true }
     }
+}
+
+/// `[git]`: the Changes panel's git.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct GitSettings {
+    /// The labels of project tasks to run, one at a time in this order, as
+    /// pre-commit checks above the commit message: each time the staged
+    /// files change and then stay as they are for 2 seconds, in a trusted
+    /// folder. A label no task has shows as unavailable. A failing check
+    /// doesn't stop a commit. Empty runs nothing.
+    pub pre_commit_checks: Vec<String>,
 }
 
 /// Settings for the AI chat (docs/decisions/*-ai-chat.md §12). A project
