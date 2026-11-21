@@ -36,6 +36,7 @@ fe-syntax = { path = "crates/fe-syntax" }
 fe-project = { path = "crates/fe-project" }
 fe-structural = { path = "crates/fe-structural" }
 fe-remote-proto = { path = "crates/fe-remote-proto" }
+tenmoku-server = { path = "crates/tenmoku-server" }
 fe-config = { path = "crates/fe-config" }
 fe-keymap = { path = "crates/fe-keymap" }
 fe-workbench = { path = "crates/fe-workbench" }

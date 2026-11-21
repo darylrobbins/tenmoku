@@ -1,0 +1,34 @@
+[package]
+name = "tenmoku-server"
+description = "The remote development server: a headless daemon per host, user and build, and the --stdio attach ssh runs. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `tenmoku_server::testing`: fault injection for this crate's tests.
+test-support = []
+
+[[bin]]
+name = "tenmoku-server"
+path = "src/main.rs"
+test = false
+doc = false
+
+[dependencies]
+fe-remote-proto.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+# A raw-frame peer, for the pings and handshakes the tests send by hand.
+fe-remote-proto = { workspace = true, features = ["test-support"] }
+# Turns `test-support` on for the tests.
+tenmoku-server = { path = ".", features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

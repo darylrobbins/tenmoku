@@ -8553,6 +8553,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tenmoku-server"
+version = "0.2.5"
+dependencies = [
+ "fe-remote-proto",
+ "libc",
+ "tempfile",
+ "tenmoku-server",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
