@@ -67,6 +67,15 @@ Use nextest rather than `cargo test`: some tests need each test in its own
 process. [TESTING.md](TESTING.md) describes the test layers and where to add
 tests; [PERF.md](PERF.md) covers benchmarks.
 
+The user guide's reference pages (`docs/user/src/reference/`) are generated
+from the settings, the built-in keymap and the commands, and a test fails when
+they're stale. After changing a setting, a default binding or a command,
+regenerate them:
+
+```zsh
+cargo run -p fastedit --example gen_user_docs
+```
+
 ## Code style
 
 `cargo fmt` and clippy with warnings denied are the style rules; there is no

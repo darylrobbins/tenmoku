@@ -164,7 +164,8 @@ mod workbench_commands;
 mod workspace_edit;
 
 use fe_command::{
-    Actor, CommandMeta, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value,
+    Actor, CommandId, CommandMeta, CommandTarget, ContextPredicate, Dispatched, Effect, Registry,
+    Value,
 };
 use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::App;
@@ -309,32 +310,90 @@ pub fn init(cx: &mut App) {
     });
 }
 
+/// The crates whose `#[kiln::command]`s [`command_catalog`] knows, as kiln
+/// recorded them ([`kiln::recorded_catalog`]): the workbench's, and the
+/// chat view's, which the default keymap binds (`chat.send`).
+pub const RECORDED_COMMAND_CRATES: [&str; 2] = ["fe_workbench", "fe_chat_view"];
+
 /// The workbench's, the editor's and the app's commands, to check keymap
 /// bindings against: pass it to [`fe_keymap::KeymapStore::load`].
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
     // The typed commands, with no app to have registered them, ahead of
     // the registries: the one a registry still names
     // (`project_panel.reveal_active`) is checked as typed.
-    let mut catalogs = vec![kiln::recorded_catalog("fe_workbench")];
-    // The chat view's, which the default keymap binds (`chat.send`).
-    catalogs.push(kiln::recorded_catalog("fe_chat_view"));
+    let mut catalogs: Vec<Box<dyn CommandCatalog>> = (RECORDED_COMMAND_CRATES.iter())
+        .map(|krate| kiln::recorded_catalog(krate))
+        .collect();
     catalogs.extend(registry_catalogs());
     Box::new(Catalog(catalogs))
+}
+
+/// Every command [`command_catalog`] knows but the typed ones of
+/// [`RECORDED_COMMAND_CRATES`] (which kiln's records list), each once,
+/// with the title it's registered with, empty for a typed command of
+/// kiln-shell's: for a reference to list them, which a catalog can't.
+pub fn registry_commands() -> Vec<(CommandId, String)> {
+    let mut seen = std::collections::HashSet::new();
+    (registry_parts().into_iter())
+        .flat_map(|part| part.commands)
+        .filter(|(id, _)| seen.insert(id.to_string()))
+        .collect()
 }
 
 /// The catalogs of the commands that live in registries, each once: the
 /// window chrome's, the workbench's panels' own-context ones, and the
 /// editor's.
 fn registry_catalogs() -> Vec<Box<dyn CommandCatalog>> {
+    (registry_parts().into_iter())
+        .map(|part| part.catalog)
+        .collect()
+}
+
+/// One of [`registry_catalogs`], with the commands it knows, so the list
+/// can't miss one the catalog checks.
+struct CatalogPart {
+    catalog: Box<dyn CommandCatalog>,
+    commands: Vec<(CommandId, String)>,
+}
+
+impl CatalogPart {
+    fn registry<T: CommandTarget + 'static>(registry: Registry<T>) -> Self {
+        let commands = (registry.commands())
+            .map(|meta| (meta.id.clone(), meta.title.clone()))
+            .collect();
+        Self {
+            catalog: Box::new(registry),
+            commands,
+        }
+    }
+
+    /// A catalog of the one typed command `A`, such as the menu bar's.
+    fn typed<A: kiln_platform::command_actions::Command>(catalog: Box<dyn CommandCatalog>) -> Self {
+        Self {
+            catalog,
+            commands: vec![(A::id(), String::new())],
+        }
+    }
+}
+
+fn registry_parts() -> Vec<CatalogPart> {
+    let editor = fe_gpui::commands::catalog_commands();
     vec![
-        kiln_shell::picker::catalog(),
-        Box::new(search_panel::registry()),
-        Box::new(commit_box_registry()),
-        kiln_shell::menu_bar::catalog(),
-        kiln_shell::command_palette::catalog(),
-        Box::new(project_panel::registry()),
-        Box::new(status_bar::registry()),
-        fe_gpui::commands::command_catalog(),
+        CatalogPart::registry(kiln_shell::picker::registry()),
+        CatalogPart::registry(search_panel::registry()),
+        CatalogPart::registry(commit_box_registry()),
+        CatalogPart::typed::<kiln_shell::menu_bar::Open>(kiln_shell::menu_bar::catalog()),
+        CatalogPart::typed::<kiln_shell::command_palette::Toggle>(
+            kiln_shell::command_palette::catalog(),
+        ),
+        CatalogPart::registry(project_panel::registry()),
+        CatalogPart::registry(status_bar::registry()),
+        CatalogPart {
+            catalog: fe_gpui::commands::command_catalog(),
+            commands: (editor.into_iter())
+                .map(|meta| (meta.id, meta.title))
+                .collect(),
+        },
     ]
 }
 

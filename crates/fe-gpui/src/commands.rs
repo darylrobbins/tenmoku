@@ -173,7 +173,38 @@ fn app_registry() -> Registry<AppCommands> {
 /// The editor's, vim's, the diff view's and the app's commands, to check
 /// keymap bindings against: pass it to [`fe_keymap::KeymapStore::load`].
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
-    Box::new(Catalog {
+    Box::new(catalog())
+}
+
+/// Every command [`command_catalog`] knows, each once (the first of an ID
+/// a registry lists in several contexts), with the title it's registered
+/// with: for a reference to list them, which a catalog can't.
+pub fn catalog_commands() -> Vec<CommandMeta> {
+    // Every registry, so one added to the catalog can't be left out.
+    let Catalog {
+        editor,
+        vim,
+        proposal,
+        diff,
+        image,
+        hex,
+        app,
+    } = catalog();
+    let mut seen = std::collections::HashSet::new();
+    (editor.commands())
+        .chain(vim.commands())
+        .chain(proposal.commands())
+        .chain(diff.commands())
+        .chain(image.commands())
+        .chain(hex.commands())
+        .chain(app.commands())
+        .filter(|meta| seen.insert(meta.id.to_string()))
+        .cloned()
+        .collect()
+}
+
+fn catalog() -> Catalog {
+    Catalog {
         editor: EDITOR_COMMANDS.with(Rc::clone),
         vim: vim::registry(),
         proposal: crate::view::proposal_registry(),
@@ -181,7 +212,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         image: crate::image_viewer::registry(),
         hex: crate::hex_viewer::registry(),
         app: app_registry(),
-    })
+    }
 }
 
 struct Catalog {
