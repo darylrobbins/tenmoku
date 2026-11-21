@@ -33,7 +33,7 @@ interface Shop {
 }
 
 def square(int x) {
-    return x * x
+    x * x
 }
 
 // Collections and closures

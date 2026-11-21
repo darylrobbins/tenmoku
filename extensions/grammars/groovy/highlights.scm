@@ -277,12 +277,19 @@
     (map_item
       key: (identifier) @variable.parameter)))
 
+;; `x * x`, `x - 1` and `x + y` parse as a juxtaposed call with a unary
+;; argument; an operator followed by a space is the binary operator, so the
+;; callee is a variable then, not a function.
 (juxt_function_call
-  function: (identifier) @function)
+  function: (identifier) @function
+  args: (argument_list) @_args
+  (#not-match? @_args "^[*+-]\\s"))
 
 (juxt_function_call
   function: (dotted_identifier
-    (identifier) @function .))
+    (identifier) @function .)
+  args: (argument_list) @_args
+  (#not-match? @_args "^[*+-]\\s"))
 
 (juxt_function_call
   (argument_list
