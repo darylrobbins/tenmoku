@@ -148,6 +148,8 @@ refused_with "a non-base64 signature" base64 --signature 'abc"/><evil'
 refused_with "a two-part version" X.Y.Z --version 1.2
 refused_with "a four-part version" X.Y.Z --version 1.2.3.4
 refused_with "a suffixed version" X.Y.Z --version 1.2.3-rc1
+refused_with "a preview in the stable feed" "a preview must go in the preview feed" --version 1.2.3-preview.2
+refused_with "an unknown channel feed" "must be preview" --channel-feed beta
 refused_with "a version other than the bundle's" CFBundleVersion --version 1.2.4
 refused_with "a bad --min-system" min-system --min-system 'eleven'
 refused_with "a missing zip" "not found" --zip "$t/absent.zip"
