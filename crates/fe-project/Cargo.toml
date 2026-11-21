@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 kiln-l10n.workspace = true
 dunce.workspace = true
+fe-host.workspace = true
 frizbee.workspace = true
 grep-matcher.workspace = true
 grep-regex.workspace = true

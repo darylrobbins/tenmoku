@@ -19,7 +19,8 @@
 //! - [`fs_ops`] creates, renames, duplicates and trashes entries of the tree,
 //!   all kept under the project root ([`create_file`], [`create_dir`],
 //!   [`rename`], [`duplicate`], [`trash`], [`relative_path`]), and empties
-//!   a file in place ([`open_truncated`]).
+//!   a file in place ([`open_truncated`]). [`LocalTreeFs`] is fe-host's
+//!   `FsHost` with them, and [`Listing::run_on`] lists through one.
 //! - [`Markers`] are the build files in a folder, for module and source-root
 //!   icons: found by a [`MarkerProbe`], one read of the folder's names
 //!   through a no-follow handle and at most [`MAX_STATS`] metadata calls,
@@ -49,8 +50,8 @@ mod win;
 pub use finder::{FileSetDelta, FinderIndex, FinderMatch, FinderStats};
 pub use folder_markers::{MAX_READ, MAX_STATS, MarkerCache, MarkerProbe, Markers, Probed};
 pub use fs_ops::{
-    NameError, create_dir, create_file, duplicate, open_truncated, relative_path, rename, trash,
-    validate_name,
+    LocalTreeFs, NameError, create_dir, create_file, duplicate, local_hosts, open_truncated,
+    relative_path, rename, trash, validate_name,
 };
 pub use ignore_check::{
     IgnoreFinding, IgnoreFindingKind, IgnoreReport, IgnoreSeverity, MAX_SCAN_ENTRIES, MatchedPaths,

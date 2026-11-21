@@ -150,51 +150,8 @@ pub fn create_dir(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
     create(root, dir, name, b"", true).map(|created| created.path)
 }
 
-/// What an entry is: its device and inode (on Windows, its volume's serial
-/// number and its file index) and, on Linux where the file system reports
-/// one, its birth time. The fields compare as they are, never folded: where
-/// `born` is `None` on both sides two entries are the same when their device
-/// and inode are, as before.
-///
-/// ext4 and xfs hand a freed inode straight to the next file made, so a file
-/// deleted and re-created at a path can have the same device and inode; its
-/// birth time differs. Two entries made within one kernel clock tick (a few
-/// milliseconds) share a birth time, and a file system that reports none
-/// can't tell them apart at all (docs/decisions/1f6gnnmvk4-entry-identity-reuse.md).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EntryId {
-    pub dev: u64,
-    pub ino: u64,
-    /// The birth time as seconds and nanoseconds since the Unix epoch.
-    pub born: Option<(i64, u32)>,
-}
-
-impl EntryId {
-    /// An entry whose birth time isn't known.
-    pub fn without_born((dev, ino): (u64, u64)) -> Self {
-        EntryId {
-            dev,
-            ino,
-            born: None,
-        }
-    }
-}
-
-/// Test builds compare an id with a bare (device, inode), ignoring the birth
-/// time.
-#[cfg(any(test, feature = "test-support"))]
-impl PartialEq<(u64, u64)> for EntryId {
-    fn eq(&self, other: &(u64, u64)) -> bool {
-        (self.dev, self.ino) == *other
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl PartialEq<EntryId> for (u64, u64) {
-    fn eq(&self, other: &EntryId) -> bool {
-        other == self
-    }
-}
+use fe_host::TrashRecord;
+pub use fe_host::{Created, EntryId, Placed};
 
 /// What the entry at `path` is now, a symlink itself rather than its target.
 #[cfg(unix)]
@@ -209,24 +166,6 @@ fn entry_with(dir: &File, name: &OsStr, id: Identity) -> EntryId {
         Ok(entry) if (entry.dev, entry.ino) == id => entry,
         _ => EntryId::without_born(id),
     }
-}
-
-/// An entry an operation made: its path, absolute under the root, and what
-/// it is.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Placed {
-    pub path: PathBuf,
-    pub id: EntryId,
-}
-
-/// What [`create_recorded`] made: the entry's path, and the first entry it
-/// made, the top of what undoing it removes: the first folder its name
-/// names that it made, or the entry. A folder that was there, or that
-/// another process made meanwhile, isn't counted as made.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Created {
-    pub path: PathBuf,
-    pub first: Placed,
 }
 
 /// [`create_file`], or with `folder` [`create_dir`], saying what it made.
@@ -533,6 +472,30 @@ impl Trashed {
     }
 }
 
+/// The record a host's [`fe_host::FsHost::trash_recorded`] gives.
+impl From<Trashed> for TrashRecord {
+    fn from(trashed: Trashed) -> Self {
+        TrashRecord {
+            path: trashed.path,
+            at: trashed.at,
+            id: trashed.entry,
+        }
+    }
+}
+
+/// The entry a host's record names. Its device and inode are its
+/// [`EntryId`]'s, as [`trash_recorded`] records them.
+impl From<TrashRecord> for Trashed {
+    fn from(record: TrashRecord) -> Self {
+        Trashed {
+            path: record.path,
+            at: record.at,
+            id: (record.id.dev, record.id.ino),
+            entry: record.id,
+        }
+    }
+}
+
 /// Whether the system Trash says where [`trash_recorded`] put an entry, so
 /// [`restore`] can put it back: on macOS. Not the freedesktop.org trash nor
 /// the Recycle Bin, which aren't followed. In test builds, whose trash is
@@ -746,6 +709,9 @@ fn private_dir(dir: &File) -> io::Result<(OsString, File)> {
         tr!("project-io-no-temp-name").to_string(),
     ))
 }
+
+mod host;
+pub use host::{LocalTreeFs, local_hosts};
 
 #[cfg(any(test, feature = "test-support"))]
 #[path = "fs_ops_test_trash.rs"]
@@ -2606,7 +2572,7 @@ fn rename_exclusive(_: &File, _: &CStr, _: &File, _: &CStr) -> io::Result<()> {
 mod undo_race_tests {
     use std::{fs, io, path::PathBuf};
 
-    use super::{Point, create_recorded, race_tests, restore, trash_recorded};
+    use super::{Point, create_recorded, entry_identity, race_tests, restore, trash_recorded};
 
     /// A temporary directory and its canonical path.
     fn temp() -> (tempfile::TempDir, PathBuf) {
@@ -2775,15 +2741,9 @@ mod undo_race_tests {
         assert!(race_tests::reached());
         assert_eq!(created.path, root.join("a/b/c.rs"));
         assert_eq!(created.first.path, root.join("a/b"), "a isn't the create's");
-        let id = kiln_ids(&created.first.path);
+        // What the entry is, as the workbench looks it up, birth time and all.
+        let id = entry_identity(&created.first.path).unwrap();
         assert_eq!(created.first.id, id);
-    }
-
-    /// What the entry at `path` is, as the workbench looks it up.
-    fn kiln_ids(path: &std::path::Path) -> (u64, u64) {
-        use std::os::unix::fs::MetadataExt;
-        let meta = fs::symlink_metadata(path).unwrap();
-        (meta.dev(), meta.ino())
     }
 }
 

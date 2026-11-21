@@ -145,12 +145,10 @@ fn a_folder_gone_since_fails() {
 }
 
 /// What the entry at `path` is, as the project tree looks it up (its
-/// device and inode).
+/// device and inode, and its birth time where there is one).
 #[cfg(unix)]
-fn identity(path: &Path) -> (u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    let meta = fs::symlink_metadata(path).unwrap();
-    (meta.dev(), meta.ino())
+fn identity(path: &Path) -> fs_ops::EntryId {
+    fs_ops::entry_identity(path).unwrap()
 }
 
 #[test]

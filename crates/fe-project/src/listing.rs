@@ -9,6 +9,7 @@
 //! swap happens.
 
 use crate::fs_ops::EntryId;
+use fe_host::{Excludes, FsHost, ListReply, ListRequest};
 use kiln_l10n::tr;
 use std::{
     cmp::Ordering,
@@ -36,30 +37,12 @@ use ignore::{
     gitignore::{Gitignore, GitignoreBuilder},
 };
 
-/// What a tree entry is. Symlinks are never followed, so a link to a directory
-/// is a [`EntryKind::Symlink`] and can't be expanded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum EntryKind {
-    File,
-    Dir,
-    Symlink,
-}
+pub use fe_host::{Entry, EntryKind};
 
 /// A directory's device and inode, as `stat` reports them. Tells a directory
 /// from another one later put at its path. (A `readdir` entry's inode can
 /// differ: at a mount point or macOS firmlink it is the covered directory's.)
 pub(crate) type Identity = (u64, u64);
-
-/// One entry of a listed directory.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Entry {
-    pub name: OsString,
-    pub kind: EntryKind,
-    /// Matched by an ignore file. Only ever set when ignored entries are shown.
-    pub ignored: bool,
-    /// Directories only.
-    pub(crate) id: Option<Identity>,
-}
 
 /// The listing of one directory, split from the tree so it can run on another
 /// thread: get it with [`crate::FileTree::listing`], call [`Listing::run`]
@@ -100,18 +83,7 @@ pub struct Listed {
 }
 
 /// Why a path no longer leads to the directory a listing was for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Lost {
-    /// Its own name holds nothing, another directory, or a symlink.
-    Itself,
-    /// A directory above it, the root included, is missing, another
-    /// directory, or a symlink, perhaps only for a moment.
-    Above,
-    /// The root (for a listing of the root itself, a directory above it) is
-    /// missing, another directory, or a symlink, perhaps only for a moment.
-    /// No events come for directories above the root.
-    Root,
-}
+pub(crate) use fe_host::ListingLost as Lost;
 
 impl Listed {
     /// The entries in display order, or why the directory couldn't be read.
@@ -137,26 +109,75 @@ impl Listing {
     /// replaced, or replaced by a symlink), the result says which.
     pub fn run(&self) -> Listed {
         let seq = tick(&self.clock);
-        let mut lost = None;
-        let result = self.list(&mut lost);
+        let reply = self.read();
         let done = tick(&self.clock);
-        match result {
-            Ok((entries, id)) => Listed {
+        self.listed(reply, seq, done)
+    }
+
+    /// [`Listing::run`] through `host`: the directory is read there
+    /// ([`FsHost::list_tree`]), with the global excludes the tree read when
+    /// it opened (a remote host has its own), and the run is timed on the
+    /// tree's clock here, so it started before the host read and ended
+    /// after.
+    pub fn run_on(&self, host: &dyn FsHost) -> Listed {
+        let seq = tick(&self.clock);
+        let reply = host.list_tree(&self.request());
+        let done = tick(&self.clock);
+        self.listed(reply, seq, done)
+    }
+
+    /// What [`FsHost::list_tree`] needs to read the directory.
+    pub fn request(&self) -> ListRequest {
+        ListRequest {
+            root: self.root.clone(),
+            rel: self.rel.clone(),
+            show_ignored: self.show_ignored,
+            parent_ignored: self.parent_ignored,
+            ids: self.ids.clone(),
+            global_excludes: Some(Excludes::new(self.global.clone())),
+        }
+    }
+
+    /// The listing `request` asks for, with `global` as git's global
+    /// excludes and a clock of its own: [`FsHost::list_tree`]'s local impl.
+    pub(crate) fn of_request(request: &ListRequest, global: Arc<Gitignore>) -> Self {
+        Listing {
+            root: request.root.clone(),
+            rel: request.rel.clone(),
+            show_ignored: request.show_ignored,
+            parent_ignored: request.parent_ignored,
+            ids: request.ids.clone(),
+            clock: Arc::default(),
+            global,
+        }
+    }
+
+    /// Reads the directory, as [`Listing::run`] says, untimed.
+    pub(crate) fn read(&self) -> ListReply {
+        let mut lost = None;
+        match self.list(&mut lost) {
+            Ok((entries, id)) => ListReply {
                 result: Ok(entries),
-                seq,
-                done,
                 id: Some(id),
                 lost: None,
-                parent_ignored: self.parent_ignored,
             },
-            Err(err) => Listed {
+            Err(err) => ListReply {
                 result: Err(err),
-                seq,
-                done,
                 id: None,
                 lost,
-                parent_ignored: self.parent_ignored,
             },
+        }
+    }
+
+    /// The run of `reply`, started at `seq` and ended at `done`.
+    fn listed(&self, reply: ListReply, seq: u64, done: u64) -> Listed {
+        Listed {
+            result: reply.result,
+            seq,
+            done,
+            id: reply.id,
+            lost: reply.lost,
+            parent_ignored: self.parent_ignored,
         }
     }
 

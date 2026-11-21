@@ -3,7 +3,10 @@
 //! with a local impl that is the code the editor ran before there was a
 //! seam, moved rather than rewritten.
 //!
-//! So far there is [`FsHost`], whose local impl is [`LocalFs`]. The other
+//! So far there is [`FsHost`], whose local impl is [`LocalFs`], less the
+//! project tree's operations ([`FsHost::list_tree`] and those after it):
+//! their local impl is fe-project's, which this crate can't depend on
+//! (docs/decisions/5zajsn5anw-fs-host-tree.md). The other
 //! traits (watching, search, processes, ptys, git) and `ProjectLocation`
 //! (phase 1f) join it here.
 //!
@@ -13,9 +16,10 @@
 //! [`io::ErrorKind`] carry a [`PathError`] that the caller words.
 
 mod local;
+mod tree;
 
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fmt,
     fs::Metadata,
     io,
@@ -25,6 +29,10 @@ use std::{
 };
 
 pub use local::{CommitOptions, LocalFs};
+pub use tree::{
+    Created, Entry, EntryId, EntryKind, Excludes, ListReply, ListRequest, ListingLost, Placed,
+    RequestError, TrashRecord,
+};
 
 /// What a file on disk looked like when it was read or saved: compared
 /// before a save to tell whether something else wrote it since. A client
@@ -235,6 +243,135 @@ pub trait FsHost: Send + Sync {
 
     /// `path` absolute, with its symlinks, `.` and `..` resolved.
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;
+
+    // The project tree's operations, and its undo's, as fe-project's
+    // `listing` and `fs_ops` make them (their docs have the rules). Every
+    // path is absolute under `root` or relative to it, is reached from the
+    // root without following a symlink, and is refused with
+    // `InvalidInput` should it leave the root. A host that has none of them
+    // fails each with `Unsupported`, as [`LocalFs`] does: their local impl
+    // is fe-project's `LocalTreeFs`. Each is confirmed by the host before
+    // it returns; nothing is assumed done (D § 11).
+
+    /// Reads one directory of the tree, with the ignore rules of it and of
+    /// every directory above it, checking the root and each directory down
+    /// to it against the ids `request` has (fe-project `Listing::run`). A
+    /// request [`ListRequest::check`] refuses fails so, reading nothing.
+    fn list_tree(&self, request: &ListRequest) -> ListReply {
+        let _ = request;
+        ListReply {
+            result: Err(tree::unsupported()),
+            id: None,
+            lost: None,
+        }
+    }
+
+    /// Creates file `name` in folder `dir`, holding `contents`, with any
+    /// folders `name` names above it; with `folder`, or a `name` ending in
+    /// `/`, a folder. Says what it made, for undo (fe-project
+    /// `fs_ops::create_recorded_with`).
+    fn create_recorded(
+        &self,
+        root: &Path,
+        dir: &Path,
+        name: &str,
+        contents: &[u8],
+        folder: bool,
+    ) -> io::Result<Created> {
+        let _ = (root, dir, name, contents, folder);
+        Err(tree::unsupported())
+    }
+
+    /// Renames the entry at `from` to `new_name`, a single component, in
+    /// the same folder, never replacing anything; returns its new path
+    /// (fe-project `fs_ops::rename`).
+    fn rename(&self, root: &Path, from: &Path, new_name: &str) -> io::Result<PathBuf> {
+        let _ = (root, from, new_name);
+        Err(tree::unsupported())
+    }
+
+    /// Copies the entry at `path` beside itself under its first free copy
+    /// name, saying what the copy is (fe-project
+    /// `fs_ops::duplicate_recorded`).
+    fn duplicate_recorded(&self, root: &Path, path: &Path) -> io::Result<Placed> {
+        let _ = (root, path);
+        Err(tree::unsupported())
+    }
+
+    /// Copies the entry at `path` into folder `dir` under its own name or
+    /// its first free copy name, saying what the copy is (fe-project
+    /// `fs_ops::copy_into_recorded`).
+    fn copy_into_recorded(&self, root: &Path, path: &Path, dir: &Path) -> io::Result<Placed> {
+        let _ = (root, path, dir);
+        Err(tree::unsupported())
+    }
+
+    /// The name a paste of the entry at `path` into folder `dir` would take
+    /// there now, passing over the names in `planned` (fe-project
+    /// `fs_ops::paste_name_besides`, or `fs_ops::paste_name` with none).
+    fn paste_name(
+        &self,
+        root: &Path,
+        path: &Path,
+        dir: &Path,
+        planned: &[OsString],
+    ) -> io::Result<OsString> {
+        let _ = (root, path, dir, planned);
+        Err(tree::unsupported())
+    }
+
+    /// Moves the entry at `from` into folder `dir`, named `name` there,
+    /// never replacing anything; returns its new path (fe-project
+    /// `fs_ops::move_into`).
+    fn move_into(&self, root: &Path, from: &Path, dir: &Path, name: &OsStr) -> io::Result<PathBuf> {
+        let _ = (root, from, dir, name);
+        Err(tree::unsupported())
+    }
+
+    /// Moves the entries at `paths` to the host's Trash, one record for each
+    /// entry moved, in the order of their paths (fe-project
+    /// `fs_ops::trash_recorded`).
+    fn trash_recorded(&self, root: &Path, paths: &[PathBuf]) -> io::Result<Vec<TrashRecord>> {
+        let _ = (root, paths);
+        Err(tree::unsupported())
+    }
+
+    /// Whether what [`FsHost::trash_recorded`] moves can be put back with
+    /// [`FsHost::restore`] (fe-project `fs_ops::restores_from_trash`).
+    fn restores_from_trash(&self) -> bool {
+        false
+    }
+
+    /// Puts the entry `trashed` records back where it was, if it is still
+    /// the entry its [`EntryId`] says, never replacing anything; returns its
+    /// path. `trashed` follows the entry, on failure too (fe-project
+    /// `fs_ops::restore`).
+    fn restore(&self, root: &Path, trashed: &mut TrashRecord) -> io::Result<PathBuf> {
+        let _ = (root, trashed);
+        Err(tree::unsupported())
+    }
+
+    /// Whether the entry `trashed` records is still where it says in the
+    /// Trash (fe-project `fs_ops::Trashed::in_trash`).
+    fn in_trash(&self, trashed: &TrashRecord) -> io::Result<bool> {
+        let _ = trashed;
+        Err(tree::unsupported())
+    }
+
+    /// Whether there's an entry at `path`, a symlink counting as one
+    /// (fe-project `fs_ops::exists`).
+    fn exists(&self, root: &Path, path: &Path) -> io::Result<bool> {
+        let _ = (root, path);
+        Err(tree::unsupported())
+    }
+
+    /// Empties the regular file at `path` in place, so it keeps its owner,
+    /// permissions and attributes (fe-project `fs_ops::open_truncated`,
+    /// without the handle).
+    fn truncate(&self, root: &Path, path: &Path) -> io::Result<()> {
+        let _ = (root, path);
+        Err(tree::unsupported())
+    }
 }
 
 /// The hosts a window works through, one per trait (D § 5): today's code

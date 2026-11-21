@@ -8,7 +8,7 @@
 
 use std::{
     fs, io,
-    os::unix::fs::{MetadataExt, PermissionsExt, symlink},
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
 };
 
@@ -27,10 +27,10 @@ fn project() -> (tempfile::TempDir, PathBuf) {
     (dir, root)
 }
 
-/// What the entry at `path` is, as the workbench looks it up.
-fn id(path: &Path) -> (u64, u64) {
-    let meta = fs::symlink_metadata(path).unwrap();
-    (meta.dev(), meta.ino())
+/// What the entry at `path` is, as the workbench looks it up, birth time
+/// and all.
+fn id(path: &Path) -> fs_ops::EntryId {
+    fs_ops::entry_identity(path).unwrap()
 }
 
 /// The names in folder `dir`, sorted.

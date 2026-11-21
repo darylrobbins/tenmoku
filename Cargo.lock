@@ -2601,6 +2601,7 @@ version = "0.2.5"
 dependencies = [
  "criterion",
  "dunce",
+ "fe-host",
  "fe-project",
  "frizbee",
  "grep-matcher",
