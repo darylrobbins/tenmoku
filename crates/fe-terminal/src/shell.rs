@@ -757,6 +757,48 @@ impl ShellState {
         Some(text.trim_end().to_owned())
     }
 
+    /// The command lines of the finished blocks newer than block `after`
+    /// (all of them for `None`), oldest first, with their ids: the lines
+    /// whose command ran and ended and that sit on the primary screen's
+    /// kept rows.
+    pub(crate) fn finished_commands<T>(
+        &self,
+        term: &Term<T>,
+        after: Option<u64>,
+    ) -> Vec<(u64, String)> {
+        let mut found: Vec<_> = (self.blocks.iter().rev())
+            .take_while(|block| after.is_none_or(|after| block.id > after))
+            .filter(|block| block.finished.is_some() && block.output.is_some())
+            .filter_map(|block| Some((block.id, self.command_text(term, block.id)?)))
+            .collect();
+        found.reverse();
+        found
+    }
+
+    /// What is typed at the live prompt, from `B` to the cursor: `None`
+    /// unless the newest block waits at its command line (marked `B`, no `C`
+    /// yet), the cursor is on or after `B` with nothing but blanks after it
+    /// on its row, and the primary screen shows.
+    pub(crate) fn typed_command<T>(&self, term: &Term<T>) -> Option<String> {
+        let block = self.blocks.back()?;
+        if block.output.is_some() || block.end.is_some() {
+            return None;
+        }
+        let input = block.input?;
+        let cursor = self.cursor(term)?;
+        if (cursor.row, cursor.col) < (input.row, input.col) {
+            return None;
+        }
+        let grid = term.grid();
+        let point = grid.cursor.point;
+        let after_is_blank = (point.column.0..grid.columns())
+            .all(|col| matches!(grid[Point::new(point.line, Column(col))].c, ' ' | '\0'));
+        if !after_is_blank {
+            return None;
+        }
+        self.text_between(term, input, cursor)
+    }
+
     /// Block `id`'s output so far, from `C` to its end (or the cursor while
     /// it runs), trailing line breaks trimmed: `None` if the session no
     /// longer keeps the block, its command hasn't started, or on the

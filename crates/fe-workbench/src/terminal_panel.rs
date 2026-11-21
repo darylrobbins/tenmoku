@@ -54,8 +54,8 @@ use fe_config::TerminalSettings;
 use fe_editor::lane::LaneId;
 use fe_gpui::EditorTheme;
 use fe_terminal_view::{
-    CommandBlock, CommandBlockLook, CommandStatus, TerminalOptions, TerminalStyle, TerminalView,
-    TerminalViewEvent,
+    CommandBlock, CommandBlockLook, CommandStatus, History, HistorySuggestions, TerminalOptions,
+    TerminalStyle, TerminalView, TerminalViewEvent,
 };
 use fe_ui::{ActiveTheme as _, Icon, IconButton, IconRef, TAB_HEIGHT, Tab, TabBar, Tooltip};
 use gpui::{
@@ -313,6 +313,9 @@ pub struct TerminalPanel {
     theme: EditorTheme,
     /// The user's `terminal` settings.
     settings: TerminalSettings,
+    /// The command lines every session ran, for the live prompt's faint
+    /// suggestion; in memory only.
+    history: History,
     /// To [`fe_gpui::ActivePalette`], which a theme file's reload or the
     /// system's appearance changes without a settings reload: restyles the
     /// sessions and the ones to come.
@@ -383,6 +386,7 @@ impl TerminalPanel {
             ),
             theme: theme.clone(),
             settings: TerminalSettings::default(),
+            history: History::new(),
             _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
             find: None,
             focus: cx.focus_handle(),
@@ -483,6 +487,25 @@ impl TerminalPanel {
                         label: Rc::new(block_label),
                     });
                     view.set_command_blocks(look, cx);
+                }
+            });
+        }
+    }
+
+    /// Shows the history suggestion at each session's live prompt but a
+    /// lane's, in the theme's `text.faint`, as `terminal.history_suggestions`
+    /// says. Done as the panel draws, like [`Self::sync_blocks`].
+    fn sync_suggestions(&self, cx: &mut Context<Self>) {
+        let color = cx.theme().colors.text.faint;
+        let on = self.settings.history_suggestions;
+        for session in &self.sessions {
+            let wanted = (on && session.lane.is_none()).then_some(color);
+            let history = self.history.clone();
+            session.view.update(cx, |view, cx| {
+                let shown = view.history_suggestions().map(|s| s.color);
+                if shown != wanted {
+                    let suggestions = wanted.map(|color| HistorySuggestions { history, color });
+                    view.set_history_suggestions(suggestions, cx);
                 }
             });
         }
@@ -1693,6 +1716,7 @@ impl Render for TerminalPanel {
         let focused = self.focus.is_focused(window);
         self.start(window, cx);
         self.sync_blocks(cx);
+        self.sync_suggestions(cx);
         if focused {
             self.focus_active(window, cx);
         }
@@ -1832,6 +1856,10 @@ mod terminal_panel_tests;
 #[cfg(test)]
 #[path = "tests/terminal_blocks.rs"]
 mod terminal_blocks_tests;
+
+#[cfg(test)]
+#[path = "tests/terminal_suggestion.rs"]
+mod terminal_suggestion_tests;
 
 /// `terminal.rename`'s picker: the name as typed, and one row that applies
 /// it, or clears the custom name when it's empty.

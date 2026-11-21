@@ -1825,6 +1825,11 @@
             "null"
           ]
         },
+        "history_suggestions": {
+          "default": true,
+          "description": "Show a faint suggestion after what you type at the prompt: the rest of\nthe newest command you ran in any terminal that starts with it. Right\nor End at the end of the line accepts it. Kept in memory only, never\nwritten to disk.",
+          "type": "boolean"
+        },
         "scrollback": {
           "default": 10000,
           "description": "How many lines the terminal keeps above the screen. Applies to\nterminals started after it changes.",
@@ -2556,6 +2561,7 @@
       "default": {
         "command_blocks": true,
         "font_fallbacks": [],
+        "history_suggestions": true,
         "scrollback": 10000,
         "shell": "",
         "shell_args": []

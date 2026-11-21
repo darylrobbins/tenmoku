@@ -690,6 +690,24 @@ impl Terminal {
         lock(&self.shell).command_text(&term, id)
     }
 
+    /// The command lines of the blocks that finished since block `after`
+    /// ([`CommandBlock::id`]; `None` for all), oldest first, with their ids.
+    pub fn finished_commands(&self, after: Option<u64>) -> Vec<(u64, String)> {
+        let term = self.term.lock();
+        lock(&self.shell).finished_commands(&term, after)
+    }
+
+    /// What is typed at the live prompt, if the cursor is at the end of it
+    /// and no program runs (OSC 133 B to the cursor): `None` on the
+    /// alternate screen, in vi mode, or if the shell doesn't mark prompts.
+    pub fn typed_command(&self) -> Option<String> {
+        let term = self.term.lock();
+        if term.mode().contains(alacritty_terminal::term::TermMode::VI) {
+            return None;
+        }
+        lock(&self.shell).typed_command(&term)
+    }
+
     /// The output of block `id` ([`CommandBlock::id`]) so far, from OSC
     /// 133;C to its end, of the rows still in history: `None` once the
     /// block is gone, before its command runs, or on the alternate screen.

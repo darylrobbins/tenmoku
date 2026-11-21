@@ -4,6 +4,7 @@
 //! types never appear in this crate's API, so the GPUI view (`fe-terminal-view`)
 //! doesn't name it. Must not depend on GPUI.
 
+pub mod history;
 pub mod keys;
 mod links;
 mod pty_loop;

@@ -369,6 +369,11 @@ pub struct TerminalSettings {
     /// green if it exited 0 and red if not, and its exit code and how long
     /// it ran at the right of its prompt row.
     pub command_blocks: bool,
+    /// Show a faint suggestion after what you type at the prompt: the rest of
+    /// the newest command you ran in any terminal that starts with it. Right
+    /// or End at the end of the line accepts it. Kept in memory only, never
+    /// written to disk.
+    pub history_suggestions: bool,
 }
 
 impl Default for TerminalSettings {
@@ -381,6 +386,7 @@ impl Default for TerminalSettings {
             font_size: None,
             font_fallbacks: Vec::new(),
             command_blocks: true,
+            history_suggestions: true,
         }
     }
 }

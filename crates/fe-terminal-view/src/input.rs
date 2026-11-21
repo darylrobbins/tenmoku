@@ -209,6 +209,18 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
+        // Right or End at the end of the line takes the history suggestion;
+        // any other key reaches the shell as it is.
+        let keystroke = &event.keystroke;
+        if matches!(keystroke.key.as_str(), "right" | "end")
+            && keystroke.modifiers == gpui::Modifiers::default()
+            && let Some(rest) = self.suggestion()
+        {
+            self.marked = None;
+            self.write(rest.into_bytes(), cx);
+            cx.stop_propagation();
+            return;
+        }
         match key_input(&event.keystroke) {
             KeyInput::Copy => {
                 // Nothing selected: the key isn't the terminal's.

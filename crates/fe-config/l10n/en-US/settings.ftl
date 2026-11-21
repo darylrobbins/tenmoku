@@ -623,6 +623,12 @@ settings-terminal-font_size =
     The terminal's font size, in points. Unset, 12, the design's small
     code size.
 
+settings-terminal-history_suggestions =
+    Show a faint suggestion after what you type at the prompt: the rest of
+    the newest command you ran in any terminal that starts with it. Right
+    or End at the end of the line accepts it. Kept in memory only, never
+    written to disk.
+
 settings-terminal-scrollback =
     How many lines the terminal keeps above the screen. Applies to
     terminals started after it changes.

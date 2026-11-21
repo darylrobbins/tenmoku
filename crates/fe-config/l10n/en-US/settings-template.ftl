@@ -416,6 +416,11 @@ settings-template-terminal-command_blocks =
     left, by its exit code, and its exit code and how long it ran on its prompt
     row.
 
+settings-template-terminal-history_suggestions =
+    Show a faint suggestion after what you type at the prompt: the rest of the
+    newest command you ran in any terminal that starts with it. Right or End at
+    the end of the line accepts it. Kept in memory only, never written to disk.
+
 settings-template-chat-model =
     The Claude model new chats start with. A
     project file can't set any [chat] key.

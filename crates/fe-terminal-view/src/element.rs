@@ -141,6 +141,9 @@ pub struct PaintReport {
     pub block_edges: Vec<(Bounds<Pixels>, Hsla)>,
     /// Command blocks' labels, each on its prompt row.
     pub block_labels: Vec<PaintedText>,
+    /// The history suggestion's remainder, painted faint after the cursor,
+    /// and its colour.
+    pub suggestion: Option<(PaintedText, Hsla)>,
 }
 
 pub(crate) struct Prepainted {
@@ -160,6 +163,8 @@ pub(crate) struct Prepainted {
     edges: Vec<(Bounds<Pixels>, Hsla)>,
     /// Command blocks' labels, at the right of their prompt rows.
     labels: Vec<Text>,
+    /// The history suggestion after the cursor, with its colour.
+    suggestion: Option<(Text, Hsla)>,
 }
 
 impl Prepainted {
@@ -217,6 +222,8 @@ impl Prepainted {
             cursor_quads,
             block_edges: self.edges.clone(),
             block_labels: texts(&self.labels),
+            suggestion: (self.suggestion.as_ref())
+                .and_then(|(text, color)| Some((texts(std::slice::from_ref(text)).pop()?, *color))),
         }
     }
 }
@@ -316,6 +323,7 @@ impl Element for TerminalElement {
             marked: None,
             edges: Vec::new(),
             labels: Vec::new(),
+            suggestion: None,
         };
         let Some(snapshot) = snapshot else {
             return prepainted;
@@ -502,6 +510,38 @@ impl Element for TerminalElement {
                 },
             ));
         }
+        let suggestion = self.view.read(cx).suggestion();
+        let color = self.view.read(cx).suggest.as_ref().map(|s| s.color);
+        if let (Some(rest), Some(color)) = (suggestion, color)
+            && snapshot.cursor.shape != fe_terminal::CursorShape::Hidden
+            && snapshot.cursor.row < snapshot.rows.len()
+            && snapshot.cursor.col < snapshot.cols
+        {
+            let (row, col) = (snapshot.cursor.row, snapshot.cursor.col);
+            // Not past the grid's right edge: a long remainder is cut.
+            let rest: String = rest.chars().take(snapshot.cols - col).collect();
+            let run = TextRun {
+                len: rest.len(),
+                font: font.clone(),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let line = window.text_system().shape_line(
+                SharedString::from(rest),
+                style.font_size,
+                &[run],
+                None,
+            );
+            prepainted.suggestion = Some((
+                Text {
+                    origin: at(row, col),
+                    line,
+                },
+                color,
+            ));
+        }
         if let Some(look) = &blocks {
             let grid_right = at(0, snapshot.cols).x;
             for block in layout::block_edges(&command_blocks, snapshot.rows.len()) {
@@ -584,6 +624,9 @@ impl Element for TerminalElement {
                     window.paint_quad(fill(*bounds, *color));
                 }
                 None => {}
+            }
+            if let Some((text, _)) = &prepainted.suggestion {
+                paint_text(text, line_height, window, cx);
             }
             for text in &prepainted.labels {
                 paint_text(text, line_height, window, cx);

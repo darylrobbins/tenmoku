@@ -3,6 +3,7 @@ use std::io;
 use std::ops::Range;
 use std::rc::Rc;
 
+use fe_terminal::history::History;
 use fe_terminal::{
     CommandBlock, CommandStatus, GridSize, OutputTap, Terminal, TerminalEvent, TerminalMatch,
     TerminalOptions, TerminalQuery,
@@ -69,6 +70,17 @@ impl std::fmt::Debug for CommandBlockLook {
     }
 }
 
+/// The history suggestion at a live prompt
+/// ([`TerminalView::set_history_suggestions`]).
+#[derive(Clone, Debug)]
+pub struct HistorySuggestions {
+    /// The command lines every terminal of the app ran: this view adds its
+    /// own as they finish.
+    pub history: History,
+    /// The suggestion's colour: the theme's `text.faint`.
+    pub color: Hsla,
+}
+
 /// A terminal session drawn in a window. The session starts on the view's
 /// first layout, once its size in cells is known, and is resized whenever
 /// that changes.
@@ -127,6 +139,10 @@ pub struct TerminalView {
     pub(crate) read_only: bool,
     /// How command blocks are marked: not at all while `None`.
     pub(crate) blocks: Option<CommandBlockLook>,
+    /// The history suggestion at the live prompt: none while `None`.
+    pub(crate) suggest: Option<HistorySuggestions>,
+    /// The newest command block whose line went into the history.
+    recorded: Option<u64>,
     _focus_reports: [Subscription; 2],
     /// Redraws the cursor when the window gains or loses focus.
     _activation: Subscription,
@@ -186,6 +202,8 @@ impl TerminalView {
             vi_prompt_bounds: Rc::default(),
             read_only: false,
             blocks: None,
+            suggest: None,
+            recorded: None,
             _focus_reports: focus_reports,
             _activation: activation,
         })
@@ -233,6 +251,51 @@ impl TerminalView {
     pub fn set_command_blocks(&mut self, look: Option<CommandBlockLook>, cx: &mut Context<Self>) {
         self.blocks = look;
         cx.notify();
+    }
+
+    /// Shows a faint suggestion after what is typed at the live prompt, the
+    /// rest of the newest line of `suggestions.history` that starts with it,
+    /// and writes the lines of the commands that finish to that history; or,
+    /// with `None` (the default), neither. Right or End at the end of the
+    /// line accepts it. Painted over the grid, not as cells.
+    pub fn set_history_suggestions(
+        &mut self,
+        suggestions: Option<HistorySuggestions>,
+        cx: &mut Context<Self>,
+    ) {
+        self.suggest = suggestions;
+        cx.notify();
+    }
+
+    /// The history suggestion's setup, if it is on.
+    pub fn history_suggestions(&self) -> Option<&HistorySuggestions> {
+        self.suggest.as_ref()
+    }
+
+    /// What follows the typed command at the live prompt in the history's
+    /// newest line that starts with it. `None` when suggestions are off, the
+    /// view is read-only, text is being composed, vi mode is on, the program
+    /// runs, the shell marks no prompt, the cursor isn't at the end of the
+    /// line, or nothing matches.
+    pub(crate) fn suggestion(&self) -> Option<String> {
+        let suggest = self.suggest.as_ref()?;
+        if self.read_only || self.marked.is_some() {
+            return None;
+        }
+        let typed = self.terminal.as_ref()?.typed_command()?;
+        suggest.history.remainder(&typed)
+    }
+
+    /// Adds the lines of the commands that have finished since the last
+    /// call to the history, if suggestions are on.
+    fn record_history(&mut self) {
+        let (Some(suggest), Some(terminal)) = (&self.suggest, &self.terminal) else {
+            return;
+        };
+        for (id, line) in terminal.finished_commands(self.recorded) {
+            suggest.history.record(&line);
+            self.recorded = Some(id);
+        }
     }
 
     /// How command blocks are marked, if they are.
@@ -332,6 +395,7 @@ impl TerminalView {
     fn handle(&mut self, event: TerminalEvent, cx: &mut Context<Self>) {
         match event {
             TerminalEvent::Wakeup => {
+                self.record_history();
                 let status = (self.terminal.as_ref())
                     .map_or(CommandStatus::Idle, |terminal| terminal.command_status());
                 if status != self.command_status {

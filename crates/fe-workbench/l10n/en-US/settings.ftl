@@ -183,6 +183,7 @@ workbench-settings-label-terminal-command_blocks = Command Blocks
 workbench-settings-label-terminal-font_fallbacks = Font Fallbacks
 workbench-settings-label-terminal-font_family = Font Family
 workbench-settings-label-terminal-font_size = Font Size
+workbench-settings-label-terminal-history_suggestions = History Suggestions
 workbench-settings-label-terminal-scrollback = Scrollback
 workbench-settings-label-terminal-shell = Shell
 workbench-settings-label-terminal-shell_args = Shell Args

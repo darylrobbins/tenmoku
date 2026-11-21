@@ -20,9 +20,12 @@ mod view;
 pub use element::cell_size;
 #[doc(hidden)]
 pub use element::{PaintReport, PaintedCursor, PaintedText};
+pub use fe_terminal::history::History;
 pub use fe_terminal::{
-    CommandBlock, CommandStatus, GridMemory, QueryError, TerminalMatch, TerminalOptions,
+    CommandBlock, CommandStatus, GridMemory, QueryError, Terminal, TerminalMatch, TerminalOptions,
     TerminalQuery, ViMove,
 };
 pub use style::TerminalStyle;
-pub use view::{BlockLabel, CommandBlockLook, KEY_CONTEXT, TerminalView, TerminalViewEvent};
+pub use view::{
+    BlockLabel, CommandBlockLook, HistorySuggestions, KEY_CONTEXT, TerminalView, TerminalViewEvent,
+};
