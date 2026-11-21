@@ -434,6 +434,20 @@ Colour bracket pairs by how deeply they nest, in the theme's `bracket_1`, `brack
 - Type: boolean
 - Default: `true`
 
+### `editor.closing_brace_hints`
+
+Show the item's keyword and name faintly after the last row of a long block (`} fn render`), from the outline, in every language.
+
+- Type: boolean
+- Default: `true`
+
+### `editor.closing_brace_hints_min_rows`
+
+The fewest rows a block spans to get a closing-brace hint.
+
+- Type: integer, at least 0
+- Default: `25`
+
 ### `editor.code_actions_on_save`
 
 Code action kinds to run, in order, when you save a file, before `format_on_save`, such as `["source.organizeImports", "source.fixAll"]`.

@@ -465,6 +465,10 @@ impl Workbench {
         let format_on_save = settings.format_on_save;
         let code_actions_on_save = settings.code_actions_on_save.clone();
         let inlay_hints = settings.inlay_hints;
+        let closing_hints = (
+            settings.closing_brace_hints,
+            settings.closing_brace_hints_min_rows,
+        );
         let code_lens = settings.code_lens;
         let links = settings.links;
         let color_decorators = settings.color_decorators;
@@ -901,6 +905,7 @@ impl Workbench {
         workbench.lsp.format_on_save.set(format_on_save);
         *workbench.lsp.code_actions_on_save.borrow_mut() = code_actions_on_save;
         workbench.lsp.inlay_hints_on.set(inlay_hints);
+        workbench.lsp.closing_hints.set(closing_hints);
         workbench.lsp.code_lens_on.set(code_lens);
         workbench.lsp.links_on.set(links);
         workbench.lsp.color_decorators_on.set(color_decorators);

@@ -35,6 +35,9 @@ const PILL_PADDING: f32 = 4.;
 pub enum InlayHintKind {
     Type,
     Parameter,
+    /// A block's closing hint (`fn render` after its last brace): plain
+    /// faint text, without a pill.
+    Closing,
 }
 
 /// A label drawn at a buffer offset, not part of the buffer.
@@ -562,6 +565,8 @@ pub(crate) struct Shown {
     rect: layout::Rect,
     /// The pill's part of `rect`, inside the padding.
     pill: layout::Rect,
+    /// Whether it's a [`InlayHintKind::Closing`] hint: no pill behind it.
+    closing: bool,
     /// What it's shaped in, and at what size.
     font: (gpui::Font, Pixels),
     #[cfg(test)]
@@ -603,6 +608,7 @@ pub(crate) fn layout(
                 line,
                 rect,
                 pill,
+                closing: hint.kind == Some(InlayHintKind::Closing),
                 font: (small.font().clone(), small.font_size()),
                 #[cfg(test)]
                 text: hint.text(),
@@ -637,8 +643,14 @@ pub(crate) fn paint(
             pill.origin + gpui::point(px(0.), inset),
             gpui::size(pill.size.width, pill.size.height - inset * 2.),
         );
-        window.paint_quad(fill(pill, surface).corner_radii(PILL_RADIUS));
-        let across = (hint.pill.width - hint.line.width()).max(0.) / 2.;
+        if !hint.closing {
+            window.paint_quad(fill(pill, surface).corner_radii(PILL_RADIUS));
+        }
+        let across = if hint.closing {
+            0.
+        } else {
+            (hint.pill.width - hint.line.width()).max(0.) / 2.
+        };
         let origin = layout.to_window(Vec2 {
             x: hint.pill.x + across,
             y: hint.pill.y,
@@ -646,8 +658,12 @@ pub(crate) fn paint(
         hint.line.paint(origin, line_height, window, cx);
         drawn.push(DrawnPill {
             bounds: pill,
-            background: surface,
-            corner_radius: PILL_RADIUS,
+            background: if hint.closing {
+                Hsla::transparent_black()
+            } else {
+                surface
+            },
+            corner_radius: if hint.closing { px(0.) } else { PILL_RADIUS },
             text: DrawnText {
                 text: hint.label.clone().into(),
                 font: hint.font.0.clone(),

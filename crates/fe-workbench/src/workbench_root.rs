@@ -352,6 +352,10 @@ impl Workbench {
         self.lsp
             .inlay_hints_on
             .set(event.settings.editor.inlay_hints);
+        self.lsp.closing_hints.set((
+            event.settings.editor.closing_brace_hints,
+            event.settings.editor.closing_brace_hints_min_rows,
+        ));
         self.lsp.code_lens_on.set(event.settings.editor.code_lens);
         self.lsp.links_on.set(event.settings.editor.links);
         (self.lsp.color_decorators_on).set(event.settings.editor.color_decorators);

@@ -31,6 +31,7 @@ mod build_timeline_view;
 mod chat_panel;
 mod chat_tool_loop;
 mod closed_editors;
+mod closing_brace_hints;
 mod color_literals;
 mod config_problems;
 pub mod coverage;

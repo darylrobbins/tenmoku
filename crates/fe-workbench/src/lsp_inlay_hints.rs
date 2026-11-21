@@ -20,12 +20,15 @@ use fe_buffer::Version;
 use fe_gpui::{EditorView, InlayHint, InlayHintFuture, InlayHintHost, InlayHintKind};
 use fe_lsp::LspManager;
 use fe_lsp::{LspError, ServerId};
-use gpui::{Context, Entity, EntityId, Task};
+use gpui::{AppContext as _, Context, Entity, EntityId, Task};
 
 use crate::Workbench;
 
 /// How long the buffer and the rows in view hold still before hints are
 /// asked for.
+/// Texts up to this many bytes have their outline found on the main thread.
+const INLINE_OUTLINE_BYTES: usize = 256 * 1024;
+
 const REST: Duration = Duration::from_millis(250);
 
 /// What was asked for last: the buffer version and the rows in view.
@@ -48,6 +51,15 @@ struct Slot {
     task: Option<Task<()>>,
     /// The manager the editor's host resolves through.
     hosted: Option<Weak<Mutex<LspManager>>>,
+    /// The server's hints and the version they're of.
+    served: Option<(Version, Vec<InlayHint>)>,
+    /// The closing-brace hints from the outline and the version they're of.
+    closing: Option<(Version, Vec<InlayHint>)>,
+    /// What the closing hints were last asked for: the version, whether
+    /// they're on and the fewest rows.
+    closing_key: Option<(Version, bool, u32)>,
+    /// The outline being found.
+    closing_task: Option<Task<()>>,
 }
 
 /// Every open editor's hints.
@@ -92,6 +104,10 @@ impl Workbench {
                     no_provider: None,
                     task: None,
                     hosted: None,
+                    served: None,
+                    closing: None,
+                    closing_key: None,
+                    closing_task: None,
                 });
             // A new manager (the root changed) doesn't know the old one's
             // hints: they go, and the host follows.
@@ -110,11 +126,11 @@ impl Workbench {
                         slot.task = None;
                     }
                     let host = Rc::new(Host { manager });
-                    editor.update(cx, |view, cx| {
-                        view.clear_inlay_hints();
+                    slot.served = None;
+                    editor.update(cx, |view, _| {
                         view.set_inlay_hint_host(Some(host));
-                        cx.notify();
                     });
+                    publish(slot, cx);
                 }
             }
             let Some(server) = server else {
@@ -123,10 +139,8 @@ impl Workbench {
                     slot.asked = None;
                     slot.no_provider = None;
                     slot.task = None;
-                    editor.update(cx, |view, cx| {
-                        view.clear_inlay_hints();
-                        cx.notify();
-                    });
+                    slot.served = None;
+                    publish(slot, cx);
                 }
                 continue;
             };
@@ -139,10 +153,8 @@ impl Workbench {
                 if moved {
                     slot.asked = None;
                     slot.task = None;
-                    editor.update(cx, |view, cx| {
-                        view.clear_inlay_hints();
-                        cx.notify();
-                    });
+                    slot.served = None;
+                    publish(slot, cx);
                 }
             }
             if slot.no_provider == Some(server) {
@@ -155,6 +167,101 @@ impl Workbench {
             }
             slot.key = Some(key);
             self.ask_inlay_hints_in(id, REST, cx);
+        }
+        self.sync_closing_hints(&editors, cx);
+    }
+
+    /// Finds each editor's closing-brace hints from its outline when its
+    /// parsed text or the settings changed, and shows them with the server's.
+    fn sync_closing_hints(&mut self, editors: &[Entity<EditorView>], cx: &mut Context<Self>) {
+        let (on, min_rows) = self.lsp.closing_hints.get();
+        for editor in editors {
+            let id = editor.entity_id();
+            let Some(slot) = self.lsp.inlay_hints.slots.get_mut(&id) else {
+                continue;
+            };
+            let view = editor.read(cx);
+            let version = view.model().snapshot().version();
+            let key = (version, on, min_rows);
+            let len = view.model().snapshot().text().len();
+            if slot.closing_key == Some(key) {
+                continue;
+            }
+            let job = if !on {
+                None
+            } else if let Some(syntax) = view.syntax() {
+                match fe_syntax::outline_job(syntax) {
+                    Ok(job) => Some(job),
+                    // Reparsed soon, and drawn again then.
+                    Err(fe_syntax::NoOutline::NotParsed) => continue,
+                    Err(_) => None,
+                }
+            } else if view.is_loading_language() {
+                // Its grammar lands later, and the editor is drawn again.
+                continue;
+            } else {
+                None
+            };
+            slot.closing_key = Some(key);
+            let Some(job) = job else {
+                slot.closing_task = None;
+                if slot.closing.take().is_some() {
+                    publish(slot, cx);
+                }
+                continue;
+            };
+            // Small texts' outlines take a few milliseconds: found here, so
+            // no job is in flight when the window closes. Big ones go to
+            // the background.
+            let (found, inline) = if len > INLINE_OUTLINE_BYTES {
+                (Some(cx.background_spawn(async move { job.run() })), None)
+            } else {
+                (None, Some(job))
+            };
+            slot.closing_task = Some(cx.spawn(async move |workbench, cx| {
+                let outline = match (found, inline) {
+                    (Some(found), _) => found.await,
+                    (None, Some(job)) => job.run(),
+                    (None, None) => return,
+                };
+                workbench
+                    .update(cx, |workbench, cx| {
+                        workbench.closing_hints_landed(id, key, outline, cx)
+                    })
+                    .ok();
+            }));
+        }
+    }
+
+    /// Shows `outline`'s closing-brace hints if the editor is still at the
+    /// version and settings they were asked for at.
+    fn closing_hints_landed(
+        &mut self,
+        id: EntityId,
+        key: (Version, bool, u32),
+        outline: fe_syntax::Outline,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(slot) = self.lsp.inlay_hints.slots.get_mut(&id) else {
+            return;
+        };
+        if slot.closing_key != Some(key) {
+            return;
+        }
+        let view = slot.editor.read(cx);
+        let snapshot = view.model().snapshot();
+        if snapshot.version() != key.0 || outline.version != key.0 {
+            // Parsed at another version: asked for again at the next frame.
+            slot.closing_key = None;
+            return;
+        }
+        let hints = crate::closing_brace_hints::hints(&outline, snapshot.text(), key.2);
+        // Nothing to show, and nothing shown: the editor is left alone.
+        let unchanged =
+            hints.is_empty() && slot.closing.as_ref().is_none_or(|(_, old)| old.is_empty());
+        slot.closing = Some((key.0, hints));
+        if !unchanged {
+            publish(slot, cx);
         }
     }
 
@@ -246,25 +353,43 @@ impl Workbench {
         if slot.asked.as_ref() != Some(&(version, range)) || !self.lsp.inlay_hints_on.get() {
             return;
         }
-        let editor = slot.editor.clone();
         match answer {
             Ok(Some(found)) => {
-                let hints = found.into_iter().map(convert).collect();
-                editor.update(cx, |view, cx| {
-                    view.set_inlay_hints(version, hints);
-                    cx.notify();
-                });
+                slot.served = Some((version, found.into_iter().map(convert).collect()));
+                publish(slot, cx);
             }
             Ok(None) => {
                 slot.no_provider = slot.server;
-                editor.update(cx, |view, cx| {
-                    view.clear_inlay_hints();
-                    cx.notify();
-                });
+                slot.served = None;
+                publish(slot, cx);
             }
             Err(error) => log::debug!("no inlay hints: {error}"),
         }
     }
+}
+
+/// Shows the editor's server hints and closing-brace hints together: at
+/// the server's version, with the closing hints if they're of it too; a
+/// closing hint a server hint duplicates is left out.
+fn publish(slot: &Slot, cx: &mut Context<Workbench>) {
+    let mut shown: Option<(Version, Vec<InlayHint>)> = slot.served.clone();
+    if let Some((version, closing)) = &slot.closing {
+        match &mut shown {
+            None => shown = Some((*version, closing.clone())),
+            Some((served_version, hints)) if served_version == version => {
+                let extra = crate::closing_brace_hints::without_served(closing, hints);
+                hints.extend(extra);
+            }
+            Some(_) => {}
+        }
+    }
+    slot.editor.update(cx, |view, cx| {
+        match shown {
+            Some((version, hints)) => view.set_inlay_hints(version, hints),
+            None => view.clear_inlay_hints(),
+        }
+        cx.notify();
+    });
 }
 
 /// Resolves an editor's hints through the language servers.

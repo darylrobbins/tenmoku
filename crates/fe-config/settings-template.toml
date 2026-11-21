@@ -51,6 +51,12 @@
 # Show language servers' inlay hints (type and parameter names) inside the text.
 # inlay_hints = true
 
+# Show the item's keyword and name faintly after the last row of a long block.
+# closing_brace_hints = true
+
+# The fewest rows a block spans to get a closing-brace hint.
+# closing_brace_hints_min_rows = 25
+
 # Colour code with language servers' semantic tokens over the syntax colours.
 # semantic_highlighting = true
 

@@ -1131,6 +1131,11 @@ pub struct EditorSettings {
     /// Show language servers' inlay hints (type and parameter names) inside
     /// the text.
     pub inlay_hints: bool,
+    /// Show the item's keyword and name faintly after the last row of a long
+    /// block (`} fn render`), from the outline, in every language.
+    pub closing_brace_hints: bool,
+    /// The fewest rows a block spans to get a closing-brace hint.
+    pub closing_brace_hints_min_rows: u32,
     /// Colour code with language servers' semantic tokens over the syntax
     /// colours.
     pub semantic_highlighting: bool,
@@ -1575,6 +1580,8 @@ impl Default for EditorSettings {
             format_on_type: false,
             format_on_paste: false,
             inlay_hints: true,
+            closing_brace_hints: true,
+            closing_brace_hints_min_rows: 25,
             semantic_highlighting: true,
             lightbulb: true,
             code_lens: true,

@@ -582,6 +582,8 @@ pub(crate) struct Lsp {
     pub(crate) format_on_save: Rc<std::cell::Cell<bool>>,
     /// Whether `editor.inlay_hints` is on (set from the settings each reload).
     pub(crate) inlay_hints_on: std::cell::Cell<bool>,
+    /// `editor.closing_brace_hints` and its minimum rows.
+    pub(crate) closing_hints: std::cell::Cell<(bool, u32)>,
     /// Every editor's inlay hints.
     inlay_hints: inlay_hints::Slots,
     /// Whether `editor.code_lens` is on (set from the settings each reload).
@@ -805,6 +807,7 @@ impl Lsp {
             markdown: Default::default(),
             format_on_save: Rc::default(),
             inlay_hints_on: std::cell::Cell::new(true),
+            closing_hints: std::cell::Cell::new((true, 25)),
             inlay_hints: Default::default(),
             code_lens_on: std::cell::Cell::new(true),
             lightbulb_on: std::cell::Cell::new(true),

@@ -55,6 +55,10 @@ settings-template-editor-format_on_paste =
 
 settings-template-editor-inlay_hints = Show language servers' inlay hints (type and parameter names) inside the text.
 
+settings-template-editor-closing_brace_hints = Show the item's keyword and name faintly after the last row of a long block.
+
+settings-template-editor-closing_brace_hints_min_rows = The fewest rows a block spans to get a closing-brace hint.
+
 settings-template-editor-semantic_highlighting = Colour code with language servers' semantic tokens over the syntax colours.
 
 settings-template-editor-lightbulb =

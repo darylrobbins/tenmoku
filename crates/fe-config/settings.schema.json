@@ -612,6 +612,18 @@
           "description": "Colour bracket pairs by how deeply they nest, in the theme's\n`bracket_1`, `bracket_2` and `bracket_3`, then round again. Brackets\nin strings and comments, and ones without a pair, keep their colour.",
           "type": "boolean"
         },
+        "closing_brace_hints": {
+          "default": true,
+          "description": "Show the item's keyword and name faintly after the last row of a long\nblock (`} fn render`), from the outline, in every language.",
+          "type": "boolean"
+        },
+        "closing_brace_hints_min_rows": {
+          "default": 25,
+          "description": "The fewest rows a block spans to get a closing-brace hint.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "code_actions_on_save": {
           "default": [],
           "description": "Code action kinds to run, in order, when you save a file, before\n`format_on_save`, such as `[\"source.organizeImports\", \"source.fixAll\"]`.",
@@ -2409,6 +2421,8 @@
         "auto_save": "off",
         "auto_save_delay": 1000,
         "bracket_pair_colors": true,
+        "closing_brace_hints": true,
+        "closing_brace_hints_min_rows": 25,
         "code_actions_on_save": [],
         "code_lens": true,
         "color_decorators": true,

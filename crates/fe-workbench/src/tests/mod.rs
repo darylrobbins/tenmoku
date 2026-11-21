@@ -79,6 +79,7 @@ mod caret_keys_lines;
 mod changes_b3;
 mod chat_edit_root_spelling;
 mod close_folder;
+mod closing_brace_hints;
 mod coloured_icon_surfaces;
 mod commit_diff_b3;
 mod completion_as_you_type;
