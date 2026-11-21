@@ -949,6 +949,17 @@ How long, in milliseconds, the program may run before it is killed and nothing c
 - Type: integer, 1 to 60000
 - Default: `3000`
 
+## `git`
+
+Git, in the Changes panel.
+
+### `git.pre_commit_checks`
+
+The labels of project tasks to run, one at a time in this order, as pre-commit checks above the commit message: each time the staged files change and then stay as they are for 2 seconds, in a trusted folder. A label no task has shows as unavailable. A failing check doesn't stop a commit. Empty runs nothing.
+
+- Type: array of string
+- Default: `[]`
+
 ## `lsp`
 
 Language servers. A project file may only turn them off, but in a trusted folder its settings for them apply.
