@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashSet,
+    io,
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
@@ -15,6 +16,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
+use fe_host::{Subscription, WatchHost};
 #[cfg(target_os = "linux")]
 use ignore::gitignore::Gitignore;
 #[cfg(target_os = "linux")]
@@ -26,14 +28,8 @@ use crate::listing::{
     Access, Identity, Rules, global_excludes, identity, is_git_dir, open_dirs, read_dir, stat_at,
 };
 
-/// Something that may have changed on disk.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum FsChange {
-    /// Something at this path may have been created, changed or removed.
-    Path(PathBuf),
-    /// Events were dropped or coalesced; anything may have changed.
-    Rescan,
-}
+/// Something that may have changed on disk: fe-host's, the wire type.
+pub use fe_host::FsChange;
 
 /// Watches a directory recursively (FSEvents on macOS, inotify on Linux) and
 /// hands batches of [`FsChange`]s to a sink on its own thread. A batch is
@@ -161,6 +157,35 @@ impl ProjectWatcher {
             watcher,
             thread: Some(thread),
         })
+    }
+}
+
+/// This machine's file watching, fe-host's [`WatchHost`]: a
+/// [`ProjectWatcher`] per watch, whose batches the subscription receives as
+/// its sink got them, and which dropping the subscription drops
+/// (docs/decisions/7p724bm90r-watch-search-host.md).
+#[derive(Copy, Clone, Debug, Default)]
+pub struct LocalWatch;
+
+impl WatchHost for LocalWatch {
+    fn watch(&self, root: &Path) -> io::Result<Subscription<Vec<FsChange>>> {
+        let (tx, rx) = mpsc::channel();
+        let watcher = ProjectWatcher::new(root, move |batch| {
+            // Fails only once the subscription is dropped, which drops the
+            // watcher next.
+            let _ = tx.send(batch);
+        })
+        .map_err(notify_error)?;
+        Ok(Subscription::new(rx, watcher))
+    }
+}
+
+/// `error` as an I/O error: its own, if it is one.
+fn notify_error(error: notify::Error) -> io::Error {
+    match error.kind {
+        notify::ErrorKind::Io(error) => error,
+        notify::ErrorKind::PathNotFound => io::Error::new(io::ErrorKind::NotFound, error),
+        _ => io::Error::other(error),
     }
 }
 
@@ -685,3 +710,7 @@ impl Batch {
 #[cfg(all(test, target_os = "linux"))]
 #[path = "watcher_linux_tests.rs"]
 mod linux_tests;
+
+#[cfg(test)]
+#[path = "watcher_host_tests.rs"]
+mod host_tests;

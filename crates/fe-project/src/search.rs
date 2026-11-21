@@ -14,6 +14,10 @@ use std::{
     thread,
 };
 
+pub use fe_host::{FileMatches, LineMatch, SearchOptions, SearchQuery, SearchSummary};
+use fe_host::{
+    FilesStream, FilesSummary, SearchFailed, SearchFilter, SearchHost, SearchStream, Stream,
+};
 use grep_matcher::{LineMatchKind, LineTerminator, Match, Matcher, NoError};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
@@ -21,9 +25,12 @@ use grep_searcher::{
 };
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
+#[cfg(test)]
+mod host_tests;
 mod replace;
 mod walk;
 
+use crate::finder::{Walked, walk_root};
 use walk::Pre;
 pub use walk::{WalkControl, WalkSummary, WalkedFile, walk_files};
 
@@ -39,23 +46,6 @@ const PREVIEW: usize = 512;
 /// [`SearchSummary::errors`].
 const HEAP_LIMIT: usize = 16 << 20;
 
-/// What to search for.
-///
-/// Searches are line-oriented: a pattern never matches across a line break,
-/// and a pattern that names one (such as `a\nb`) is invalid. Lines end at
-/// `\n`, and a `\r` before it is part of the terminator.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SearchQuery {
-    pub pattern: String,
-    /// A regular expression (Rust's `regex` syntax) rather than a literal.
-    pub regex: bool,
-    pub case_sensitive: bool,
-    /// Matches only where the text before and after the match isn't a word
-    /// character (`grep-regex`'s `word`): `foo` matches `foo.bar` and
-    /// `(foo)`, not `foobar` or `_foo`.
-    pub whole_word: bool,
-}
-
 /// Whether `ch` is a word character to [`SearchQuery::whole_word`]:
 /// Unicode's `\w` (letters, marks, decimal digits, connector punctuation
 /// and joiners), so code matching words in memory agrees with the search.
@@ -63,48 +53,35 @@ pub fn is_word_char(ch: char) -> bool {
     regex_syntax::is_word_character(ch)
 }
 
-impl SearchQuery {
-    /// A case-insensitive literal search for `pattern`: the defaults.
-    pub fn literal(pattern: impl Into<String>) -> SearchQuery {
-        SearchQuery {
-            pattern: pattern.into(),
-            regex: false,
-            case_sensitive: false,
-            whole_word: false,
-        }
-    }
-
-    /// The searcher's matcher, which picks the lines to look at, holding the
-    /// canonical matcher, which finds the ranges in a line without its
-    /// terminator. Both match `^` and `$` at line starts and ends, not only
-    /// the buffer's, and never match a `\n`. A `\r` not before `\n` is
-    /// content.
-    fn matcher(&self) -> Result<LineSelector, SearchError> {
-        let build = |crlf: bool| {
-            RegexMatcherBuilder::new()
-                .fixed_strings(!self.regex)
-                .case_insensitive(!self.case_sensitive)
-                .word(self.whole_word)
-                .multi_line(true)
-                // `crlf` sets the line terminator too, to `\r\n`, which would
-                // keep a `\r` from matching; so it's set back to `\n` after.
-                // It also keeps `.` from matching `\r`, unless `.` matches
-                // any char: the ban on the line terminator then takes `\n`
-                // out of it, which leaves `.` as it is without `crlf`.
-                .crlf(crlf)
-                .dot_matches_new_line(crlf)
-                .line_terminator(Some(b'\n'))
-                .build(&self.pattern)
-                .map_err(|err| SearchError::InvalidPattern(err.to_string()))
-        };
-        let line = build(false)?;
-        let candidates = if self.regex && sees_past_line_ends(&self.pattern) {
-            None
-        } else {
-            Some(build(true)?)
-        };
-        Ok(LineSelector { candidates, line })
-    }
+/// The searcher's matcher for `query`, which picks the lines to look at,
+/// holding the canonical matcher, which finds the ranges in a line without
+/// its terminator. Both match `^` and `$` at line starts and ends, not only
+/// the buffer's, and never match a `\n`. A `\r` not before `\n` is content.
+fn matcher(query: &SearchQuery) -> Result<LineSelector, SearchError> {
+    let build = |crlf: bool| {
+        RegexMatcherBuilder::new()
+            .fixed_strings(!query.regex)
+            .case_insensitive(!query.case_sensitive)
+            .word(query.whole_word)
+            .multi_line(true)
+            // `crlf` sets the line terminator too, to `\r\n`, which would
+            // keep a `\r` from matching; so it's set back to `\n` after.
+            // It also keeps `.` from matching `\r`, unless `.` matches
+            // any char: the ban on the line terminator then takes `\n`
+            // out of it, which leaves `.` as it is without `crlf`.
+            .crlf(crlf)
+            .dot_matches_new_line(crlf)
+            .line_terminator(Some(b'\n'))
+            .build(&query.pattern)
+            .map_err(|err| SearchError::InvalidPattern(err.to_string()))
+    };
+    let line = build(false)?;
+    let candidates = if query.regex && sees_past_line_ends(&query.pattern) {
+        None
+    } else {
+        Some(build(true)?)
+    };
+    Ok(LineSelector { candidates, line })
 }
 
 /// Whether `pattern` has a construct that, searched over a buffer of lines
@@ -286,6 +263,16 @@ impl PathFilter {
             .as_ref()
             .is_none_or(|globs| globs.matched_path_or_any_parents(rel, false).is_ignore())
     }
+
+    /// Whether the search walk ([`walk_files`]) would take the file `rel`,
+    /// relative to the root: no directory above it is excluded, each asked
+    /// on its own as the walk asks before entering it (so a negated glob for
+    /// the file can't bring it back from an excluded directory), nor is the
+    /// file, and it passes the include globs.
+    fn takes(&self, rel: &Path) -> bool {
+        let entered = |dir: &Path| dir.as_os_str().is_empty() || !self.excludes(dir, true);
+        rel.ancestors().skip(1).all(entered) && !self.excludes(rel, false) && self.includes(rel)
+    }
 }
 
 fn build_globs(globs: &[&str]) -> Result<Option<Arc<Gitignore>>, GlobError> {
@@ -351,84 +338,6 @@ fn unclosed_class(glob: &str) -> Option<String> {
     None
 }
 
-/// How much to search.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SearchOptions {
-    /// The most match ranges delivered; once there are this many, the search
-    /// stops and [`SearchSummary::truncated`] is set.
-    pub max_matches: usize,
-    /// Walker threads; 0 is the walker's default parallelism. 1 walks on
-    /// the calling thread, in path order, so results are deterministic.
-    pub threads: usize,
-}
-
-impl Default for SearchOptions {
-    fn default() -> SearchOptions {
-        SearchOptions {
-            max_matches: 10_000,
-            threads: 0,
-        }
-    }
-}
-
-/// A file's matching lines, in line order.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileMatches {
-    pub path: PathBuf,
-    /// Relative to the root, `/`-separated, lossy where a name isn't UTF-8.
-    pub rel: String,
-    pub lines: Vec<LineMatch>,
-}
-
-/// A matching line.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LineMatch {
-    /// 1-based.
-    pub line_number: u64,
-    /// The byte offset of the line's start in the file. A UTF-8 byte order
-    /// mark is part of the first line.
-    pub line_offset: u64,
-    /// Every match on the line, as byte ranges in the line, in order: at
-    /// least one, though a pattern that matches the empty string (such as
-    /// `^$`) gives empty ranges. Ranges outside [`LineMatch::preview`] are
-    /// reported too. A UTF-16 file (found by its byte order mark) is
-    /// searched transcoded to UTF-8, and its ranges and preview are in the
-    /// transcoded line.
-    pub ranges: Vec<Range<usize>>,
-    /// The line without its terminator, as lossy UTF-8. When that is over
-    /// 512 bytes, it's cut to a window of at most 512 bytes on char
-    /// boundaries that holds the chars the first match touches (or as many
-    /// as fit, from its start). Where the line isn't valid UTF-8, each
-    /// replacement character shifts the text after it.
-    pub preview: String,
-    /// Where the preview starts in the line: a range `r` of the line is at
-    /// `r.start - preview_start .. r.end - preview_start` in the preview.
-    pub preview_start: usize,
-}
-
-/// How a search went.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SearchSummary {
-    /// Files whose search began, whatever came of it.
-    pub files_searched: usize,
-    /// Files delivered to the sink.
-    pub files_matched: usize,
-    /// Match ranges delivered to the sink.
-    pub matches: usize,
-    /// Files abandoned for holding a NUL byte.
-    pub binary_skipped: usize,
-    /// Files that couldn't be searched: unreadable, or with a line over
-    /// 16 MiB. Their matches, if any, aren't delivered. Directories the
-    /// walk can't read are skipped without an error, as the finder skips
-    /// them.
-    pub errors: Vec<(PathBuf, String)>,
-    /// The match cap stopped the search before it had searched every file,
-    /// or left matches out: there may be more than were delivered.
-    pub truncated: bool,
-    /// `cancel` was set before the search ended.
-    pub cancelled: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SearchError {
     /// The pattern isn't a valid regex, or names a line break.
@@ -447,6 +356,23 @@ impl fmt::Display for SearchError {
 }
 
 impl std::error::Error for SearchError {}
+
+impl From<SearchError> for SearchFailed {
+    fn from(error: SearchError) -> Self {
+        match error {
+            SearchError::InvalidPattern(message) => SearchFailed::InvalidPattern(message),
+        }
+    }
+}
+
+impl From<GlobError> for SearchFailed {
+    fn from(error: GlobError) -> Self {
+        SearchFailed::InvalidGlob {
+            glob: error.glob,
+            message: error.message,
+        }
+    }
+}
 
 /// Searches every file under `root` that the project tree shows (the ignore
 /// rules of [`crate::FileTree`] with ignored entries hidden, as
@@ -534,6 +460,116 @@ pub fn search_excluding(
     )
 }
 
+/// Batches a [`LocalSearch`] stream holds before its producer waits for
+/// the reader, as [`FinderIndex::walk`] holds two for a slow sink.
+///
+/// [`FinderIndex::walk`]: crate::FinderIndex::walk
+const STREAMED: usize = 2;
+
+/// This machine's project search and file list, fe-host's [`SearchHost`]:
+/// [`search_filtered`] and [`search_excluding`] (as one search, with both
+/// the filter and the excluded file), and [`crate::FinderIndex::walk`], each
+/// run on a thread of its own and called as they are
+/// (docs/decisions/7p724bm90r-watch-search-host.md).
+#[derive(Copy, Clone, Debug, Default)]
+pub struct LocalSearch;
+
+impl SearchHost for LocalSearch {
+    fn search(
+        &self,
+        root: &Path,
+        query: &SearchQuery,
+        options: &SearchOptions,
+        filter: &SearchFilter,
+    ) -> SearchStream {
+        let path_filter = match compile(root, filter) {
+            Ok(path_filter) => path_filter,
+            Err(error) => return Stream::ended_with(Err(error)),
+        };
+        let (root, query, options, excluded) = (
+            root.to_path_buf(),
+            query.clone(),
+            options.clone(),
+            filter.excluded.clone(),
+        );
+        produce("project-search", move |tx| {
+            search_inner(
+                &root,
+                &query,
+                &options,
+                excluded.as_deref(),
+                &path_filter,
+                tx.cancel_flag(),
+                |batch| {
+                    tx.send(batch);
+                },
+            )
+            .map_err(SearchFailed::from)
+        })
+    }
+
+    fn files(&self, root: &Path, filter: &SearchFilter) -> FilesStream {
+        files_in(root, filter, Walked::default())
+    }
+}
+
+/// [`LocalSearch::files`], walking in `walked`'s batches: [`FinderIndex::walk`]
+/// with the default.
+///
+/// [`FinderIndex::walk`]: crate::FinderIndex::walk
+fn files_in(root: &Path, filter: &SearchFilter, walked: Walked) -> FilesStream {
+    let path_filter = match compile(root, filter) {
+        Ok(path_filter) => path_filter,
+        Err(error) => return Stream::ended_with(Err(error)),
+    };
+    let (root, excluded) = (root.to_path_buf(), filter.excluded.clone());
+    produce("project-files", move |tx| {
+        let cancel = tx.cancel_flag();
+        let complete = walk_root(&root, &cancel, &walked, |mut batch| {
+            if !path_filter.is_empty() || excluded.is_some() {
+                batch.retain(|rel| {
+                    excluded.as_deref() != Some(rel.as_path()) && path_filter.takes(rel)
+                });
+                if batch.is_empty() {
+                    return;
+                }
+            }
+            tx.send(batch);
+        });
+        Ok(FilesSummary { complete })
+    })
+}
+
+/// `filter`'s globs as a [`PathFilter`].
+fn compile(root: &Path, filter: &SearchFilter) -> Result<PathFilter, SearchFailed> {
+    fn globs(globs: &[String]) -> Vec<&str> {
+        globs.iter().map(String::as_str).collect()
+    }
+    Ok(PathFilter::new(
+        root,
+        &globs(&filter.include),
+        &globs(&filter.exclude),
+    )?)
+}
+
+/// A stream whose items and end `work` makes on a thread named `name`.
+fn produce<T: Send + 'static, E: Send + 'static>(
+    name: &str,
+    work: impl FnOnce(&fe_host::StreamSender<T, Result<E, SearchFailed>>) -> Result<E, SearchFailed>
+    + Send
+    + 'static,
+) -> Stream<T, Result<E, SearchFailed>> {
+    let (tx, stream) = Stream::channel(STREAMED);
+    let spawned = thread::Builder::new().name(name.into()).spawn(move || {
+        let end = work(&tx);
+        tx.end(end);
+    });
+    match spawned {
+        Ok(_) => stream,
+        Err(error) => Stream::ended_with(Err(SearchFailed::Io(error))),
+    }
+}
+
 fn search_inner(
     root: &Path,
     query: &SearchQuery,
@@ -543,7 +579,7 @@ fn search_inner(
     cancel: Arc<AtomicBool>,
     sink: impl FnMut(Vec<FileMatches>),
 ) -> Result<SearchSummary, SearchError> {
-    let matcher = query.matcher()?;
+    let matcher = matcher(query)?;
     let shared = Shared {
         root,
         excluded,

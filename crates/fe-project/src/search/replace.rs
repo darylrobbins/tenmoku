@@ -28,7 +28,7 @@ impl Replacer {
     /// `$$`, `\n`, `\t` and `\\` are expanded. A group that doesn't exist
     /// or didn't take part expands to nothing.
     pub fn new(query: &SearchQuery, template: &str) -> Result<Replacer, SearchError> {
-        let matcher = query.matcher()?;
+        let matcher = super::matcher(query)?;
         let template = if query.regex {
             parse_template(template)
         } else {

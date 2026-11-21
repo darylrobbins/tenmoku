@@ -7,13 +7,15 @@
 //!   [`FileTree::fill`]).
 //! - [`ProjectWatcher`] watches the project and delivers batches of
 //!   [`FsChange`]s, which [`FileTree::apply`] reconciles with the disk.
+//!   [`LocalWatch`] is fe-host's `WatchHost` with it.
 //! - [`FinderIndex`] holds every non-ignored file path, walked up front on a
 //!   background thread ([`FinderIndex::walk`]), for fuzzy matching with
 //!   [`FinderIndex::query`] (Cmd-P). [`FinderIndex::apply`] keeps it current
 //!   from the same batches.
 //! - [`search()`] searches the contents of the files the tree shows, with
 //!   ripgrep's searcher, streaming capped and cancellable results;
-//!   [`search_excluding`] leaves one file out.
+//!   [`search_excluding`] leaves one file out. [`LocalSearch`] is fe-host's
+//!   `SearchHost` with them and the finder's walk, streaming.
 //! - [`open_file_under`] opens a path the tree or the finder listed without
 //!   following a symlink, for readers of the project's files.
 //! - [`fs_ops`] creates, renames, duplicates and trashes entries of the tree,
@@ -59,12 +61,12 @@ pub use ignore_check::{
 };
 pub use listing::{Entry, EntryKind, Listed, Listing, open_file_under};
 pub use search::{
-    FileMatches, GlobError, LineMatch, PathFilter, Replacer, SearchError, SearchOptions,
-    SearchQuery, SearchSummary, WalkControl, WalkSummary, WalkedFile, is_word_char, search,
-    search_excluding, search_filtered, walk_files,
+    FileMatches, GlobError, LineMatch, LocalSearch, PathFilter, Replacer, SearchError,
+    SearchOptions, SearchQuery, SearchSummary, WalkControl, WalkSummary, WalkedFile, is_word_char,
+    search, search_excluding, search_filtered, walk_files,
 };
 pub use tree::{FileTree, NodeId, Row, TreeOptions, TreeStats};
-pub use watcher::{FsChange, ProjectWatcher};
+pub use watcher::{FsChange, LocalWatch, ProjectWatcher};
 
 #[cfg(test)]
 mod tests;

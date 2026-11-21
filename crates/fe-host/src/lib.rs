@@ -6,9 +6,11 @@
 //! So far there is [`FsHost`], whose local impl is [`LocalFs`], less the
 //! project tree's operations ([`FsHost::list_tree`] and those after it):
 //! their local impl is fe-project's, which this crate can't depend on
-//! (docs/decisions/5zajsn5anw-fs-host-tree.md). The other
-//! traits (watching, search, processes, ptys, git) and `ProjectLocation`
-//! (phase 1f) join it here.
+//! (docs/decisions/5zajsn5anw-fs-host-tree.md). [`WatchHost`] and
+//! [`SearchHost`] hand back a [`Subscription`] and [`Stream`]s, and their
+//! local impls are fe-project's too
+//! (docs/decisions/7p724bm90r-watch-search-host.md). The other traits
+//! (processes, ptys, git) and `ProjectLocation` (phase 1f) join them here.
 //!
 //! This crate is GPUI-free and depends on none of the fe-* crates that use
 //! it (fe-project, fe-buffer, fe-editor, fe-terminal, fe-git, fe-workbench),
@@ -16,7 +18,10 @@
 //! [`io::ErrorKind`] carry a [`PathError`] that the caller words.
 
 mod local;
+mod search;
+mod stream;
 mod tree;
+mod watch;
 
 use std::{
     ffi::{OsStr, OsString},
@@ -29,10 +34,16 @@ use std::{
 };
 
 pub use local::{CommitOptions, LocalFs};
+pub use search::{
+    FileMatches, FilesStream, FilesSummary, LineMatch, SearchFailed, SearchFilter, SearchHost,
+    SearchOptions, SearchQuery, SearchStream, SearchSummary,
+};
+pub use stream::{Ended, Stream, StreamSender, Subscription};
 pub use tree::{
     Created, Entry, EntryId, EntryKind, Excludes, ListReply, ListRequest, ListingLost, Placed,
     RequestError, TrashRecord,
 };
+pub use watch::{FsChange, WatchHost};
 
 /// What a file on disk looked like when it was read or saved: compared
 /// before a save to tell whether something else wrote it since. A client
