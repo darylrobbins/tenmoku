@@ -1,11 +1,26 @@
 [package]
 name = "fe-remote-proto"
-description = "The remote development wire protocol: frames, postcard bodies and the build id. Must not depend on GPUI."
+description = "The remote development wire protocol: frames, postcard bodies, the build id and the multiplexer. Must not depend on GPUI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[features]
+# `fe_remote_proto::testing`: the injected-latency link, a raw-frame peer
+# and a test service, for this crate's and other crates' tests; and the
+# `fe-remote-proto-peer` binary, which serves the test service on stdio.
+test-support = []
+
+[[bin]]
+# A mux server on its stdio, so the child-stdio link is tested end to end
+# with a real process. Never shipped.
+name = "fe-remote-proto-peer"
+path = "src/bin/fe-remote-proto-peer.rs"
+required-features = ["test-support"]
+test = false
+doc = false
 
 [dependencies]
 postcard.workspace = true
@@ -14,6 +29,10 @@ serde_bytes.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# Turns `test-support` on for the tests, so the peer binary is built for
+# them.
+fe-remote-proto = { path = ".", features = ["test-support"] }
+futures.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 toml.workspace = true

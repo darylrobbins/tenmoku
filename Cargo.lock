@@ -2639,6 +2639,8 @@ dependencies = [
 name = "fe-remote-proto"
 version = "0.2.5"
 dependencies = [
+ "fe-remote-proto",
+ "futures",
  "postcard",
  "proptest",
  "serde",

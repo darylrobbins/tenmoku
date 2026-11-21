@@ -249,7 +249,7 @@ pub fn decode_all(mut bytes: &[u8]) -> Result<Vec<Header>> {
 /// Decodes `bytes` as the body type of `header`'s kind on its channel, and
 /// refuses a kind its channel doesn't carry. `Data` on a dynamic channel is
 /// opaque here: only the channel's owner knows what it carries.
-fn check_body(header: &Header, bytes: &[u8]) -> Result<()> {
+pub(crate) fn check_body(header: &Header, bytes: &[u8]) -> Result<()> {
     let bad_channel = || FrameError::BadChannel {
         kind: header.kind,
         chan: header.chan,
