@@ -8,9 +8,9 @@
 //! A window's root is a [`ProjectLocation`]: a saved root that's a remote
 //! folder's `ssh://` text is reopened, or not, without the local `is_dir`
 //! check ([`launch_locations_in`]). The app has no remote windows yet, so its
-//! launch ([`launch_windows_in`]) reopens local ones only, and says on
-//! stderr which remote ones it couldn't, keeping their entries for when it
-//! can (docs/decisions/j8wvgszah0-remote-development.md § 6).
+//! launch ([`launch_windows_in`]) has them but opens local ones only
+//! ([`openable`]), and says on stderr which remote ones it couldn't, keeping
+//! their entries for when it can (docs/decisions/j8wvgszah0-remote-development.md § 6).
 
 use std::{
     cell::RefCell,
@@ -22,56 +22,68 @@ use fe_config::recent::{ProjectLocation, RemoteUnsupported};
 use kiln::{command::Value, shell::layout::WindowLayout};
 use kiln_l10n::verbatim;
 
-/// A window a launch opens: its root, its layout (unless there's no state
-/// directory), and the entry it restores, if any.
-pub(crate) type LaunchWindow = (Option<PathBuf>, Option<WindowLayout>, Option<Value>);
+/// A window a launch opens: its root, which may be remote, its layout
+/// (unless there's no state directory), and the entry it restores, if any.
+pub(crate) type LaunchWindow = (Option<ProjectLocation>, Option<WindowLayout>, Option<Value>);
 
-/// [`LaunchWindow`], with a root that may be remote.
-pub(crate) type LocationWindow = (Option<ProjectLocation>, Option<WindowLayout>, Option<Value>);
+/// [`LaunchWindow`], as [`launch_locations_in`] has it.
+pub(crate) type LocationWindow = LaunchWindow;
 
-/// The windows a launch on the local folder `root` opens, at least one,
-/// with the saved layouts in `dir` (none without a state directory), as
-/// [`launch_locations_in`] has them less the remote ones, each said on
-/// stderr.
+/// The windows a launch on the local folder `root` has, at least one, with
+/// the saved layouts in `dir` (none without a state directory): the local
+/// ones that [`launch_locations_in`] opens, within its restore limit, then
+/// the remote ones it skipped, each with its root and nothing to restore.
+/// [`openable`] leaves those out, and says so.
 pub(crate) fn launch_windows_in(
     dir: Option<PathBuf>,
     root: Option<&Path>,
     folder: bool,
 ) -> Vec<LaunchWindow> {
-    launch_windows_reporting(dir, root, folder, &mut io::stderr())
-}
-
-/// [`launch_windows_in`], saying on `out` which remote windows aren't
-/// reopened. Those are skipped as a gone folder's are, their entries kept,
-/// and with none left the launch is as if none had been open.
-pub(crate) fn launch_windows_reporting(
-    dir: Option<PathBuf>,
-    root: Option<&Path>,
-    folder: bool,
-    out: &mut dyn Write,
-) -> Vec<LaunchWindow> {
     let skipped = RefCell::new(Vec::new());
     let root = root.map(|root| ProjectLocation::Local(root.to_owned()));
-    let windows = launch_locations_in(dir, root.as_ref(), folder, &|remote| {
+    // Skipped as a gone folder's is, so they don't count toward the limit.
+    let mut windows = launch_locations_in(dir, root.as_ref(), folder, &|remote| {
         skipped.borrow_mut().push(remote.clone());
         false
     });
-    for remote in skipped.into_inner() {
+    windows.extend(
+        skipped
+            .into_inner()
+            .into_iter()
+            .map(|r| (Some(r), None, None)),
+    );
+    windows
+}
+
+/// The local folder of a window root `openable` left: remote ones are gone.
+pub(crate) fn local_root(root: Option<ProjectLocation>) -> Option<PathBuf> {
+    match root {
+        Some(ProjectLocation::Local(path)) => Some(path),
+        _ => None,
+    }
+}
+
+/// The windows of `windows` the app can open, each remote one said on
+/// stderr instead: see [`openable_reporting`].
+pub(crate) fn openable(windows: Vec<LaunchWindow>) -> Vec<LaunchWindow> {
+    openable_reporting(windows, &mut io::stderr())
+}
+
+/// `windows` less the remote ones, each said on `out`: the app has no remote
+/// windows yet. Their entries are kept, as a gone folder's are.
+pub(crate) fn openable_reporting(
+    windows: Vec<LaunchWindow>,
+    out: &mut dyn Write,
+) -> Vec<LaunchWindow> {
+    let (remote, local): (Vec<_>, Vec<_>) = windows
+        .into_iter()
+        .partition(|(root, ..)| matches!(root, Some(ProjectLocation::Remote { .. })));
+    for remote in remote.iter().filter_map(|window| window.0.as_ref()) {
         let error = RemoteUnsupported;
         log::warn!(target: "fastedit", "not reopening a window on {remote}: {error}");
         writeln!(out, "{}: {}: {}", verbatim!("tenmoku"), remote, error).ok();
     }
-    (windows.into_iter())
-        .map(|(root, layout, entry)| {
-            let root = root.map(|root| match root {
-                ProjectLocation::Local(path) => path,
-                // The root is local, and the last quit's remote windows
-                // were skipped.
-                remote => unreachable!("{remote} reopened"),
-            });
-            (root, layout, entry)
-        })
-        .collect()
+    local
 }
 
 /// The windows a launch on `root` opens, at least one, with the saved

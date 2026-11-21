@@ -39,6 +39,19 @@ fn folder(dir: &Path, name: &str, file: &str) -> PathBuf {
     dunce::canonicalize(root).unwrap()
 }
 
+/// The windows the app opens on a launch, as main.rs has them: local roots,
+/// remote windows left out.
+fn launch_windows(
+    dir: Option<PathBuf>,
+    root: Option<&Path>,
+    folder: bool,
+) -> Vec<(Option<PathBuf>, Option<WindowLayout>, Option<Value>)> {
+    let windows = reopen::launch_windows_in(dir.clone(), root, folder);
+    (reopen::openable(windows).into_iter())
+        .map(|(root, layout, entry)| (reopen::local_root(root), layout, entry))
+        .collect()
+}
+
 /// A window of a workbench on `root`, restoring `entry` and saving in
 /// `layout`.
 fn open(
@@ -146,7 +159,7 @@ fn quit(windows: Vec<AnyWindowHandle>, cx: &mut TestAppContext) {
 /// sorted; then the app quits.
 fn relaunch(layouts: &Path, cx: &mut TestAppContext) -> Vec<(Option<PathBuf>, Vec<String>)> {
     init(cx);
-    let windows = reopen::launch_windows_in(Some(layouts.to_owned()), None, true);
+    let windows = launch_windows(Some(layouts.to_owned()), None, true);
     let mut opened: Vec<AnyWindowHandle> = Vec::new();
     let mut shown: Vec<_> = (windows.into_iter())
         .map(|(root, layout, entry)| {
@@ -197,7 +210,7 @@ fn a_launch_with_no_argument_reopens_the_last_quit_windows_on_their_folders(
 
     // A folder launch is as it was: the root's own windows only.
     init(third);
-    let windows = reopen::launch_windows_in(Some(layouts.clone()), Some(&a), true);
+    let windows = launch_windows(Some(layouts.clone()), Some(&a), true);
     assert_eq!(windows.len(), 1);
     let (root, layout, entry) = windows.into_iter().next().unwrap();
     assert_eq!(root.as_deref(), Some(a.as_path()));
@@ -241,7 +254,7 @@ fn a_gone_folder_is_skipped_and_with_nothing_to_reopen_it_falls_back(
         json_entry(2, 200, 9, &gone.join("x.txt")),
     );
     init(third);
-    let windows = reopen::launch_windows_in(Some(layouts.clone()), None, true);
+    let windows = launch_windows(Some(layouts.clone()), None, true);
     assert_eq!(windows.len(), 1);
     let (root, layout, entry) = windows.into_iter().next().unwrap();
     assert_eq!(root, None);
@@ -251,10 +264,10 @@ fn a_gone_folder_is_skipped_and_with_nothing_to_reopen_it_falls_back(
     // Nothing saved at all: one empty window, saving its layout; and with
     // no state directory, one with nowhere to save.
     let empty = tempfile::tempdir().unwrap();
-    let windows = reopen::launch_windows_in(Some(empty.path().join("layouts")), None, true);
+    let windows = launch_windows(Some(empty.path().join("layouts")), None, true);
     assert!(matches!(&windows[..], [(None, Some(_), None)]));
     drop(windows);
-    let windows = reopen::launch_windows_in(None, None, true);
+    let windows = launch_windows(None, None, true);
     assert!(matches!(&windows[..], [(None, None, None)]));
 }
 

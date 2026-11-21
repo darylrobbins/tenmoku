@@ -764,7 +764,8 @@ fn open_documents(paths: &[PathBuf], cx: &mut App) {
 /// The windows a launch on `root` opens, at least one: see
 /// [`reopen::launch_windows_in`].
 fn launch_windows(root: Option<&Path>, folder: bool) -> Vec<LaunchWindow> {
-    reopen::launch_windows_in(fe_config::paths::app_paths().layouts_dir(), root, folder)
+    let dir = fe_config::paths::app_paths().layouts_dir();
+    reopen::openable(reopen::launch_windows_in(dir, root, folder))
 }
 
 /// The saved layouts of the windows on the folder `root`, or of those with
@@ -1052,7 +1053,9 @@ fn main() {
         // and extensions load as a folder launch's do.
         let mut windows = launch_windows(launch.root.as_deref(), reading.is_none());
         let (root, layout, entry) = windows.remove(0);
-        launch.root = root;
+        // Only local windows are left: `openable` says on stderr which
+        // remote ones aren't opened.
+        launch.root = reopen::local_root(root);
         let store = load_settings(launch.root.as_deref());
         let settings: Arc<Settings> = store.settings().clone();
         app_icon::set();
@@ -1276,7 +1279,10 @@ fn main() {
         }
         // The other windows restored, each on its root.
         for (root, layout, entry) in windows {
-            let launch = Launch { root, file: None };
+            let launch = Launch {
+                root: reopen::local_root(root),
+                file: None,
+            };
             let theme = theme.clone();
             let mut options = window_options(
                 &WindowSpec::main(fe_config::APP_NAME).app_id(app_id().reverse_dns),

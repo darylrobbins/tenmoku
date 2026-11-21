@@ -165,6 +165,13 @@ fn a_remote_window_reopens_without_looking_for_its_folder() {
     );
 }
 
+/// The windows the app opens on a launch with no argument, as main.rs gets
+/// them: the entry point, then the step that reports the remote ones.
+fn opened(layouts: &Path, stderr: &mut Vec<u8>) -> Vec<reopen::LaunchWindow> {
+    let windows = reopen::launch_windows_in(Some(layouts.to_owned()), None, true);
+    reopen::openable_reporting(windows, stderr)
+}
+
 #[test]
 fn the_app_says_on_stderr_it_cant_reopen_a_remote_window() {
     let dir = tempfile::tempdir().unwrap();
@@ -173,10 +180,19 @@ fn the_app_says_on_stderr_it_cant_reopen_a_remote_window() {
     fs::create_dir(&local).unwrap();
     last_quit(&layouts, Some(&local));
     let mut stderr = Vec::new();
-    let windows = reopen::launch_windows_reporting(Some(layouts.clone()), None, true, &mut stderr);
+    let windows = reopen::launch_windows_in(Some(layouts.clone()), None, true);
+    assert!(
+        windows.iter().any(|(root, ..)| *root == Some(neon_app())),
+        "the entry point carries the remote root"
+    );
+    let windows = reopen::openable_reporting(windows, &mut stderr);
     assert_eq!(String::from_utf8(stderr).unwrap(), UNSUPPORTED);
     let roots: Vec<_> = windows.iter().map(|(root, ..)| root.clone()).collect();
-    assert_eq!(roots, [Some(local)], "the local window reopens");
+    assert_eq!(
+        roots,
+        [Some(ProjectLocation::Local(local))],
+        "the local window reopens"
+    );
     drop(windows);
 
     // The remote window's entry is kept, as a gone folder's is.
@@ -186,12 +202,46 @@ fn the_app_says_on_stderr_it_cant_reopen_a_remote_window() {
 }
 
 #[test]
+fn remote_windows_do_not_displace_local_ones_from_the_restore_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let layouts = dir.path().join("layouts");
+    let base = dunce::canonicalize(dir.path()).unwrap();
+    let limit = kiln::shell::layout::MAX_RESTORED;
+    // More local windows than the limit, all older than the remote one.
+    for n in 0..=limit {
+        let local = base.join(format!("f{n}"));
+        fs::create_dir(&local).unwrap();
+        let store = LayoutStore::new(&layouts, &local);
+        write(
+            &store,
+            json_entry(n as u64 + 10, 100 + n as u64, 7, &local.join("a.txt")),
+        );
+    }
+    let remote = LayoutStore::new(&layouts, Path::new(NEON_APP));
+    write(
+        &remote,
+        json_entry(1, 900, 7, Path::new("/home/me/src/app/main.rs")),
+    );
+    let mut stderr = Vec::new();
+    let windows = reopen::launch_windows_in(Some(layouts), None, true);
+    assert!(windows.iter().any(|(root, ..)| *root == Some(neon_app())));
+    let windows = reopen::openable_reporting(windows, &mut stderr);
+    assert_eq!(String::from_utf8(stderr).unwrap(), UNSUPPORTED);
+    assert_eq!(windows.len(), limit, "the local windows fill the limit");
+    assert!(
+        windows
+            .iter()
+            .all(|(root, ..)| matches!(root, Some(ProjectLocation::Local(_))))
+    );
+}
+
+#[test]
 fn a_launch_with_only_a_remote_window_to_reopen_opens_one_with_no_folder() {
     let dir = tempfile::tempdir().unwrap();
     let layouts = dir.path().join("layouts");
     last_quit(&layouts, None);
     let mut stderr = Vec::new();
-    let windows = reopen::launch_windows_reporting(Some(layouts), None, true, &mut stderr);
+    let windows = opened(&layouts, &mut stderr);
     assert_eq!(String::from_utf8(stderr).unwrap(), UNSUPPORTED);
     assert!(matches!(&windows[..], [(None, Some(_), None)]));
 }

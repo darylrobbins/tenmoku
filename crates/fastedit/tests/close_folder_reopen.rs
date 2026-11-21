@@ -39,6 +39,19 @@ fn folder(dir: &Path, name: &str, file: &str) -> PathBuf {
     dunce::canonicalize(root).unwrap()
 }
 
+/// The windows the app opens on a launch, as main.rs has them: local roots,
+/// remote windows left out.
+fn launch_windows(
+    dir: Option<PathBuf>,
+    root: Option<&Path>,
+    folder: bool,
+) -> Vec<(Option<PathBuf>, Option<WindowLayout>, Option<Value>)> {
+    let windows = reopen::launch_windows_in(dir.clone(), root, folder);
+    (reopen::openable(windows).into_iter())
+        .map(|(root, layout, entry)| (reopen::local_root(root), layout, entry))
+        .collect()
+}
+
 /// A window of a workbench on `root`, restoring `entry` and saving in
 /// `layout`.
 fn open(
@@ -135,7 +148,7 @@ fn a_closed_folder_is_not_reopened(
 
     // A launch with no argument: one window, with no folder and no tab.
     init(second);
-    let windows = reopen::launch_windows_in(Some(layouts.clone()), None, true);
+    let windows = launch_windows(Some(layouts.clone()), None, true);
     assert_eq!(windows.len(), 1, "one window reopens");
     let (root, saving, entry) = windows.into_iter().next().unwrap();
     assert_eq!(root, None, "with no folder");
@@ -146,7 +159,7 @@ fn a_closed_folder_is_not_reopened(
 
     // A launch on a still opens on it.
     init(third);
-    let windows = reopen::launch_windows_in(Some(layouts.clone()), Some(&a), true);
+    let windows = launch_windows(Some(layouts.clone()), Some(&a), true);
     assert_eq!(windows.len(), 1);
     let (root, saving, entry) = windows.into_iter().next().unwrap();
     assert_eq!(root.as_deref(), Some(a.as_path()));
