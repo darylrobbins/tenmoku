@@ -65,6 +65,7 @@ mod proposal;
 pub use proposal::DrawnProposalHeader;
 mod quick_scope;
 mod rulers;
+pub(crate) use rulers::painted_xs as painted_ruler_xs;
 pub(crate) mod sticky_scroll;
 mod whitespace;
 

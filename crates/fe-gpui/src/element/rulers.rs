@@ -54,21 +54,26 @@ pub(super) fn paint(rulers: &[Bounds<Pixels>], color: gpui::Hsla, window: &mut W
     for &ruler in rulers {
         window.paint_quad(fill(ruler, color));
     }
-    #[cfg(test)]
-    PAINTED.with(|painted| *painted.borrow_mut() = rulers.to_vec());
+    PAINTED.with(|painted| {
+        // Reuses the vector, so a frame allocates nothing for this.
+        let mut painted = painted.borrow_mut();
+        painted.clear();
+        painted.extend_from_slice(rulers);
+    });
 }
 
-#[cfg(test)]
 thread_local! {
-    /// The rulers this thread's last frame painted.
+    // The rulers this thread's last frame painted.
     pub(crate) static PAINTED: std::cell::RefCell<Vec<Bounds<Pixels>>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The x of each ruler this thread's last frame painted, for tests of
+/// what a configuration draws.
+pub(crate) fn painted_xs() -> Vec<f32> {
+    PAINTED.with(|painted| painted.borrow().iter().map(|r| r.origin.x.into()).collect())
 }
 
 #[cfg(test)]
 #[path = "rulers_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "max_line_length_ruler_tests.rs"]
-mod max_line_length_ruler_tests;

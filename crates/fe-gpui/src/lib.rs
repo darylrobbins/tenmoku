@@ -136,6 +136,13 @@ pub(crate) const READ_ONLY_STATUS: &str = "read_only";
 /// context name, so keymap and command predicates agree.
 pub const KEY_CONTEXT: &str = fe_editor::commands::CONTEXT;
 
+/// The x of each ruler this thread's last frame painted: for tests of
+/// what a configuration draws.
+#[doc(hidden)]
+pub fn painted_ruler_xs() -> Vec<f32> {
+    element::painted_ruler_xs()
+}
+
 /// [`init_with_keymap`] with the built-in keymap alone.
 pub fn init(cx: &mut App) {
     init_with_keymap(cx, default_keymap());

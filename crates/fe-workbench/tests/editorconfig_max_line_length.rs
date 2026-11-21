@@ -185,3 +185,78 @@ fn editing_the_editorconfig_updates_and_clears_the_wrap_column(app: &mut TestApp
         assert_eq!(wrap(&editor, &mut cx).1, expected, "{text:?}");
     }
 }
+
+/// Rewrites the project's `.editorconfig` to `text` by saving it in an
+/// editor, then shows `a.txt` again and returns its editor.
+fn set_editorconfig(
+    dir: &tempfile::TempDir,
+    workbench: &Entity<Workbench>,
+    text: &str,
+    cx: &mut VisualTestContext,
+) -> Entity<EditorView> {
+    let config = dir.path().join(".editorconfig");
+    open_file(workbench, &config, cx);
+    let ec = active(workbench, cx);
+    cx.update(|window, cx| window.focus(&ec.focus_handle(cx), cx));
+    ec.update(cx, |e, _| {
+        e.model_mut().select_all();
+        e.model_mut().insert(text);
+    });
+    cx.simulate_keystrokes("cmd-s");
+    draw(cx);
+    draw(cx);
+    open_file(workbench, &dir.path().join("a.txt"), cx);
+    active(workbench, cx)
+}
+
+fn painted(cx: &mut VisualTestContext) -> Vec<f32> {
+    draw(cx);
+    fe_gpui::painted_ruler_xs()
+}
+
+#[gpui::test]
+fn max_line_length_draws_a_ruler_beside_editor_rulers(app: &mut TestAppContext) {
+    let _guard = serially();
+    // No `editor.rulers`: the limit alone is drawn; without one, nothing.
+    let (_dir, _workbench, mut cx) = open(
+        Some("[*]\nmax_line_length = 60\n"),
+        WrapMode::Viewport,
+        0,
+        app,
+    );
+    assert_eq!(painted(&mut cx).len(), 1);
+    drop((_dir, _workbench));
+    let (_dir, _workbench, mut cx) = open(None, WrapMode::Viewport, 0, app);
+    assert!(painted(&mut cx).is_empty());
+    drop((_dir, _workbench));
+
+    // Beside `editor.rulers`, in order, and the same column once.
+    let (dir, workbench, mut cx) = open(
+        Some("[*]\nmax_line_length = 60\n"),
+        WrapMode::Viewport,
+        0,
+        app,
+    );
+    let editor = active(&workbench, &mut cx);
+    let settings = EditorSettings {
+        soft_wrap: true,
+        wrap_mode: WrapMode::Viewport,
+        font_size: 8.,
+        rulers: vec![100],
+        ..EditorSettings::default()
+    };
+    editor.update(&mut cx, |e, cx| e.apply_settings(&settings, cx));
+    let both = painted(&mut cx);
+    assert_eq!(both.len(), 2, "{both:?}");
+    assert!(both[0] < both[1], "60 is left of 100: {both:?}");
+
+    // A settings change leaves the limit be, and drawn once.
+    editor.update(&mut cx, |e, cx| e.apply_settings(&settings, cx));
+    assert_eq!(painted(&mut cx), both);
+    set_editorconfig(&dir, &workbench, "[*]\nmax_line_length = 100\n", &mut cx);
+    assert_eq!(painted(&mut cx), [both[1]]);
+
+    // Gone with the limit.
+    set_editorconfig(&dir, &workbench, "[*]\n", &mut cx);
+    assert_eq!(painted(&mut cx), [both[1]]);
+}
