@@ -426,13 +426,14 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "fe-buffer",
+ "fe-remote-proto",
  "fe-syntax",
  "libfuzzer-sys",
 ]
 
 [[package]]
 name = "fe-buffer"
-version = "0.2.2"
+version = "0.2.5"
 dependencies = [
  "fe-text",
  "gpui-pre-sum-tree",
@@ -443,15 +444,25 @@ dependencies = [
 
 [[package]]
 name = "fe-grammar-csv"
-version = "0.2.2"
+version = "0.2.5"
 dependencies = [
  "cc",
  "tree-sitter-language",
 ]
 
 [[package]]
+name = "fe-remote-proto"
+version = "0.2.5"
+dependencies = [
+ "postcard",
+ "serde",
+ "serde_bytes",
+ "thiserror",
+]
+
+[[package]]
 name = "fe-syntax"
-version = "0.2.2"
+version = "0.2.5"
 dependencies = [
  "fe-buffer",
  "fe-grammar-csv",
@@ -491,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "fe-text"
-version = "0.2.2"
+version = "0.2.5"
 dependencies = [
  "chardetng",
  "encoding_rs",
@@ -822,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "kiln-l10n"
-version = "0.2.2"
+version = "0.2.5"
 dependencies = [
  "fluent-bundle",
  "fluent-langneg",
@@ -1154,6 +1165,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1354,8 +1375,6 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2038684e0058edba0d17302619f62eabce4a8e11c6ac59506996a8d79848851d"
 dependencies = [
  "cc",
  "regex",

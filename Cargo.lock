@@ -2634,6 +2634,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-remote-proto"
+version = "0.2.5"
+dependencies = [
+ "postcard",
+ "proptest",
+ "serde",
+ "serde_bytes",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "fe-runlog"
 version = "0.2.5"
 dependencies = [

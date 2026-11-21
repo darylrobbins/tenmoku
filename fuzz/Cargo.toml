@@ -16,6 +16,7 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
 fe-buffer = { path = "../crates/fe-buffer" }
+fe-remote-proto = { path = "../crates/fe-remote-proto" }
 # Highlights must be complete to compare, whatever the machine's load.
 fe-syntax = { path = "../crates/fe-syntax", features = ["no-query-budget"] }
 libfuzzer-sys = "0.4"
@@ -34,7 +35,16 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "remote_frames"
+path = "fuzz_targets/remote_frames.rs"
+test = false
+doc = false
+bench = false
+
 # The root workspace's patch doesn't reach this one, so repeat it: fuzz the
-# YAML scanner the editor ships (see the root Cargo.toml).
+# tree-sitter runtime and YAML scanner the editor ships (see the root
+# Cargo.toml).
 [patch.crates-io]
+tree-sitter = { path = "../vendor/tree-sitter" }
 tree-sitter-yaml = { path = "../vendor/tree-sitter-yaml" }

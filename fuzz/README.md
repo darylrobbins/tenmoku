@@ -1,6 +1,6 @@
 # Fuzzing
 
-Two [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets, run by
+Three [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets, run by
 hand before milestones. They're never part of `cargo test` or the gate: this
 directory is its own cargo workspace (see the `[workspace]` table in
 `Cargo.toml`), with its own `Cargo.lock`, so the root workspace doesn't build
@@ -10,6 +10,7 @@ it.
 |---|---|
 | `syntax_edits` | Arbitrary text in each language from `fe_syntax::language_names()`, edited in up to 32 batches with a full reparse and highlight after each, ends with the same tree s-expression and highlights as a fresh parse. Its real job is running the grammars' C parsers and external scanners under AddressSanitizer. It builds fe-syntax with `no-query-budget`, so highlight queries always complete however busy the machine is |
 | `buffer_edits` | Edit, undo and redo streams from `User` and `Ai` match a `String`: edits apply exactly, and an undo or redo refused with `Conflict` leaves the text unchanged. With one origin, nothing is refused, undoing everything restores the original text and redoing it restores the final text |
+| `remote_frames` | Arbitrary bytes through fe-remote-proto's `decode_all`, which decodes each frame's header and typed body: it returns, an error at worst, and never panics or allocates a body over `MAX_BODY`. `crates/fe-remote-proto/tests/frame_garbage.rs` runs 200,000 mutated and truncated frames through it in the gate |
 
 ## Running
 
@@ -24,6 +25,7 @@ cargo install cargo-fuzz           # once
 export CFLAGS="-fsanitize=address,fuzzer-no-link -mllvm -asan-guard-against-version-mismatch=0"
 cargo +nightly fuzz run syntax_edits --fuzz-dir fuzz -s address -- -max_total_time=600
 cargo +nightly fuzz run buffer_edits --fuzz-dir fuzz -s address -- -max_total_time=600
+cargo +nightly fuzz run remote_frames --fuzz-dir fuzz -s address -- -max_total_time=600
 ```
 
 libFuzzer grows inputs slowly: in ten minutes `syntax_edits` gets only to
