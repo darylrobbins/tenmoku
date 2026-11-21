@@ -9,8 +9,10 @@
 //! (docs/decisions/5zajsn5anw-fs-host-tree.md). [`WatchHost`] and
 //! [`SearchHost`] hand back a [`Subscription`] and [`Stream`]s, and their
 //! local impls are fe-project's too
-//! (docs/decisions/7p724bm90r-watch-search-host.md). The other traits
-//! (processes, ptys, git) and `ProjectLocation` (phase 1f) join them here.
+//! (docs/decisions/7p724bm90r-watch-search-host.md). A window's
+//! [`ProjectLocation`] says which machine its hosts are for, and has the
+//! text form recents and the command line write it in. The other traits
+//! (processes, ptys, git) join them here.
 //!
 //! This crate is GPUI-free and depends on none of the fe-* crates that use
 //! it (fe-project, fe-buffer, fe-editor, fe-terminal, fe-git, fe-workbench),
@@ -18,6 +20,7 @@
 //! [`io::ErrorKind`] carry a [`PathError`] that the caller words.
 
 mod local;
+mod location;
 mod search;
 mod stream;
 mod tree;
@@ -34,6 +37,9 @@ use std::{
 };
 
 pub use local::{CommitOptions, LocalFs};
+pub use location::{
+    HostId, HostKind, LocationError, ProjectLocation, RemotePath, RemoteUnsupported, SSH_SCHEME,
+};
 pub use search::{
     FileMatches, FilesStream, FilesSummary, LineMatch, SearchFailed, SearchFilter, SearchHost,
     SearchOptions, SearchQuery, SearchStream, SearchSummary,

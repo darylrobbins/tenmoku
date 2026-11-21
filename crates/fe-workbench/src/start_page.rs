@@ -20,7 +20,8 @@
 //!
 //! A recent row runs `start_page.open_recent_folder` or
 //! `start_page.open_recent_file` with its path, typed commands of the page's
-//! own, which the palette doesn't list.
+//! own, which the palette doesn't list. A remote folder's row has its
+//! location instead, and says it can't be opened yet.
 
 #[cfg(test)]
 use fe_command::Invocation;
@@ -41,7 +42,9 @@ use std::{cell::Cell, rc::Rc};
 
 use crate::{
     Workbench,
-    start_page_model::{CLONE, Options, Row, RowIcon, StartPage, invocation_path},
+    start_page_model::{
+        CLONE, Options, Row, RowIcon, StartPage, invocation_location, invocation_path,
+    },
     workbench::recent_picker,
 };
 
@@ -74,6 +77,11 @@ impl StartPageView {
     /// Open Recent Folder
     #[command(id = "start_page.open_recent_folder", palette = false)]
     fn open_recent_folder(&mut self, cx: &mut Cx<Self>) {
+        let remote = kiln::current_invocation(cx.cx).and_then(|i| invocation_location(&i));
+        if let Some(remote) = remote {
+            recent_picker::cant_open_remote(&remote, cx.cx);
+            return;
+        }
         let (Some(path), Some(workbench)) = (invoked_path(cx.cx), self.workbench.upgrade()) else {
             return;
         };

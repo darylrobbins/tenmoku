@@ -7,6 +7,9 @@
 //! `workbench.open_recent` ("Open Recent…") shows a [`RecentPicker`]:
 //! folders, then files, most recent first, each path shortened by `~`,
 //! filtered by the query as a subsequence, leaving out paths that are gone.
+//! A remote folder shows as `app — neon`, its name and its host
+//! ([`remote_label`]), and, with no remote host support yet, choosing one
+//! says it can't be opened ([`cant_open_remote`]).
 //! Confirming a folder re-roots the window as Open Folder does, and a file
 //! opens in the active pane, in vim's normal mode if vim is on, whatever
 //! mode a tab already open was left in. A folder row's button, or
@@ -24,7 +27,7 @@
 
 use std::path::{Path, PathBuf};
 
-use fe_config::recent::{self, Entry, RecentList};
+use fe_config::recent::{self, Entry, ProjectLocation, RecentList, RemoteUnsupported};
 use fe_gpui::EditorView;
 use fe_ui::{
     HighlightedLabel, Icon, IconButton, Tooltip, char_ranges, file_icon_ref, folder_icon_ref,
@@ -40,6 +43,7 @@ use crate::{
     Workbench, open,
     picker::{Picker, PickerDelegate},
     toolbar_picker::subsequence,
+    workbench::toast::{self, Toast},
 };
 
 /// Opens the picker's selected folder in a new window.
@@ -192,9 +196,29 @@ fn tilde(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
-/// A recent folder or file.
+/// A remote folder as a row shows it: `app — neon`, its name, or `/`, and
+/// its host's destination. `None` for a local one.
+pub(crate) fn remote_label(location: &ProjectLocation) -> Option<String> {
+    let ProjectLocation::Remote { host, path } = location else {
+        return None;
+    };
+    let name = path.file_name().map_or("/".into(), String::from_utf8_lossy);
+    Some(format!("{} — {}", name, host))
+}
+
+/// Says the remote folder at `location` can't be opened, there being no
+/// remote host support yet, as a folder that fails to open says so.
+pub(crate) fn cant_open_remote(location: &ProjectLocation, cx: &mut App) {
+    let error = RemoteUnsupported;
+    let path = location.to_string();
+    log::error!("cannot open {path}: {error}");
+    let toast = tr!("workbench-project-cant-open-folder", path = &path);
+    toast::show(cx, Toast::error(toast).detail(error.to_string()));
+}
+
+/// A recent folder or file: a file's location is local.
 struct Row {
-    path: PathBuf,
+    location: ProjectLocation,
     folder: bool,
     /// The path as shown, and matched.
     label: String,
@@ -261,13 +285,16 @@ impl RecentPicker {
     /// Shows `list`'s entries as the rows.
     fn set_list(&mut self, list: RecentList) {
         let home = std::env::home_dir();
-        let row = |path: PathBuf, folder: bool| Row {
-            label: tilde(&path, home.as_deref()),
-            path,
+        let row = |location: ProjectLocation, folder: bool| Row {
+            label: match &location {
+                ProjectLocation::Local(path) => tilde(path, home.as_deref()),
+                remote => remote_label(remote).unwrap_or_default(),
+            },
+            location,
             folder,
         };
-        let folders = list.folders.into_iter().map(|path| row(path, true));
-        let files = list.files.into_iter().map(|path| row(path, false));
+        let folders = list.folders.into_iter().map(|location| row(location, true));
+        let files = (list.files.into_iter()).map(|path| row(ProjectLocation::Local(path), false));
         self.rows = folders.chain(files).collect();
     }
 
@@ -315,7 +342,10 @@ impl RecentPicker {
         };
         let row = &self.rows[row];
         if row.folder {
-            open::open_window(Some(row.path.clone()), cx);
+            match &row.location {
+                ProjectLocation::Local(path) => open::open_window(Some(path.clone()), cx),
+                remote => cant_open_remote(remote, cx),
+            }
             self.restore_focus(window, cx);
             cx.emit(DismissEvent);
         } else if self.confirm(ix, window, cx) {
@@ -356,17 +386,22 @@ impl PickerDelegate for RecentPicker {
         self.matches.len()
     }
 
-    /// The row's kind and path.
+    /// The row's kind and path, or a remote folder's URI.
     fn match_id(&self, ix: usize) -> SharedString {
         let row = self.row(ix);
         let kind = if row.folder { "folder" } else { "file" };
-        format!("{kind}:{}", row.path.display()).into()
+        format!("{kind}:{}", row.location).into()
     }
 
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let ui = fe_ui::ui_theme(cx);
         let row = self.row(ix);
-        let name = row.path.file_name().unwrap_or_default().to_string_lossy();
+        let name = match &row.location {
+            ProjectLocation::Local(path) => path.file_name().unwrap_or_default().to_string_lossy(),
+            ProjectLocation::Remote { path, .. } => {
+                String::from_utf8_lossy(path.file_name().unwrap_or_default())
+            }
+        };
         let icon = match row.folder {
             true => folder_icon_ref(false),
             false => file_icon_ref(&name),
@@ -432,7 +467,13 @@ impl PickerDelegate for RecentPicker {
             return false;
         };
         let row = self.row(ix);
-        let (path, folder) = (row.path.clone(), row.folder);
+        let (location, folder) = (row.location.clone(), row.folder);
+        let ProjectLocation::Local(path) = location else {
+            // Only a folder is remote.
+            self.restore_focus(window, cx);
+            cant_open_remote(&location, cx);
+            return true;
+        };
         if folder {
             self.restore_focus(window, cx);
             workbench.update(cx, |workbench, cx| workbench.set_root(path, window, cx));
@@ -486,3 +527,7 @@ fn normal_mode(editor: Entity<EditorView>, window: &mut Window, cx: &mut App) {
 #[cfg(test)]
 #[path = "recent_picker_tests.rs"]
 mod recent_picker_tests;
+
+#[cfg(test)]
+#[path = "recent_location_tests.rs"]
+mod recent_location_tests;

@@ -7,7 +7,10 @@
 //!   and Quit, which carry the dashboard's `g`, `r` and `q`.
 //! - **Recent folders** and **Recent files:** the five most recent of each
 //!   that still exist ([`RecentList::existing`]), as
-//!   [`OPEN_RECENT_FOLDER`] and [`OPEN_RECENT_FILE`] with their path.
+//!   [`OPEN_RECENT_FOLDER`] and [`OPEN_RECENT_FILE`] with their path. A
+//!   remote folder shows as `app — neon` ([`remote_label`]), with the
+//!   folder it's in on its host, and its row's invocation carries its
+//!   `ssh://` location in place of a path ([`invocation_location`]).
 //! - **Settings:** Open Settings and Keyboard Shortcuts.
 //!
 //! The dashboard's keys are `n` New File, `f` Open File (LazyVim's Find
@@ -17,9 +20,11 @@
 use std::path::{Path, PathBuf};
 
 use fe_command::{CommandId, Invocation, Value};
-use fe_config::recent::RecentList;
+use fe_config::recent::{ProjectLocation, RecentList};
 use gpui::SharedString;
 use kiln_l10n::{Text, text, tr};
+
+use crate::workbench::recent_picker::remote_label;
 
 /// The most recent folders, and the most recent files, listed.
 pub(crate) const MAX_RECENT: usize = 5;
@@ -176,7 +181,10 @@ impl StartPage {
         }
         let existing = recent.existing();
         let folders = (existing.folders.iter().take(MAX_RECENT))
-            .map(|path| recent_row(path, true, home))
+            .map(|location| match location {
+                ProjectLocation::Local(path) => recent_row(path, true, home),
+                remote => remote_row(remote),
+            })
             .collect();
         let files = (existing.files.iter().take(MAX_RECENT))
             .map(|path| recent_row(path, false, home))
@@ -278,6 +286,23 @@ fn recent_row(path: &Path, folder: bool, home: Option<&Path>) -> Row {
     }
 }
 
+/// A remote folder's row: `app — neon`, then the folder it's in on the
+/// host, running [`OPEN_RECENT_FOLDER`] with its location.
+fn remote_row(location: &ProjectLocation) -> Row {
+    let detail = match location {
+        ProjectLocation::Remote { path, .. } => path.parent().map(|parent| parent.to_string()),
+        ProjectLocation::Local(_) => None,
+    };
+    let args = Value::from_iter([("location", Value::String(location.to_string()))]);
+    Row {
+        label: Text::verbatim(remote_label(location).unwrap_or_default()),
+        detail,
+        icon: RowIcon::Folder,
+        key: None,
+        invocation: invocation(OPEN_RECENT_FOLDER).args(args),
+    }
+}
+
 fn path_value(path: &Path) -> Value {
     Value::String(path.to_string_lossy().into_owned())
 }
@@ -285,6 +310,12 @@ fn path_value(path: &Path) -> Value {
 /// The path a recent row's invocation opens.
 pub(crate) fn invocation_path(invocation: &Invocation) -> Option<PathBuf> {
     invocation.args.get("path")?.as_str().map(PathBuf::from)
+}
+
+/// The remote folder a recent row's invocation opens.
+pub(crate) fn invocation_location(invocation: &Invocation) -> Option<ProjectLocation> {
+    let text = invocation.args.get("location")?.as_str()?;
+    ProjectLocation::parse(text).ok()
 }
 
 /// `path` as shown: under the home directory, from `~`.

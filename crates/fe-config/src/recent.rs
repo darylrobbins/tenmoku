@@ -1,6 +1,10 @@
 //! The recently opened files and folders, kept in `<state_dir>/recent.toml`
 //! for Open Recent. Most recent first, capped, deduped by path.
 //!
+//! A folder is a [`ProjectLocation`], written in its text form: a local
+//! folder as its path, as before there were locations, and a remote one as
+//! its `ssh://` URI.
+//!
 //! [`record`] is the cross-window entry point: it reads, records and writes
 //! back under an advisory lock, so windows and processes recording at once
 //! all land.
@@ -12,6 +16,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+pub use fe_host::{
+    HostId, HostKind, LocationError, ProjectLocation, RemotePath, RemoteUnsupported,
+};
+
 /// The most folders kept.
 pub const MAX_FOLDERS: usize = 20;
 /// The most files kept.
@@ -22,14 +30,45 @@ pub const MAX_FILES: usize = 50;
 pub enum Entry<'a> {
     File(&'a Path),
     Folder(&'a Path),
+    /// A folder at a location, remote or local.
+    Location(&'a ProjectLocation),
 }
 
 /// Recently opened folders and files, most recent first.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RecentList {
-    pub folders: Vec<PathBuf>,
+    #[serde(with = "text_forms")]
+    pub folders: Vec<ProjectLocation>,
     pub files: Vec<PathBuf>,
+}
+
+/// Locations as their text forms, each a string as a path was.
+mod text_forms {
+    use std::path::PathBuf;
+
+    use fe_host::ProjectLocation;
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        locations: &[ProjectLocation],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(
+            locations
+                .iter()
+                .map(|location| PathBuf::from(location.text())),
+        )
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<ProjectLocation>, D::Error> {
+        let texts = Vec::<PathBuf>::deserialize(deserializer)?;
+        Ok((texts.iter())
+            .map(|text| ProjectLocation::from_text(text.as_os_str()))
+            .collect())
+    }
 }
 
 /// `<state_dir>/recent.toml`.
@@ -67,9 +106,9 @@ fn retry_transient<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     op()
 }
 
-fn push_front(list: &mut Vec<PathBuf>, path: &Path, cap: usize) {
-    list.retain(|p| p != path);
-    list.insert(0, path.to_owned());
+fn push_front<T: PartialEq + Clone>(list: &mut Vec<T>, entry: &T, cap: usize) {
+    list.retain(|e| e != entry);
+    list.insert(0, entry.clone());
     list.truncate(cap);
 }
 
@@ -135,19 +174,25 @@ impl RecentList {
         Ok(())
     }
 
-    /// Moves `path` to the front of the folders.
+    /// Moves the local folder `path` to the front of the folders.
     pub fn record_folder(&mut self, path: &Path) {
-        push_front(&mut self.folders, path, MAX_FOLDERS);
+        self.record_location(&ProjectLocation::Local(path.to_owned()));
+    }
+
+    /// Moves the folder at `location` to the front of the folders.
+    pub fn record_location(&mut self, location: &ProjectLocation) {
+        push_front(&mut self.folders, location, MAX_FOLDERS);
     }
 
     /// Moves `path` to the front of the files.
     pub fn record_file(&mut self, path: &Path) {
-        push_front(&mut self.files, path, MAX_FILES);
+        push_front(&mut self.files, &path.to_owned(), MAX_FILES);
     }
 
     /// Drops `path` from both lists.
     pub fn remove(&mut self, path: &Path) {
-        self.folders.retain(|p| p != path);
+        self.folders
+            .retain(|location| location.local() != Some(path));
         self.files.retain(|p| p != path);
     }
 
@@ -156,14 +201,13 @@ impl RecentList {
         self.files.clear();
     }
 
-    /// The entries whose paths still exist, for display. Stored entries go
-    /// only by the cap, [`remove`](Self::remove) or [`clear`](Self::clear).
+    /// The entries whose paths still exist, for display, and the remote
+    /// folders, whose hosts aren't asked here. Stored entries go only by
+    /// the cap, [`remove`](Self::remove) or [`clear`](Self::clear).
     pub fn existing(&self) -> RecentList {
         RecentList {
-            folders: self
-                .folders
-                .iter()
-                .filter(|p| p.exists())
+            folders: (self.folders.iter())
+                .filter(|location| location.local().is_none_or(Path::exists))
                 .cloned()
                 .collect(),
             files: self.files.iter().filter(|p| p.exists()).cloned().collect(),
@@ -209,6 +253,7 @@ pub fn record(path: &Path, entry: Entry<'_>) -> io::Result<RecentList> {
     update(path, |list| match entry {
         Entry::File(p) => list.record_file(p),
         Entry::Folder(p) => list.record_folder(p),
+        Entry::Location(location) => list.record_location(location),
     })
 }
 

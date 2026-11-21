@@ -2308,6 +2308,7 @@ version = "0.2.5"
 dependencies = [
  "dunce",
  "ec4rs",
+ "fe-host",
  "fe-syntax",
  "fluent-langneg",
  "kiln-core",

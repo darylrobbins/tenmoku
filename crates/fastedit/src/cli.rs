@@ -1,9 +1,13 @@
 //! The `tenmoku` command line: flags, and paths with an optional
-//! `:line[:column]`, made absolute against the working directory.
+//! `:line[:column]`, made absolute against the working directory, or remote
+//! folders' `ssh://` locations, taken as they are
+//! (docs/decisions/j8wvgszah0-remote-development.md § 6).
 
+use fe_config::recent::{LocationError, ProjectLocation};
 use kiln_l10n::{tr, verbatim};
 use std::{
     ffi::{OsStr, OsString},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -17,9 +21,49 @@ pub(crate) mod l10n;
 /// A path to open, and where, 1-based.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Target {
+    /// A local path, or a remote location's `ssh://` text, which no
+    /// absolute local path can be ([`Target::remote`]).
     pub(crate) path: PathBuf,
     pub(crate) line: Option<u32>,
     pub(crate) col: Option<u32>,
+}
+
+impl Target {
+    /// Whether the target is a remote location, parsing or not.
+    pub(crate) fn is_remote(&self) -> bool {
+        ProjectLocation::is_remote_text(self.path.as_os_str())
+    }
+
+    /// The remote location the target names, or why its `ssh://` text
+    /// isn't one; `None` for a local path.
+    pub(crate) fn remote(&self) -> Option<Result<ProjectLocation, LocationError>> {
+        self.is_remote().then(|| {
+            let text = self.path.to_str().ok_or(LocationError::Unescaped)?;
+            ProjectLocation::parse(text)
+        })
+    }
+
+    /// Why the target, a remote location, can't be opened: there's no remote
+    /// host support yet, or its `ssh://` text isn't a location. `None` for a
+    /// local path.
+    pub(crate) fn remote_error(&self) -> Option<String> {
+        match self.remote()? {
+            Ok(location) => location.hosts().err().map(|error| error.to_string()),
+            Err(error) => Some(error.to_string()),
+        }
+    }
+}
+
+/// Says on `out` which of `targets` are remote locations that can't be
+/// opened ([`Target::remote_error`]): what the launching process prints, on
+/// its own stderr, before it hands the launch over or runs it.
+pub(crate) fn report_remote(targets: &[Target], out: &mut dyn Write) {
+    for target in targets {
+        if let Some(error) = target.remote_error() {
+            let text = target.path.display();
+            writeln!(out, "{}: {}: {}", verbatim!("tenmoku"), text, error).ok();
+        }
+    }
 }
 
 /// A parsed command line.
@@ -104,12 +148,16 @@ pub(crate) struct Plan {
 impl Cli {
     /// The first folder is the root, and any other is left out; everything
     /// else is a file, a missing path being a new one. With only files, the
-    /// root is the first one's parent.
+    /// root is the first one's parent. A remote location is left out too,
+    /// and logged: the launching process said so ([`report_remote`]).
     pub(crate) fn plan(self) -> Plan {
         let mut root = None;
         let mut files = Vec::new();
         for target in self.targets {
-            if !target.path.is_dir() {
+            if target.is_remote() {
+                let error = target.remote_error().unwrap_or_default();
+                log::warn!(target: "fastedit", "not opening {}: {error}", target.path.display());
+            } else if !target.path.is_dir() {
                 files.push(target);
             } else if root.is_none() {
                 root = Some(target.path);
@@ -181,7 +229,8 @@ fn flag(args: &mut pico_args::Arguments, keys: impl Into<pico_args::Keys> + Copy
     given
 }
 
-/// `arg` as a path and position. The whole string wins if it exists, then
+/// `arg` as a path and position, or, starting `ssh://`, a remote location
+/// as it is, never a local path. The whole string wins if it exists, then
 /// the string less its last `:number` (a file `a:1` at `a:1:2`). Otherwise
 /// up to two such suffixes are the position, of a file that may be new.
 /// Anything else after a colon is part of the name.
@@ -191,6 +240,13 @@ fn target(arg: &OsStr, cwd: &Path) -> Target {
         line,
         col,
     };
+    if ProjectLocation::is_remote_text(arg) {
+        return Target {
+            path: PathBuf::from(arg),
+            line: None,
+            col: None,
+        };
+    }
     let exists = |path: &OsStr| absolute(path, cwd).symlink_metadata().is_ok();
     if exists(arg) {
         return at(arg, None, None);

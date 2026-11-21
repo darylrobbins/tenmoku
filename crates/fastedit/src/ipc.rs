@@ -2,7 +2,8 @@
 //! `<temp dir>/tenmoku-<uid>/ipc.sock`.
 //!
 //! One JSON line each way: a [`Request`] (`{targets:[{path,line,col}],
-//! new_window, wait, cwd}`) and a reply (`{ok}`). A request with `wait` then
+//! new_window, wait, cwd}`, where a remote folder's `path` is its `ssh://`
+//! location, handed over as it was given) and a reply (`{ok}`). A request with `wait` then
 //! has the server hold the connection, and a second line, `{closed}`, comes
 //! once its files have no tab left ([`crate::wait`]): `{ok}` still comes at
 //! once, for a client can tell a hung server only by its silence, and goes on
@@ -54,7 +55,7 @@ use fe_workbench::{DocumentRoute, Workbench, route_document};
 use gpui::{App, Task, WindowHandle};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::{Cli, Target};
+use crate::cli::{self, Cli, Target};
 
 /// Skips both sides of the handoff.
 const NO_IPC: &str = "TENMOKU_NO_IPC";
@@ -729,11 +730,29 @@ pub(crate) enum Start {
 /// what it's to open may come as open-document events only it receives, and
 /// only once the app is running (`open -na Tenmoku a.txt --args b.txt` sends
 /// both); it serves if nothing else does, and otherwise runs as it always has.
+///
+/// First, this being the process that was launched, its stderr is told which
+/// of the request's remote locations can't be opened ([`cli::report_remote`]):
+/// a detached server's and a running instance's aren't the terminal's.
 pub(crate) fn start(
     request: &Request,
     how: &How,
     detach: impl FnOnce() -> io::Result<()>,
 ) -> Start {
+    start_telling(request, how, detach, &mut io::stderr())
+}
+
+/// [`start`], telling `stderr` of the remote locations. Not the detached
+/// server of a `--wait` launch, whose parent told it.
+pub(crate) fn start_telling(
+    request: &Request,
+    how: &How,
+    detach: impl FnOnce() -> io::Result<()>,
+    stderr: &mut dyn io::Write,
+) -> Start {
+    if !how.parent_carries {
+        cli::report_remote(&request.targets, stderr);
+    }
     // No Unix sockets on Windows: each launch is its own instance.
     if how.no_ipc || cfg!(windows) {
         return Start::Alone;
@@ -943,13 +962,23 @@ pub(crate) fn launch_first_request(
 /// whichever read is quickest. With `new_window`, a window opens on the first
 /// folder or the first file's folder, as a launch would, with the files in it.
 /// Otherwise each goes by [`route_document`]; there, `new_window` is what opens
-/// a window on a folder. The app is activated.
+/// a window on a folder. A remote location opens nowhere yet: the app says so,
+/// and a request of nothing else opens no window. The app is activated.
 pub(crate) fn route(
     request: Request,
     cx: &mut App,
     new_window: impl Fn(Option<PathBuf>, &mut App) -> Option<WindowHandle<Workbench>> + 'static,
 ) -> Task<()> {
-    let targets = (request.targets.into_iter())
+    let (remote, local): (Vec<_>, Vec<_>) =
+        (request.targets.into_iter()).partition(Target::is_remote);
+    for target in &remote {
+        cant_open_remote(target, cx);
+    }
+    // Nothing to open: no window for it either.
+    if !remote.is_empty() && local.is_empty() {
+        return Task::ready(());
+    }
+    let targets = (local.into_iter())
         .map(|target| Target {
             // Absolute already, as the command line makes them.
             path: request.cwd.join(&target.path),
@@ -982,6 +1011,15 @@ pub(crate) fn route(
             }
         }
     })
+}
+
+/// Says in the app, as a failed open does, that the remote `target` can't be
+/// opened; its launch said so on stderr ([`cli::report_remote`]).
+fn cant_open_remote(target: &Target, cx: &mut App) {
+    let text = target.path.display().to_string();
+    let error = target.remote_error().unwrap_or_default();
+    log::warn!(target: "fastedit", "not opening {text}: {error}");
+    Workbench::notify(cx, log::Level::Error, text, Some(error));
 }
 
 /// Opens `target` in `window`, or where [`route_document`] says with none, and

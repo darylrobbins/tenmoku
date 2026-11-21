@@ -9,7 +9,10 @@ use std::{
 };
 
 use fe_command::{Invocation, Value};
-use fe_config::{Settings, recent::RecentList};
+use fe_config::{
+    Settings,
+    recent::{ProjectLocation, RecentList},
+};
 use fe_gpui::{EditorSettings, EditorTheme, SettingsEvent, commands::RunCommand, set_vim_enabled};
 use fe_keymap::CommandCatalog as _;
 use gpui::{Entity, Focusable as _, Keystroke, TestAppContext, VisualTestContext};
@@ -67,7 +70,11 @@ fn model_lists_start_actions_and_existing_recents() {
     let (folders, files) = entries(dir.path(), 7);
     fs::remove_dir(&folders[1]).unwrap();
     let recent = RecentList {
-        folders: folders.clone(),
+        folders: folders
+            .iter()
+            .cloned()
+            .map(ProjectLocation::Local)
+            .collect(),
         files: files.clone(),
     };
     let home = dir.path();
@@ -153,6 +160,7 @@ fn model_lists_start_actions_and_existing_recents() {
 fn every_row_runs_a_known_command() {
     let dir = tempfile::tempdir().unwrap();
     let (folders, files) = entries(dir.path(), 1);
+    let folders = folders.into_iter().map(ProjectLocation::Local).collect();
     let recent = RecentList { folders, files };
     let page = StartPage::from(
         &recent,
@@ -435,7 +443,7 @@ fn a_recent_folder_roots_the_window(cx: &mut TestAppContext) {
     let (folders, _) = entries(dir.path(), 1);
     let folder = fs::canonicalize(&folders[0]).unwrap();
     let list = RecentList {
-        folders: vec![folder.clone()],
+        folders: vec![ProjectLocation::Local(folder.clone())],
         files: Vec::new(),
     };
     list.save(&recent_file).unwrap();

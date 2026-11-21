@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 dunce.workspace = true
 ec4rs.workspace = true
+# The locations the recent list holds (src/recent.rs).
+fe-host.workspace = true
 # What `workbench.locale` alone negotiates (src/settings.rs), as kiln-l10n does.
 fluent-langneg.workspace = true
 kiln-core.workspace = true
