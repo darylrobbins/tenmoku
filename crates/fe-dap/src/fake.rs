@@ -1064,6 +1064,18 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
         }
     }
 
+    /// Sends the failures already let go, ahead of anything else queued.
+    async fn send_ready_failures(&mut self) {
+        let ready = std::mem::take(&mut self.ready);
+        for action in ready {
+            if matches!(action, HeldAction::Fail(..)) {
+                self.act(action).await;
+            } else {
+                self.ready.push_back(action);
+            }
+        }
+    }
+
     async fn act(&mut self, action: HeldAction) {
         match action {
             HeldAction::Steps(steps) => {
@@ -1339,13 +1351,18 @@ impl<W: AsyncWrite + Unpin> Adapter<W> {
                 self.respond::<request::Terminate>(&request, &Empty::default())
                     .await;
                 self.end_startup().await;
+                // A failure held for the terminate goes out before the end:
+                // the session closes the transport on `terminated`, which
+                // would otherwise race the failure's send.
                 if self.started && self.run != Run::Ended {
+                    self.release_trigger(Trigger::Terminate, None);
+                    self.send_ready_failures().await;
                     self.end().await;
                 } else {
                     self.event::<event::Terminated>(&TerminatedBody::default())
                         .await;
+                    self.release_trigger(Trigger::Terminate, None);
                 }
-                self.release_trigger(Trigger::Terminate, None);
             }
             "disconnect" => {
                 self.respond::<request::Disconnect>(&request, &Empty::default())
