@@ -121,6 +121,7 @@ fn catalog(languages: Vec<(&str, Language)>) -> Catalog {
         url_template: TEMPLATE.to_owned(),
         packs,
         languages,
+        plugins: Default::default(),
     };
     Catalog::new(index, &EngineSupport::running())
 }

@@ -54,6 +54,7 @@ use kiln_plugin::{
 
 use crate::{
     GRANTS_FILE, PluginInfo, PluginState, SECRETS_INDEX_FILE, Workbench,
+    extension_install::is_registry_installed,
     extensions_picker::ExtensionState,
     plugin_host::{PluginHost, Release, hold_plugin, plugin_settled, release_plugin},
     plugin_states,
@@ -80,6 +81,9 @@ pub(crate) struct PluginRow {
     pub(crate) version: Version,
     /// The extension's directory.
     pub(crate) dir: PathBuf,
+    /// Whether it wasn't installed from the signed index: from a file or
+    /// folder, or linked for development. It is allowed all the same.
+    pub(crate) unsigned: bool,
     /// One of the plugin states.
     pub(crate) state: ExtensionState,
     /// Whether what it was granted holds `net:*` or `process.spawn:*`.
@@ -117,6 +121,7 @@ impl PluginRow {
             name: info.name.clone(),
             version: info.version,
             dir: info.dir.clone(),
+            unsigned: !is_registry_installed(&info.dir),
             state,
             full_access: is_full_access(&info.granted),
             requested: capability_lines(&info.requested),
@@ -137,6 +142,7 @@ impl PluginRow {
             name: manifest.name.clone(),
             version: manifest.version,
             dir: manifest.dir.clone(),
+            unsigned: !is_registry_installed(&manifest.dir),
             state,
             full_access: false,
             requested: requested.as_ref().map(capability_lines).unwrap_or_default(),
@@ -151,6 +157,9 @@ impl PluginRow {
         let mut parts = Vec::new();
         if self.full_access {
             parts.push(tr!("workbench-extensions-plugin-full-access").into());
+        }
+        if self.unsigned {
+            parts.push(tr!("workbench-extensions-plugin-unsigned").into());
         }
         if !self.requested.is_empty() {
             let asks = self.requested.join("; ");
@@ -172,6 +181,9 @@ impl PluginRow {
     pub(crate) fn full_detail(&self) -> Vec<String> {
         let state = self.state.label();
         let mut lines = vec![tr!("workbench-extensions-state", state = state).into()];
+        if self.unsigned {
+            lines.push(tr!("workbench-extensions-plugin-unsigned").into());
+        }
         if self.full_access {
             lines.push(tr!("workbench-extensions-plugin-full-access-detail").into());
         }

@@ -95,6 +95,10 @@ workbench-extensions-lsp-consent-environment = Environment: { $name }={ $value }
 workbench-extensions-plugin-uninstall = Uninstall
 workbench-extensions-plugin-stopped = Stopped: { $diagnostic }
 workbench-extensions-plugin-full-access = Full access
+workbench-extensions-install-not-listed = The archive isn't the one the registry lists (SHA-256 { $sha }, { $size } bytes).
+workbench-extensions-install-listed-mismatch = The archive holds { $found_id } { $found_version }, not the { $id } { $version } the registry lists.
+workbench-extensions-install-unlisted-capability = The plugin asks for { $capability }, which the registry doesn't list for it.
+workbench-extensions-plugin-unsigned = Unsigned (installed from a file)
 workbench-extensions-plugin-full-access-detail = Full access: it holds net:* or process.spawn:*
 # `$capabilities` is a list of capabilities, each with what it lets the
 # plugin do, joined by "; ".

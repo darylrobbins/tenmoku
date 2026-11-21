@@ -1019,6 +1019,7 @@ pub(crate) fn offers(
             url_template: url_template.clone(),
             packs: BTreeMap::new(),
             languages: BTreeMap::new(),
+            plugins: BTreeMap::new(),
         };
         Catalog::new(empty, &crate::grammar_registry::EngineSupport::running())
     });

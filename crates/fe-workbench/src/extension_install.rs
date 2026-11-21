@@ -71,6 +71,16 @@ fn replace_buttons() -> [SharedString; 2] {
 }
 const REPLACE: usize = 0;
 
+/// The file an install checked against the signed index leaves in the
+/// extension's directory: its archive's SHA-256. A plugin without one was
+/// installed from a file or linked, and is shown as unsigned. A local
+/// install never unpacks a file of this name.
+pub(crate) const REGISTRY_MARKER: &str = ".registry-verified";
+
+/// The most bytes a listed archive may have; fe-registry's cap.
+#[cfg_attr(not(test), allow(dead_code))] // The registry install flow (network) calls it later.
+pub(crate) const MAX_LISTED_BYTES: u64 = 64 * 1024 * 1024;
+
 /// The staging directory's name starts with this.
 const STAGING_PREFIX: &str = ".installing-";
 
@@ -119,6 +129,136 @@ impl From<io::Error> for InstallError {
 /// installed with its id. Reads and writes files: for a background thread.
 pub fn install_extension(source: &Path, extensions_dir: &Path) -> Result<Installed, InstallError> {
     stage(source, extensions_dir, &check_api(Vec::new()))?.place()
+}
+
+/// What the verified signed index lists of an archive: the install checks
+/// the archive against it before it unpacks anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))] // The registry install flow (network) calls it later.
+pub(crate) struct Listed {
+    pub(crate) id: String,
+    pub(crate) version: Version,
+    /// Lowercase hex.
+    pub(crate) sha256: String,
+    pub(crate) size: u64,
+    pub(crate) entries: usize,
+    /// The capabilities the signed entry summarises: the manifest may ask
+    /// for these and no others.
+    pub(crate) capabilities: Vec<String>,
+}
+
+/// Whether a file name is, or on some filesystem is the same file as, the
+/// marker: any case, an NTFS stream (`:…`), or trailing dots and spaces,
+/// which Windows drops.
+fn names_marker(name: &str) -> bool {
+    let base = name.split(':').next().unwrap_or(name);
+    base.trim_end_matches(['.', ' '])
+        .eq_ignore_ascii_case(REGISTRY_MARKER)
+}
+
+#[cfg(test)]
+pub(crate) fn names_marker_for_test(name: &str) -> bool {
+    names_marker(name)
+}
+
+/// Whether `dir` was installed from the signed index: its marker is a
+/// plain file and the directory itself isn't a link (a dev link into a
+/// checkout never is).
+pub(crate) fn is_registry_installed(dir: &Path) -> bool {
+    let plain = |path: &Path| fs::symlink_metadata(path).is_ok_and(|meta| !meta.is_symlink());
+    plain(dir) && fs::symlink_metadata(dir.join(REGISTRY_MARKER)).is_ok_and(|meta| meta.is_file())
+}
+
+/// Installs the archive `source` that the signed index lists as `listed`.
+/// Its size caps are checked, then its size and SHA-256, before a byte is
+/// unpacked; the manifest must then be the listed id and version.
+/// Reads and writes files: for a background thread.
+#[cfg_attr(not(test), allow(dead_code))] // The registry install flow (network) calls it later.
+pub(crate) fn install_listed(
+    source: &Path,
+    listed: &Listed,
+    extensions_dir: &Path,
+) -> Result<Installed, InstallError> {
+    let too_large = listed.size == 0
+        || listed.size > MAX_LISTED_BYTES
+        || listed.entries == 0
+        || listed.entries > MAX_ENTRIES;
+    if too_large {
+        return Err(too_big());
+    }
+    if fs::metadata(source)?.is_dir() {
+        return Err(InstallError::Unsupported);
+    }
+    // One read of the file is both what's hashed and what's unpacked, so
+    // replacing the source meanwhile changes nothing.
+    let mut bytes = Vec::new();
+    fs::File::open(source)?
+        .take(listed.size + 1)
+        .read_to_end(&mut bytes)?;
+    let size = bytes.len() as u64;
+    let found: String =
+        sha2::Digest::finalize(<sha2::Sha256 as sha2::Digest>::new_with_prefix(&bytes))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+    if size != listed.size || found != listed.sha256 {
+        return Err(refused(tr!(
+            "workbench-extensions-install-not-listed",
+            sha = found,
+            size = size.to_string()
+        )));
+    }
+    let staged = stage_as(
+        source,
+        extensions_dir,
+        &check_api(Vec::new()),
+        Some((&bytes, listed.entries)),
+    )?;
+    let installed = staged.installed();
+    if installed.id != listed.id || installed.version != listed.version {
+        return Err(refused(tr!(
+            "workbench-extensions-install-listed-mismatch",
+            found_id = installed.id.as_str(),
+            found_version = version_text(installed.version),
+            id = listed.id.as_str(),
+            version = version_text(listed.version)
+        )));
+    }
+    check_listed_capabilities(&staged.root, listed)?;
+    fs::write(
+        staged.root.join(REGISTRY_MARKER),
+        format!("{}\n", listed.sha256),
+    )?;
+    staged.place()
+}
+
+/// Refuses a manifest in `root` that asks for a capability `listed`'s
+/// signed summary doesn't have: what the consent prompt shows is what the
+/// registry listed.
+fn check_listed_capabilities(root: &Path, listed: &Listed) -> Result<(), InstallError> {
+    let (manifest, _) = load_manifest(root, &check_api(Vec::new()));
+    let Some(manifest) = manifest else {
+        return Ok(());
+    };
+    let plugin = PluginManifest::from_extension(&manifest, ExtensionOrigin::User)
+        .map_err(|error| InstallError::Refused(error.to_string()))?;
+    let Some(plugin) = plugin else {
+        return Ok(());
+    };
+    let allowed: Vec<String> = (listed.capabilities.iter())
+        .filter_map(|text| fe_command::capability::Capability::parse(text).ok())
+        .map(|capability| capability.to_string())
+        .collect();
+    if let Some(extra) = (plugin.capabilities.iter())
+        .map(|capability| capability.to_string())
+        .find(|capability| !allowed.contains(capability))
+    {
+        return Err(refused(tr!(
+            "workbench-extensions-install-unlisted-capability",
+            capability = extra
+        )));
+    }
+    Ok(())
 }
 
 /// The check an installed extension's manifest goes through: the app's id
@@ -235,7 +375,22 @@ pub(crate) fn stage(
     extensions_dir: &Path,
     api: &ExtensionApi,
 ) -> Result<Staged, InstallError> {
-    let kind = Source::of(source)?;
+    stage_as(source, extensions_dir, api, None)
+}
+
+/// [`stage`]; with `listed_entries`, an archive the signed index lists:
+/// it may have that many entries and no more, and may hold the marker file.
+pub(crate) fn stage_as(
+    source: &Path,
+    extensions_dir: &Path,
+    api: &ExtensionApi,
+    snapshot: Option<(&[u8], usize)>,
+) -> Result<Staged, InstallError> {
+    let listed_entries = snapshot.map(|(_, entries)| entries);
+    let kind = match snapshot {
+        Some(_) => Source::of_name(source)?,
+        None => Source::of(source)?,
+    };
     fs::create_dir_all(extensions_dir)?;
     let extensions_dir = fs::canonicalize(extensions_dir)?;
     if kind == Source::Folder && extensions_dir.starts_with(fs::canonicalize(source)?) {
@@ -245,9 +400,23 @@ pub(crate) fn stage(
     let staging = Staging::new(&extensions_dir)?;
     let unpacked = staging.dir.join("unpacked");
     fs::create_dir(&unpacked)?;
+    // A listed archive is unpacked from the bytes that were hashed.
+    let snapshot_path = staging.dir.join(match kind {
+        Source::TarGz => "snapshot.tar.gz",
+        _ => "snapshot.zip",
+    });
+    let source = match snapshot {
+        Some((bytes, _)) => {
+            fs::write(&snapshot_path, bytes)?;
+            snapshot_path.as_path()
+        }
+        None => source,
+    };
     let mut unpack = Unpack {
         root: unpacked.clone(),
         entries: 0,
+        max_entries: listed_entries.unwrap_or(MAX_ENTRIES).min(MAX_ENTRIES),
+        listed: listed_entries.is_some(),
         bytes: 0,
     };
     match kind {
@@ -256,6 +425,15 @@ pub(crate) fn stage(
         Source::Folder => unpack.folder(source, Path::new(""))?,
     }
     let root = extension_root(&unpacked)?;
+    if snapshot.is_none() {
+        // Whatever the names above missed, a local install is never one the
+        // index vouched for: remove the marker by its own path.
+        match fs::remove_file(root.join(REGISTRY_MARKER)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     let installed = check(&root, &extensions_dir, api)?;
     let replaced = installed_with(&extensions_dir, &installed.id)?;
     // Taken by something else, it isn't replaced unasked.
@@ -290,6 +468,11 @@ impl Source {
         if fs::metadata(path)?.is_dir() {
             return Ok(Self::Folder);
         }
+        Self::of_name(path)
+    }
+
+    /// An archive by its name alone.
+    fn of_name(path: &Path) -> Result<Self, InstallError> {
         let name = (path.file_name())
             .map(|name| name.to_string_lossy().to_lowercase())
             .unwrap_or_default();
@@ -351,6 +534,10 @@ impl Drop for Staging {
 struct Unpack {
     root: PathBuf,
     entries: usize,
+    /// The most entries: [`MAX_ENTRIES`], or the index's count.
+    max_entries: usize,
+    /// Whether the archive is one the signed index lists.
+    listed: bool,
     bytes: u64,
 }
 
@@ -371,7 +558,7 @@ impl Unpack {
         if archive.has_duplicate_names() {
             return Err(refused(tr!("workbench-extensions-install-duplicate-names")));
         }
-        if archive.len() > MAX_ENTRIES {
+        if archive.len() > self.max_entries {
             return Err(too_many());
         }
         for index in 0..archive.len() {
@@ -519,7 +706,7 @@ impl Unpack {
     /// Counts an entry, refusing one too many.
     fn count(&mut self) -> Result<(), InstallError> {
         self.entries += 1;
-        if self.entries > MAX_ENTRIES {
+        if self.entries > self.max_entries {
             return Err(too_many());
         }
         Ok(())
@@ -563,6 +750,13 @@ impl Unpack {
         };
         // The top level itself, or macOS's `__MACOSX` folder.
         if relative.as_os_str().is_empty() || relative.starts_with("__MACOSX") {
+            return Ok(());
+        }
+        // Only a verified install says it was one: a file's own is dropped.
+        let marker = relative
+            .file_name()
+            .is_some_and(|name| names_marker(&name.to_string_lossy()));
+        if marker && !self.listed {
             return Ok(());
         }
         if let Kind::Dir = kind {

@@ -100,6 +100,11 @@ pub struct Index {
     pub packs: BTreeMap<String, Pack>,
     /// Every language, by name.
     pub languages: BTreeMap<String, Language>,
+    /// Every plugin, by id ([`crate::plugins`]). An index without any
+    /// leaves the key out, so a grammar-only index parses and prints as it
+    /// always did.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugins: BTreeMap<String, crate::plugins::PluginEntry>,
 }
 
 /// A named list of languages, with its offline tarball.
@@ -245,6 +250,9 @@ impl Index {
             {
                 return bad(format!("the pack {key}'s tarball is malformed"));
             }
+        }
+        for (key, plugin) in &self.plugins {
+            plugin.check(key).map_err(Error::Index)?;
         }
         Ok(())
     }
@@ -464,6 +472,7 @@ pub fn generate(grammars: &Path, wasm: &Path, serial: u64) -> Result<Generated, 
         url_template: registry.url_template,
         packs,
         languages,
+        plugins: BTreeMap::new(),
     };
     Ok(Generated {
         index,
@@ -532,7 +541,7 @@ pub fn tag(language: &str, digest: &str) -> String {
     format!("{language}-{}", &digest[..digest.len().min(16)])
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hex = String::with_capacity(64);
     for byte in Sha256::digest(bytes) {
         let _ = write!(hex, "{byte:02x}");
@@ -540,7 +549,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex
 }
 
-fn is_sha256(hex: &str) -> bool {
+pub(crate) fn is_sha256(hex: &str) -> bool {
     hex.len() == 64
         && hex
             .bytes()

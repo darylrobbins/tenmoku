@@ -1044,3 +1044,185 @@ fn found(dir: &Path) -> Found {
         .unwrap();
     Found::new(&manifest, Ok(plugin))
 }
+
+/// A zip of the plugin `id` (written by [`write_plugin`]) in `dir`, with an
+/// extra file `extra` if given: its path, and its entry count.
+fn zipped(dir: &Path, id: &str, extra: Option<&str>) -> (PathBuf, usize) {
+    use std::io::Write as _;
+    let source = dir.join("src");
+    write_plugin(&source, id, "Tool", false);
+    let path = dir.join(format!("{id}.zip"));
+    let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+    let options = zip::write::SimpleFileOptions::default();
+    let mut names = vec!["extension.toml", "plugin.wasm"];
+    names.extend(extra);
+    for name in &names {
+        zip.start_file(*name, options).unwrap();
+        let bytes = fs::read(source.join(name)).unwrap_or_else(|_| b"forged".to_vec());
+        zip.write_all(&bytes).unwrap();
+    }
+    zip.finish().unwrap();
+    (path, names.len())
+}
+
+fn listed_for(path: &Path, entries: usize) -> crate::extension_install::Listed {
+    use sha2::{Digest, Sha256};
+    let bytes = fs::read(path).unwrap();
+    crate::extension_install::Listed {
+        id: ID.into(),
+        version: (1, 0, 0),
+        sha256: Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        size: bytes.len() as u64,
+        entries,
+        capabilities: vec!["buffer.read".into()],
+    }
+}
+
+#[test]
+fn a_local_install_is_unsigned_and_allowed_a_registry_install_is_not() {
+    use crate::extension_install::{REGISTRY_MARKER, install_extension, install_listed};
+    let dir = TempDir::new().unwrap();
+    let extensions = dir.path().join("extensions");
+    // A local install, even of an archive carrying the marker, is unsigned
+    // and installs.
+    let (zip, _) = zipped(dir.path(), ID, Some(REGISTRY_MARKER));
+    let installed = install_extension(&zip, &extensions).unwrap();
+    assert!(!installed.dir.join(REGISTRY_MARKER).exists());
+    assert!(!super::is_registry_installed(&installed.dir));
+    let row = PluginRow::of(&PluginInfo {
+        dir: installed.dir.clone(),
+        ..info(&[], PluginState::Running)
+    });
+    assert!(row.unsigned);
+    assert!(row.detail().iter().any(|part| part.contains("nsigned")));
+    // One checked against its index entry is signed.
+    let (zip, entries) = zipped(dir.path(), ID, None);
+    let listed = listed_for(&zip, entries);
+    let installed = install_listed(&zip, &listed, &extensions).unwrap();
+    assert!(super::is_registry_installed(&installed.dir));
+    assert!(
+        !PluginRow::of(&PluginInfo {
+            dir: installed.dir,
+            ..info(&[], PluginState::Running)
+        })
+        .unsigned
+    );
+}
+
+#[test]
+fn a_listed_install_is_checked_before_anything_is_unpacked() {
+    use crate::extension_install::install_listed;
+    let dir = TempDir::new().unwrap();
+    let extensions = dir.path().join("extensions");
+    let (zip, entries) = zipped(dir.path(), ID, None);
+    let good = listed_for(&zip, entries);
+    let bad_hash = crate::extension_install::Listed {
+        sha256: "0".repeat(64),
+        ..good.clone()
+    };
+    let bad_size = crate::extension_install::Listed {
+        size: good.size + 1,
+        ..good.clone()
+    };
+    let too_many = crate::extension_install::Listed {
+        entries: entries - 1,
+        ..good.clone()
+    };
+    let wrong_id = crate::extension_install::Listed {
+        id: "acme.other".into(),
+        ..good.clone()
+    };
+    let capped = crate::extension_install::Listed {
+        size: 65 * 1024 * 1024,
+        ..good.clone()
+    };
+    for listed in [bad_hash, bad_size, too_many, wrong_id, capped] {
+        assert!(
+            install_listed(&zip, &listed, &extensions).is_err(),
+            "{listed:?}"
+        );
+        // Nothing was left, not even a staging directory.
+        let left = fs::read_dir(&extensions)
+            .map(|read| read.count())
+            .unwrap_or(0);
+        assert_eq!(left, 0, "{listed:?}");
+    }
+    install_listed(&zip, &good, &extensions).unwrap();
+}
+
+#[test]
+fn a_listed_install_holds_the_manifest_to_the_signed_capabilities() {
+    use crate::extension_install::install_listed;
+    let dir = TempDir::new().unwrap();
+    let extensions = dir.path().join("extensions");
+    let (zip, entries) = zipped(dir.path(), ID, None);
+    // The fixture asks for buffer.read: a summary without it refuses.
+    let none = crate::extension_install::Listed {
+        capabilities: vec!["net:*".into()],
+        ..listed_for(&zip, entries)
+    };
+    let refused = install_listed(&zip, &none, &extensions).unwrap_err();
+    assert!(refused.to_string().contains("buffer.read"), "{refused}");
+    assert!(fs::read_dir(&extensions).map(|r| r.count()).unwrap_or(0) == 0);
+}
+
+#[test]
+fn a_mixed_case_marker_in_a_local_install_is_dropped() {
+    use crate::extension_install::{REGISTRY_MARKER, install_extension};
+    let dir = TempDir::new().unwrap();
+    let extensions = dir.path().join("extensions");
+    let forged = REGISTRY_MARKER.to_uppercase();
+    let (zip, _) = zipped(dir.path(), ID, Some(&forged));
+    let installed = install_extension(&zip, &extensions).unwrap();
+    assert!(!super::is_registry_installed(&installed.dir));
+    let names: Vec<_> = fs::read_dir(&installed.dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_lowercase())
+        .collect();
+    assert!(
+        !names.iter().any(|name| name == REGISTRY_MARKER),
+        "{names:?}"
+    );
+    // Stream and trailing-dot spellings Windows resolves to the marker.
+    for alias in [
+        format!("{REGISTRY_MARKER}::$DATA"),
+        format!("{REGISTRY_MARKER}."),
+        format!("{REGISTRY_MARKER} "),
+    ] {
+        assert!(
+            super::super::extension_install::names_marker_for_test(&alias),
+            "{alias}"
+        );
+    }
+    // A folder install of the same.
+    let source = dir.path().join("folder");
+    write_plugin(&source, "acme.folder", "Folder", false);
+    fs::write(source.join(&forged), "forged").unwrap();
+    let installed = install_extension(&source, &extensions).unwrap();
+    assert!(!super::is_registry_installed(&installed.dir));
+}
+
+#[test]
+fn a_listed_install_unpacks_the_bytes_that_were_hashed() {
+    use crate::extension_install::{check_api, stage_as};
+    let dir = TempDir::new().unwrap();
+    let extensions = dir.path().join("extensions");
+    let (zip, entries) = zipped(dir.path(), ID, None);
+    let hashed = fs::read(&zip).unwrap();
+    // The source is replaced after it was hashed: by another plugin's.
+    let other = dir.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    let (replacement, _) = zipped(&other, "acme.swapped", None);
+    fs::copy(&replacement, &zip).unwrap();
+    let staged = stage_as(
+        &zip,
+        &extensions,
+        &check_api(Vec::new()),
+        Some((&hashed, entries)),
+    )
+    .unwrap();
+    assert_eq!(staged.installed().id, ID);
+}

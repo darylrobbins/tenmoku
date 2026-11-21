@@ -92,6 +92,7 @@ fn index(serial: u64, languages: Vec<(&str, Language)>) -> Index {
             .to_owned(),
         packs,
         languages,
+        plugins: Default::default(),
     };
     index.check().unwrap();
     index

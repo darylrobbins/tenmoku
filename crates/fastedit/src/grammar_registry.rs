@@ -835,6 +835,7 @@ mod cache_read_tests {
             url_template: "https://github.com/acme/registry/releases/download/{tag}/{file}".into(),
             packs: Default::default(),
             languages: Default::default(),
+            plugins: Default::default(),
         };
         let bytes = index.to_json().into_bytes();
         let sig = update_signature::sign(key, &bytes).into_bytes();

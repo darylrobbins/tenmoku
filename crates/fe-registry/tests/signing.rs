@@ -160,6 +160,7 @@ fn index() -> Index {
         url_template: "https://example.com/{tag}/{file}".into(),
         packs: BTreeMap::from([("jvm".into(), pack)]),
         languages: BTreeMap::from([("kotlin".into(), language)]),
+        plugins: BTreeMap::new(),
     }
 }
 
