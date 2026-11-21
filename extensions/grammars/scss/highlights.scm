@@ -52,7 +52,7 @@
 (property_name) @property
 (feature_name) @property
 
-(pseudo_element_selector (tag_name) @attribute)
+(pseudo_element_selector "::" . (tag_name) @attribute)
 (pseudo_class_selector (class_name) @attribute)
 (attribute_name) @attribute
 

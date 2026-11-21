@@ -279,7 +279,7 @@
 66:27-28 number "2"
 66:28-29 punctuation.delimiter ";"
 67:3-4 punctuation.bracket "}"
-69:3-4 attribute "a"
+69:3-4 tag "a"
 69:4-6 punctuation.delimiter "::"
 69:6-11 attribute "after"
 69:12-13 punctuation.bracket "{"
