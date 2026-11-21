@@ -16,6 +16,7 @@ publish = false
 # Internal crates.
 fe-text = { path = "crates/fe-text" }
 fe-buffer = { path = "crates/fe-buffer" }
+fe-host = { path = "crates/fe-host" }
 # Kiln, the app framework (kiln/, docs/decisions/app-framework.md).
 kiln = { path = "kiln/crates/kiln" }
 kiln-command = { path = "kiln/crates/kiln-command" }

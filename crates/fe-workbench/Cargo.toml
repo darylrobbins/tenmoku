@@ -26,6 +26,7 @@ fe-dap.workspace = true
 fe-editor.workspace = true
 # Files too large to read open in a read-only view.
 fe-fileview.workspace = true
+fe-host.workspace = true
 # The bundled fonts, registered with the text system at init.
 fe-fonts = { path = "../fe-fonts" }
 fe-git.workspace = true

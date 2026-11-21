@@ -1,0 +1,16 @@
+[package]
+name = "fe-host"
+description = "The machine a window's files live on: FsHost and its local impl (docs/decisions/j8wvgszah0-remote-development.md § 5). Must not depend on GPUI or on the fe-* crates that use it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dunce.workspace = true
+log.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

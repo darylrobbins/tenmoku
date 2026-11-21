@@ -54,10 +54,13 @@ pub mod undo_store;
 
 pub use backup::{Backup, BackupId, BackupMeta, BackupStore, ParseBackupIdError};
 pub use buffer::{
-    Buffer, BufferEvent, DiskStamp, EditError, EditKind, HistoryTime, HistoryWrite, Origin,
-    SaveSnapshot, Subscription, TransactionId, UndoError,
+    Buffer, BufferEvent, EditError, EditKind, HistoryTime, HistoryWrite, Origin, SaveSnapshot,
+    Subscription, TransactionId, UndoError,
 };
 pub use edit::Edit;
+/// A file's stamp lives in fe-host, which reads and writes files; buffers
+/// record it.
+pub use fe_host::DiskStamp;
 pub use fe_text::{Bias, DecodedFile, Encoding, FileEncoding, LineEnding, Point, PointUtf16, Text};
 pub use local_history::LocalHistory;
 pub use marker::{MarkerError, MarkerId, MarkerSet};

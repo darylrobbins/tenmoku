@@ -2241,6 +2241,7 @@ name = "fe-buffer"
 version = "0.2.5"
 dependencies = [
  "criterion",
+ "fe-host",
  "fe-text",
  "gpui-pre-sum-tree",
  "imara-diff",
@@ -2358,10 +2359,10 @@ dependencies = [
 name = "fe-editor"
 version = "0.2.5"
 dependencies = [
- "dunce",
  "fe-buffer",
  "fe-display",
  "fe-fileview",
+ "fe-host",
  "fe-text",
  "icu_collator",
  "icu_properties",
@@ -2453,6 +2454,15 @@ dependencies = [
  "cc",
  "tree-sitter",
  "tree-sitter-language",
+]
+
+[[package]]
+name = "fe-host"
+version = "0.2.5"
+dependencies = [
+ "dunce",
+ "log",
+ "tempfile",
 ]
 
 [[package]]
@@ -2768,6 +2778,7 @@ dependencies = [
  "fe-fonts",
  "fe-git",
  "fe-gpui",
+ "fe-host",
  "fe-keymap",
  "fe-lsp",
  "fe-markdown",

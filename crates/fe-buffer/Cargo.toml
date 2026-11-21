@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+fe-host.workspace = true
 fe-text.workspace = true
 imara-diff.workspace = true
 sum-tree.workspace = true

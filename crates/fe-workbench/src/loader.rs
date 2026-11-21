@@ -13,7 +13,7 @@
 
 use std::{
     fs::File,
-    io::{self, Seek as _, SeekFrom},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc},
     thread,
@@ -23,6 +23,7 @@ use std::{
 use fe_buffer::{Buffer, BufferId, DecodedFile, DiskStamp, Encoding, FileEncoding};
 use fe_config::editorconfig::Charset;
 use fe_fileview::{FileView, LineIndex};
+use fe_host::{FsHost as _, LocalFs};
 use kiln_l10n::verbatim;
 
 /// Files this large or larger open read-only in a viewer, unread.
@@ -272,14 +273,15 @@ use test_support::{build_index, threshold};
 /// A `.editorconfig` `charset` decides the encoding of a file whose bytes
 /// don't say otherwise (see `read_in_charset`).
 pub fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
-    let file = match File::open(&path) {
-        Ok(file) => file,
+    // The workbench holds no `HostSet` yet: this machine's files.
+    let (bytes, stamp) = match LocalFs.read(&path) {
+        Ok(read) => read,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
     match fe_config::editorconfig_for(&path).charset {
-        Some(charset) => read_in_charset(file, &path, charset).map(Some),
-        None => Buffer::from_file(file).map(Some),
+        Some(charset) => read_in_charset(&bytes, stamp, &path, charset).map(Some),
+        None => Buffer::from_bytes(&bytes, stamp).map(Some),
     }
 }
 
@@ -306,23 +308,27 @@ pub(crate) fn charset_encoding(charset: Charset) -> FileEncoding {
     FileEncoding { encoding, bom }
 }
 
-/// Reads `file` (at `path`) as [`read`] does under `charset`. The bytes
+/// Reads `bytes`, the file at `path` with `stamp`, as [`read`] does under `charset`. The bytes
 /// clearly disagree with it when they start with another encoding's BOM,
 /// hold BOM-less UTF-16 (by its zero bytes) that isn't the charset's, or
 /// don't decode cleanly in the charset's encoding: then the file reads in
 /// the encoding detected, as [`Buffer::from_file`] reads it, with a
 /// warning. Otherwise it reads in the charset's encoding, and saves in it,
 /// BOM included: a file whose BOM differs from the charset's needs saving.
-fn read_in_charset(file: File, path: &Path, charset: Charset) -> io::Result<Buffer> {
+fn read_in_charset(
+    bytes: &[u8],
+    stamp: DiskStamp,
+    path: &Path,
+    charset: Charset,
+) -> io::Result<Buffer> {
     let wanted = charset_encoding(charset);
-    let detected = FileEncoding::detect(&file)?;
-    (&file).seek(SeekFrom::Start(0))?;
+    let detected = FileEncoding::detect(bytes)?;
     let zero_bytes_utf16 = !detected.bom && is_utf16(detected.encoding);
     let mut clash = (detected.bom || zero_bytes_utf16) && detected.encoding != wanted.encoding;
     let buffer = if clash {
         None
     } else {
-        let buffer = Buffer::from_file_with(file.try_clone()?, wanted)?;
+        let buffer = Buffer::from_bytes_with(bytes, wanted, stamp)?;
         clash = replaced_on_read(&buffer);
         (!clash).then_some(buffer)
     };
@@ -332,8 +338,7 @@ fn read_in_charset(file: File, path: &Path, charset: Charset) -> io::Result<Buff
             Ok(buffer)
         }
         None => {
-            (&file).seek(SeekFrom::Start(0))?;
-            let buffer = Buffer::from_file(file)?;
+            let buffer = Buffer::from_bytes(bytes, stamp)?;
             log::warn!(
                 "{} doesn't hold {} text, as its .editorconfig charset says; read as {}",
                 path.display(),
@@ -370,7 +375,8 @@ fn replaced_on_read(buffer: &Buffer) -> bool {
 /// taken before reading. A missing file is an error: there's nothing to
 /// reopen.
 pub fn read_with(path: &Path, encoding: FileEncoding) -> io::Result<(DecodedFile, DiskStamp)> {
-    Buffer::read_file_with(File::open(path)?, encoding)
+    let (bytes, stamp) = LocalFs.read(path)?;
+    Ok((Buffer::read_bytes_with(&bytes, encoding)?, stamp))
 }
 
 /// The buffer [`read`] read, or for a missing file an empty one that knows

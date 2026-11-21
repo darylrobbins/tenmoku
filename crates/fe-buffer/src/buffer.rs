@@ -1,9 +1,8 @@
 use std::{
     collections::{HashMap, VecDeque},
-    fs::{File, Metadata},
+    fs::File,
     io,
     ops::Range,
-    path::Path,
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
@@ -11,6 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use fe_host::DiskStamp;
 use fe_text::{Bias, DecodedFile, EncodeError, FileEncoding, LineEnding, Text};
 
 use crate::{
@@ -124,43 +124,6 @@ impl Subscription {
     /// Takes every event received since the last call.
     pub fn drain(&self) -> Vec<BufferEvent> {
         std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
-    }
-}
-
-/// What a file on disk looked like when it was read or saved: compared
-/// before a save to tell whether something else wrote it since.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct DiskStamp {
-    pub len: u64,
-    pub modified: SystemTime,
-    #[cfg(unix)]
-    pub dev: u64,
-    #[cfg(unix)]
-    pub ino: u64,
-}
-
-impl DiskStamp {
-    pub fn from_metadata(metadata: &Metadata) -> io::Result<Self> {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
-        Ok(Self {
-            len: metadata.len(),
-            modified: metadata.modified()?,
-            #[cfg(unix)]
-            dev: metadata.dev(),
-            #[cfg(unix)]
-            ino: metadata.ino(),
-        })
-    }
-
-    /// The stamp of the file at `path`, following symlinks; `None` when
-    /// there's no file there.
-    pub fn of(path: impl AsRef<Path>) -> io::Result<Option<Self>> {
-        match std::fs::metadata(path) {
-            Ok(metadata) => Self::from_metadata(&metadata).map(Some),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-        }
     }
 }
 
@@ -516,12 +479,35 @@ impl Buffer {
     /// its [`DiskStamp`] from the handle before reading.
     pub fn from_file(file: File) -> io::Result<Self> {
         let (decoded, stamp) = Self::read_file(file)?;
+        Ok(Self::from_decoded(decoded, stamp))
+    }
+
+    /// A buffer of `bytes`, read from a file with `stamp` (by a host's
+    /// `read`), decoded as [`Buffer::from_file`] decodes a file.
+    pub fn from_bytes(bytes: &[u8], stamp: DiskStamp) -> io::Result<Self> {
+        Ok(Self::from_decoded(Self::read_bytes(bytes)?, stamp))
+    }
+
+    /// [`Buffer::from_bytes`], decoded in `encoding` as
+    /// [`Buffer::from_file_with`] decodes a file, and saving back in it.
+    pub fn from_bytes_with(
+        bytes: &[u8],
+        encoding: FileEncoding,
+        stamp: DiskStamp,
+    ) -> io::Result<Self> {
+        Ok(Self::from_decoded(
+            Self::read_bytes_with(bytes, encoding)?,
+            stamp,
+        ))
+    }
+
+    fn from_decoded(decoded: DecodedFile, stamp: DiskStamp) -> Self {
         let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
         buffer.encoding = decoded.encoding;
         buffer.saved_encoding = decoded.encoding;
         buffer.replaced_on_read = decoded.replaced;
         buffer.disk_stamp = Some(Some(stamp));
-        Ok(buffer)
+        buffer
     }
 
     /// Reads `file` as [`Buffer::from_file`] does, but decoded in
@@ -529,12 +515,7 @@ impl Buffer {
     /// [`Text::from_reader_with`]), and saves back in it.
     pub fn from_file_with(file: File, encoding: FileEncoding) -> io::Result<Self> {
         let (decoded, stamp) = Self::read_file_with(file, encoding)?;
-        let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
-        buffer.encoding = decoded.encoding;
-        buffer.saved_encoding = decoded.encoding;
-        buffer.replaced_on_read = decoded.replaced;
-        buffer.disk_stamp = Some(Some(stamp));
-        Ok(buffer)
+        Ok(Self::from_decoded(decoded, stamp))
     }
 
     /// Restores `backup` (see [`BackupStore`](crate::BackupStore)) over
@@ -653,6 +634,18 @@ impl Buffer {
         let reader = io::BufReader::with_capacity(256 * 1024, file);
         let decoded = Text::from_reader_with(reader, encoding)?;
         Ok((decoded, stamp))
+    }
+
+    /// Decodes `bytes`, a file's as a host read them, as
+    /// [`Buffer::read_file`] decodes a file, for [`Buffer::reload`].
+    pub fn read_bytes(bytes: &[u8]) -> io::Result<DecodedFile> {
+        Text::from_reader_detecting(bytes)
+    }
+
+    /// Decodes `bytes` in `encoding`, as [`Buffer::read_file_with`] does a
+    /// file, for [`Buffer::reload`].
+    pub fn read_bytes_with(bytes: &[u8], encoding: FileEncoding) -> io::Result<DecodedFile> {
+        Text::from_reader_with(bytes, encoding)
     }
 
     fn with_text(text: Text, line_ending: LineEnding) -> Self {

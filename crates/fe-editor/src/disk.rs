@@ -10,6 +10,7 @@ use std::{
 };
 
 use fe_buffer::{DecodedFile, DiskStamp, LineEnding, Origin, SaveSnapshot, TransactionId};
+use fe_host::{CommitOptions, LocalFs, PathError, WriteError, WriteExpect};
 use kiln_l10n::tr;
 
 use crate::EditorModel;
@@ -137,7 +138,8 @@ impl SaveJob {
     /// nothing was gets 0666 less the umask. If the path is a symlink, the file it points
     /// to is updated and the link is left in place. On a volume with no
     /// exclusive rename, a new file is instead created in place, still never
-    /// replacing anything.
+    /// replacing anything. The commit is fe-host's ([`LocalFs::commit`]),
+    /// given the job's [`WriteExpect`].
     pub fn run(self) -> Result<Saved, SaveError> {
         self.run_with(|| {}, || {})
     }
@@ -157,89 +159,29 @@ impl SaveJob {
             overwrite,
             new_entry,
         } = self;
-        ensure_regular(&path)?;
-        let found = DiskStamp::of(&path)?;
-        // Nothing, not even a symlink, was at `path`: a non-forced job
-        // commits at `path` itself, so whatever appears there is kept.
-        // A job for a destination that isn't the buffer's own file is
-        // the same, even if a symlink has since appeared.
-        let fresh = !overwrite
-            && (new_entry
-                || matches!(std::fs::symlink_metadata(&path),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound));
-        if !overwrite
-            && found.is_some()
-            && let Some(expected) = expected
-            && found != expected
-        {
-            return Err(SaveError::ChangedOnDisk);
+        // A file deleted since it was read is saved, recreating it.
+        let mut options = CommitOptions::default()
+            .before_commit(before_commit)
+            .before_persist(before_persist)
+            .deleted_is_written();
+        // A destination that isn't the buffer's own file may not even be a
+        // symlink, which `Absent` alone would follow to a missing file, as a
+        // save through a dangling link of the buffer's own does
+        // (docs/decisions/h6ngbbm2jd-fe-host.md).
+        if new_entry {
+            options = options.at_the_path();
         }
-        let target = if fresh { path.clone() } else { resolve(&path)? };
-        let permissions = match std::fs::metadata(&target) {
-            Ok(metadata) => Some(metadata.permissions()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
-        let dir = match target.parent() {
-            Some(dir) if !dir.as_os_str().is_empty() => dir,
-            _ => Path::new("."),
-        };
-        let file_name = target.file_name().unwrap_or_default().to_string_lossy();
-        let prefix = format!(".{file_name}.");
-        let mut builder = tempfile::Builder::new();
-        builder.prefix(&prefix).suffix(".fastedit-save");
-        // Nothing at the target: `open(2)` applies the umask to 0666.
-        #[cfg(unix)]
-        if permissions.is_none() {
-            use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o666));
-        }
-        let temp = builder.tempfile_in(dir)?;
-        if let Some(permissions) = permissions {
-            copy_xattrs(&target, temp.as_file());
-            keep_creation_date(&target, temp.as_file());
-            temp.as_file().set_permissions(permissions)?;
-        }
-        let mut out = io::BufWriter::new(temp);
-        snapshot.write_to(&mut out)?;
-        let temp = out.into_inner().map_err(|error| error.into_error())?;
-        temp.as_file().sync_all()?;
-        // Renaming keeps the file's length, time and inode.
-        let stamp = DiskStamp::from_metadata(&temp.as_file().metadata()?)?;
-        before_commit();
-        // Narrows the window another writer has to the rename itself.
-        ensure_regular(&path)?;
-        let now = resolve(&path)?;
-        ensure_regular(&now)?;
-        // The rename lands on `target`, which a retargeted link no longer
-        // names.
-        ensure_regular(&target)?;
-        if !overwrite && (DiskStamp::of(&path)? != found || (!fresh && now != target)) {
-            return Err(SaveError::ChangedOnDisk);
-        }
-        // Dropping `temp` on any error above deletes it. A target that was
-        // missing is committed with a rename that refuses an existing one,
-        // so a file created since the check isn't replaced.
-        before_persist();
-        let no_clobber = !overwrite && found.is_none();
-        let persisted = if no_clobber {
-            temp.persist_noclobber(&target)
-        } else {
-            temp.persist(&target)
-        };
-        let stamp = match persisted {
-            Ok(_) => stamp,
-            Err(error) if no_clobber && no_exclusive_rename(&error.error) => {
-                // The temp is deleted when `error` drops.
-                create_in_place(&target, &snapshot)?
-            }
-            Err(error) => {
-                return Err(match error.error.kind() {
-                    io::ErrorKind::AlreadyExists if no_clobber => SaveError::ChangedOnDisk,
-                    _ => SaveError::from(error.error),
-                });
-            }
-        };
+        let stamp = LocalFs
+            .commit(
+                &path,
+                write_expect(overwrite, new_entry, expected),
+                &|out| snapshot.write_to(out),
+                options,
+            )
+            .map_err(|error| match error {
+                WriteError::Conflict(_) => SaveError::ChangedOnDisk,
+                WriteError::Io(error) => SaveError::Io(worded(error)),
+            })?;
         Ok(Saved {
             path,
             snapshot,
@@ -248,237 +190,33 @@ impl SaveJob {
     }
 }
 
-#[cfg(target_os = "macos")]
-unsafe extern "C" {
-    fn fcopyfile(
-        from: std::ffi::c_int,
-        to: std::ffi::c_int,
-        state: *mut std::ffi::c_void,
-        flags: u32,
-    ) -> std::ffi::c_int;
-    fn fsetattrlist(
-        fd: std::ffi::c_int,
-        attr_list: *mut AttrList,
-        attr_buf: *mut std::ffi::c_void,
-        attr_buf_size: usize,
-        options: u32,
-    ) -> std::ffi::c_int;
-}
-
-/// `struct attrlist` of `sys/attr.h`.
-#[cfg(target_os = "macos")]
-#[repr(C)]
-struct AttrList {
-    bitmapcount: u16,
-    reserved: u16,
-    commonattr: u32,
-    volattr: u32,
-    dirattr: u32,
-    fileattr: u32,
-    forkattr: u32,
-}
-
-/// `ATTR_BIT_MAP_COUNT` of `sys/attr.h`.
-#[cfg(target_os = "macos")]
-const ATTR_BIT_MAP_COUNT: u16 = 5;
-
-/// `ATTR_CMN_CRTIME` of `sys/attr.h`: the creation date.
-#[cfg(target_os = "macos")]
-const ATTR_CMN_CRTIME: u32 = 0x200;
-
-/// `COPYFILE_XATTR` of `copyfile.h`: extended attributes only.
-#[cfg(target_os = "macos")]
-const COPYFILE_XATTR: u32 = 1 << 2;
-
-/// Copies the extended attributes of the file at `original` onto `new` (macOS).
-/// A failure is logged and the save goes on.
-#[cfg(target_os = "macos")]
-fn copy_xattrs(original: &Path, new: &std::fs::File) {
-    use std::os::fd::AsRawFd;
-    let copied = std::fs::File::open(original).and_then(|from| {
-        // SAFETY: both descriptors are open for the call; no state is passed.
-        match unsafe {
-            fcopyfile(
-                from.as_raw_fd(),
-                new.as_raw_fd(),
-                std::ptr::null_mut(),
-                COPYFILE_XATTR,
-            )
-        } {
-            0 => Ok(()),
-            _ => Err(io::Error::last_os_error()),
-        }
-    });
-    if let Err(error) = copied {
-        log::warn!(
-            "{}: its extended attributes weren't kept: {error}",
-            original.display()
-        );
+/// What a save expects to replace (D § 7): whatever is there when
+/// overwriting; nothing for a destination that isn't the buffer's own file
+/// or a file it knows was missing; the file it read or saved; else the
+/// file as the save finds it.
+fn write_expect(
+    overwrite: bool,
+    new_entry: bool,
+    expected: Option<Option<DiskStamp>>,
+) -> WriteExpect {
+    match expected {
+        _ if overwrite => WriteExpect::Overwrite,
+        _ if new_entry => WriteExpect::Absent,
+        Some(None) => WriteExpect::Absent,
+        Some(Some(stamp)) => WriteExpect::Matches(stamp),
+        None => WriteExpect::AsFound,
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn copy_xattrs(_: &Path, _: &std::fs::File) {}
-
-/// Gives `new` the creation date of the file at `original` (macOS), as
-/// `FileManager.replaceItemAt` does. A failure is logged and the save goes on.
-#[cfg(target_os = "macos")]
-fn keep_creation_date(original: &Path, new: &std::fs::File) {
-    let set = std::fs::metadata(original).and_then(|metadata| {
-        // The signed fields, so a date before 1970 is kept too.
-        use std::os::macos::fs::MetadataExt;
-        let mut time = TimeSpec {
-            tv_sec: metadata.st_birthtime(),
-            tv_nsec: metadata.st_birthtime_nsec(),
-        };
-        set_creation_date(new, &mut time)
-    });
-    if let Err(error) = set {
-        log::warn!(
-            "{}: its creation date wasn't kept: {error}",
-            original.display()
-        );
-    }
-}
-
-/// Sets the creation date of `file` to `time`.
-#[cfg(target_os = "macos")]
-fn set_creation_date(file: &std::fs::File, time: &mut TimeSpec) -> io::Result<()> {
-    use std::os::fd::AsRawFd;
-    let mut list = AttrList {
-        bitmapcount: ATTR_BIT_MAP_COUNT,
-        reserved: 0,
-        commonattr: ATTR_CMN_CRTIME,
-        volattr: 0,
-        dirattr: 0,
-        fileattr: 0,
-        forkattr: 0,
+/// `error` in the editor's words, where fe-host has none to give.
+fn worded(error: io::Error) -> io::Error {
+    let key = match PathError::of(&error) {
+        Some(PathError::IsADirectory) => tr!("editor-save-is-a-directory"),
+        Some(PathError::NotARegularFile) => tr!("editor-save-not-a-regular-file"),
+        Some(PathError::SymlinkLoop) => tr!("editor-save-symlink-loop"),
+        None => return error,
     };
-    // SAFETY: the descriptor is open, and the buffer holds the one
-    // `timespec` that `commonattr` names.
-    match unsafe {
-        fsetattrlist(
-            file.as_raw_fd(),
-            &mut list,
-            (time as *mut TimeSpec).cast(),
-            std::mem::size_of::<TimeSpec>(),
-            0,
-        )
-    } {
-        0 => Ok(()),
-        _ => Err(io::Error::last_os_error()),
-    }
-}
-
-/// `struct timespec` on 64-bit macOS.
-#[cfg(target_os = "macos")]
-#[repr(C)]
-struct TimeSpec {
-    tv_sec: i64,
-    tv_nsec: i64,
-}
-
-#[cfg(not(target_os = "macos"))]
-fn keep_creation_date(_: &Path, _: &std::fs::File) {}
-
-/// Whether `error` says the file system has no exclusive rename (exFAT, FAT
-/// and some network shares), so a new file can't be committed by one.
-fn no_exclusive_rename(error: &io::Error) -> bool {
-    let Some(code) = error.raw_os_error() else {
-        return false;
-    };
-    #[cfg(target_os = "macos")]
-    return matches!(
-        code,
-        45 // ENOTSUP
-        | 102 // EOPNOTSUPP
-        | 22 // EINVAL
-        | 78 // ENOSYS
-    );
-    #[cfg(target_os = "linux")]
-    return matches!(
-        code,
-        95 // EOPNOTSUPP
-        | 22 // EINVAL
-        | 38 // ENOSYS
-    );
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = code;
-        false
-    }
-}
-
-/// Writes `snapshot` to a file created at `target` that must not exist yet,
-/// for a volume with no exclusive rename. An existing file there, or a
-/// symlink, is never replaced: [`SaveError::ChangedOnDisk`]. A write that
-/// fails removes the file, unless something else has since taken its place.
-fn create_in_place(target: &Path, snapshot: &SaveSnapshot) -> Result<DiskStamp, SaveError> {
-    use std::io::Write;
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(target)
-        .map_err(|error| match error.kind() {
-            io::ErrorKind::AlreadyExists => SaveError::ChangedOnDisk,
-            _ => SaveError::from(error),
-        })?;
-    let written = (|| -> Result<DiskStamp, SaveError> {
-        let mut out = io::BufWriter::new(&file);
-        snapshot.write_to(&mut out)?;
-        out.flush()?;
-        drop(out);
-        file.sync_all()?;
-        Ok(DiskStamp::from_metadata(&file.metadata()?)?)
-    })();
-    if written.is_err() && is_same_file(target, &file) {
-        let _ = std::fs::remove_file(target);
-    }
-    written
-}
-
-/// Whether `path` is still the file `file` has open.
-fn is_same_file(path: &Path, file: &std::fs::File) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        match (std::fs::symlink_metadata(path), file.metadata()) {
-            (Ok(at), Ok(open)) => at.dev() == open.dev() && at.ino() == open.ino(),
-            _ => false,
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, file);
-        false
-    }
-}
-
-/// Fails with the I/O error a write would, if `path` (symlinks followed)
-/// exists and isn't a regular file: [`io::ErrorKind::IsADirectory`] for a
-/// directory, so a save never reports that as a change on disk.
-fn ensure_regular(path: &Path) -> io::Result<()> {
-    let file_type = match std::fs::metadata(path) {
-        Ok(metadata) => metadata.file_type(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    if file_type.is_file() {
-        Ok(())
-    } else if file_type.is_dir() {
-        #[cfg(unix)]
-        return Err(io::Error::from_raw_os_error(21)); // EISDIR
-        #[cfg(not(unix))]
-        return Err(io::Error::new(
-            io::ErrorKind::IsADirectory,
-            tr!("editor-save-is-a-directory").to_string(),
-        ));
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            tr!("editor-save-not-a-regular-file").to_string(),
-        ))
-    }
+    io::Error::new(error.kind(), key.to_string())
 }
 
 /// The file a save to `path` writes, as [`SaveJob::run`] finds it: `path`
@@ -486,37 +224,7 @@ fn ensure_regular(path: &Path) -> io::Result<()> {
 /// last one's target is missing. Two paths that give the same target save
 /// to one file.
 pub fn save_target(path: &Path) -> io::Result<PathBuf> {
-    resolve(path)
-}
-
-/// The file a save to `path` writes: `path` with its symlinks resolved,
-/// even when the last one's target is missing, so a save recreates the
-/// target rather than replacing the link.
-fn resolve(path: &Path) -> io::Result<PathBuf> {
-    match dunce::canonicalize(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        resolved => return resolved,
-    }
-    let mut path = path.to_path_buf();
-    // Linux's limit on links followed in one lookup.
-    for _ in 0..40 {
-        match std::fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                // A relative link is relative to its directory; joining an
-                // absolute one replaces the base.
-                let link = std::fs::read_link(&path)?;
-                path = match path.parent() {
-                    Some(dir) => dir.join(link),
-                    None => link,
-                };
-            }
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => return Ok(path),
-        }
-    }
-    Err(io::Error::other(
-        tr!("editor-save-symlink-loop").to_string(),
-    ))
+    LocalFs::save_target(path).map_err(worded)
 }
 
 /// A buffer's path as the models of it share it: one set through any
@@ -721,26 +429,6 @@ mod tests {
     use fe_buffer::Buffer;
 
     use super::*;
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_creation_date_before_1970_is_kept() {
-        use std::os::macos::fs::MetadataExt;
-        let dir = tempfile::tempdir().unwrap();
-        let (old, new) = (dir.path().join("old"), dir.path().join("new"));
-        let old_file = std::fs::File::create(&old).unwrap();
-        let new_file = std::fs::File::create(&new).unwrap();
-        let mut time = TimeSpec {
-            tv_sec: -100_000_000,
-            tv_nsec: 5,
-        };
-        set_creation_date(&old_file, &mut time).unwrap();
-        assert_eq!(std::fs::metadata(&old).unwrap().st_birthtime(), time.tv_sec);
-        keep_creation_date(&old, &new_file);
-        let metadata = std::fs::metadata(&new).unwrap();
-        assert_eq!(metadata.st_birthtime(), -100_000_000);
-        assert_eq!(metadata.st_birthtime_nsec(), 5);
-    }
 
     fn job(path: &Path, text: &str) -> SaveJob {
         let model = EditorModel::open(path).unwrap();
