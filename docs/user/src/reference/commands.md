@@ -774,6 +774,7 @@ Every command by ID, the name a keymap, a menu or a plugin runs it by, with its 
 | `terminal.previous` | Previous Terminal | <kbd>⇧⌘&#91;</kbd> | <kbd>Ctrl+PageUp</kbd> |
 | `terminal.previous_prompt` | Terminal: Previous Prompt | — | — |
 | `terminal.rename` | Rename Terminal | — | — |
+| `terminal.send_block_to_agent` | Terminal: Send Command to Agent | — | — |
 | `terminal.toggle` | Toggle Terminal | <kbd>⌃&#96;</kbd> | <kbd>Ctrl+&#96;</kbd> |
 | `terminal.vi_mode` | Terminal: Vi Copy Mode | — | — |
 

@@ -175,32 +175,36 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> [Subscription; 3] {
-        let exited =
-            cx.subscribe_in(
-                terminal,
-                window,
-                |workbench, _, event, window, cx| match *event {
-                    // Its last shell exited: its tab closes, another tool
-                    // window open in the bottom panel showing in its place
-                    // if it was shown, else the panel hiding. Focus moves
-                    // to the editor only from what the close hid.
-                    // Moved to the sidebar, the sidebar hides if it shows it.
-                    TerminalPanelEvent::Exited => {
-                        match workbench.place_of(TERMINAL, cx) {
-                            Place::Bottom => workbench.terminal_dock.update(cx, |dock, cx| {
-                                dock.dock_mut().close_tab(TERMINAL);
-                                cx.notify();
-                            }),
-                            Place::Sidebar => _ = workbench.hide_sidebar_tool(TERMINAL, cx),
-                        }
-                        workbench.leave_hidden_panel(window, cx);
+        let exited = cx.subscribe_in(
+            terminal,
+            window,
+            |workbench, _, event: &TerminalPanelEvent, window, cx| match event.clone() {
+                // Its last shell exited: its tab closes, another tool
+                // window open in the bottom panel showing in its place
+                // if it was shown, else the panel hiding. Focus moves
+                // to the editor only from what the close hid.
+                // Moved to the sidebar, the sidebar hides if it shows it.
+                TerminalPanelEvent::Exited => {
+                    match workbench.place_of(TERMINAL, cx) {
+                        Place::Bottom => workbench.terminal_dock.update(cx, |dock, cx| {
+                            dock.dock_mut().close_tab(TERMINAL);
+                            cx.notify();
+                        }),
+                        Place::Sidebar => _ = workbench.hide_sidebar_tool(TERMINAL, cx),
                     }
-                    TerminalPanelEvent::RenameRequested(id) => {
-                        workbench.ask_terminal_name(Some(id), window, cx)
-                    }
-                    TerminalPanelEvent::ShowRequested => workbench.show_terminal_dock(window, cx),
-                },
-            );
+                    workbench.leave_hidden_panel(window, cx);
+                }
+                TerminalPanelEvent::RenameRequested(id) => {
+                    workbench.ask_terminal_name(Some(id), window, cx)
+                }
+                TerminalPanelEvent::ShowRequested => workbench.show_terminal_dock(window, cx),
+                TerminalPanelEvent::SendBlockRequested {
+                    command,
+                    output,
+                    code,
+                } => workbench.ask_about_block(&command, &output, code, window, cx),
+            },
+        );
         // A tool window dropped on it, from the sidebar's rail, moves.
         let hid = cx.subscribe_in(
             dock,
@@ -1362,6 +1366,11 @@ fn terminal_dock_sizes(dock: &DockState, cx: &App) -> Value {
     if let Some(shown) = dock.rail_highlighted().and_then(restorable) {
         kept["shown"] = Value::from(shown.0);
     }
+    // A hidden dock stays hidden, whatever its groups hold: said only of
+    // a split one, so an unsplit dock saves as it always did.
+    if !dock.is_visible() && kept.get("groups").is_some() {
+        kept["hidden"] = Value::from(true);
+    }
     kept
 }
 
@@ -1369,22 +1378,26 @@ fn terminal_dock_sizes(dock: &DockState, cx: &App) -> Value {
 /// `groups` ([`terminal_dock_sizes`]): each group's active tool window
 /// only if it's [`restorable`], so a group the terminal showed comes back
 /// with no tab, in its place; and, if a group not collapsed then shows
-/// one, the dock shown with `shown` (else that first one) active.
-fn restored_groups(groups: &Value, shown: Option<PanelId>) -> Value {
+/// one, the dock shown with `shown` (else that first one) active, unless
+/// it was `hidden`. An entry that isn't an object is skipped.
+fn restored_groups(groups: &Value, shown: Option<PanelId>, hidden: bool) -> Value {
     let mut groups = groups.clone();
     let mut first = None;
     for group in groups.as_array_mut().into_iter().flatten() {
+        let Some(group) = group.as_object_mut() else {
+            continue;
+        };
         let active = (group.get("active").and_then(Value::as_str))
             .and_then(|id| crate::dock::movable(id).and_then(restorable))
             .map(|panel| panel.0);
-        group["active"] = active.map_or(Value::Null, Value::from);
+        group.insert("active".to_owned(), active.map_or(Value::Null, Value::from));
         let collapsed = (group.get("collapsed").and_then(Value::as_bool)).unwrap_or(false);
         if !collapsed && first.is_none() {
             first = active;
         }
     }
     let mut restored = Value::from_iter([("groups", groups)]);
-    if let Some(active) = shown.map(|id| id.0).or(first) {
+    if let Some(active) = shown.map(|id| id.0).or(first).filter(|_| !hidden) {
         restored["visible"] = Value::from(true);
         restored["active"] = Value::from(active);
     }
@@ -1569,17 +1582,18 @@ impl LayoutKeys {
                 restore_terminal_dock_sizes(dock.dock_mut(), saved);
                 cx.notify();
             });
+            let hidden = saved.get("hidden").and_then(Value::as_bool) == Some(true);
             let shown = saved.get("shown").and_then(Value::as_str);
             let here = self.terminal.read(cx).dock().panel_ids();
             let shown = (shown.and_then(crate::dock::movable))
                 .and_then(restorable)
                 .filter(|panel| here.contains(panel))
                 .map(|panel| panel.0);
-            bottom = shown.map(PanelId).or(bottom);
+            bottom = shown.map(PanelId).or(bottom).filter(|_| !hidden);
             // Split into groups, each comes back in its place, showing
             // what it showed if that comes back.
             if let Some(groups) = saved.get("groups") {
-                let restored = restored_groups(groups, shown.map(PanelId));
+                let restored = restored_groups(groups, shown.map(PanelId), hidden);
                 self.terminal.update(cx, |dock, cx| {
                     dock.dock_mut().restore(&restored, cx);
                     cx.notify();
@@ -1737,4 +1751,35 @@ pub(super) fn terminal_dir(launch: &Launch) -> PathBuf {
     let file_dir = || launch.file.as_ref()?.0.parent().map(Path::to_owned);
     let home = || std::env::var_os("HOME").map(PathBuf::from);
     (launch.root.clone().or_else(file_dir).or_else(home)).unwrap_or_else(|| PathBuf::from("/"))
+}
+
+#[cfg(test)]
+mod restore_groups_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn groups() -> Value {
+        json!([{"active": crate::dock::GIT_LOG_BUTTON, "collapsed": false}])
+    }
+
+    #[test]
+    fn a_hidden_dock_stays_hidden() {
+        let shown = restored_groups(&groups(), None, false);
+        assert_eq!(shown["visible"], json!(true));
+        let hidden = restored_groups(&groups(), None, true);
+        assert!(hidden.get("visible").is_none(), "{hidden}");
+        assert_eq!(
+            hidden["groups"][0]["active"],
+            json!(crate::dock::GIT_LOG_BUTTON)
+        );
+    }
+
+    #[test]
+    fn malformed_group_entries_are_skipped() {
+        let bad = json!([false, [1], null, {"active": crate::dock::GIT_LOG_BUTTON}]);
+        let restored = restored_groups(&bad, None, false);
+        assert_eq!(restored["groups"][0], json!(false));
+        assert_eq!(restored["groups"][1], json!([1]));
+        assert_eq!(restored["visible"], json!(true));
+    }
 }

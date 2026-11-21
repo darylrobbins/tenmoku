@@ -61,7 +61,8 @@ use fe_ui::{ActiveTheme as _, Icon, IconButton, IconRef, TAB_HEIGHT, Tab, TabBar
 use gpui::{
     App, AppContext as _, ClickEvent, Context, ElementId, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
-    Render, ScrollHandle, SharedString, Styled as _, Subscription, Window, div, px,
+    Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    Window, div, px,
 };
 use kiln_l10n::{tr, verbatim};
 use kiln_shell::{DockItem, PaneAction, PanelId};
@@ -90,7 +91,7 @@ pub(crate) const KEY_CONTEXT: &str = "terminal_panel";
 const VIM_FLAG: &str = "vim";
 
 /// What the panel tells the workbench.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TerminalPanelEvent {
     /// The last session's shell exited, or it was closed, and the panel
     /// dropped it: none is left.
@@ -101,6 +102,61 @@ pub(crate) enum TerminalPanelEvent {
     /// A finished task's toast asked for its tab, now active: the workbench
     /// shows the dock.
     ShowRequested,
+    /// The user asked to send a failed command's output to the agent
+    /// (`terminal.send_block_to_agent`, or the control on its prompt line):
+    /// the workbench asks the agent about it, unsent.
+    SendBlockRequested {
+        /// The command line, empty if the shell didn't mark it.
+        command: String,
+        /// The last [`SENT_ROWS`] rows of its output.
+        output: String,
+        /// Its exit code.
+        code: i32,
+    },
+}
+
+/// `terminal.send_block_to_agent`'s declaration: `Workbench`'s one command
+/// block is `workbench_commands.rs`'s, so it's declared here and the
+/// panel's element handles its action.
+#[allow(dead_code)]
+struct TerminalCommands;
+
+#[kiln::command(context = "terminal")]
+#[allow(dead_code)]
+impl TerminalCommands {
+    /// Terminal: Send Command to Agent
+    #[command(id = "terminal.send_block_to_agent")]
+    fn send_block_to_agent(&mut self, _: &mut kiln::Cx<Self>) {}
+}
+
+/// The command lines every terminal of the app ran, whichever workbench
+/// window it's in: each panel holds a handle to this one.
+#[derive(Default)]
+struct AppHistory(History);
+
+impl gpui::Global for AppHistory {}
+
+/// How many rows of a failed command's output go to the agent.
+pub(crate) const SENT_ROWS: usize = 200;
+
+/// A finished command block that exited non-zero, as the view shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FailedBlock {
+    pub id: u64,
+    pub code: i32,
+    /// Its prompt row, from the view's top, if that's in view: the control
+    /// is drawn there.
+    pub row: Option<usize>,
+    /// Where its prompt line's text ends: the control follows it.
+    pub end_col: usize,
+    /// The view rows the block covers, first to last.
+    pub rows: std::ops::RangeInclusive<usize>,
+}
+
+/// The last `count` rows of `text`.
+pub(crate) fn last_rows(text: &str, count: usize) -> String {
+    let rows: Vec<&str> = text.lines().collect();
+    rows[rows.len().saturating_sub(count)..].join("\n")
 }
 
 /// A debuggee tab's rerun: the debugger starts a fresh session of the
@@ -386,7 +442,7 @@ impl TerminalPanel {
             ),
             theme: theme.clone(),
             settings: TerminalSettings::default(),
-            history: History::new(),
+            history: cx.default_global::<AppHistory>().0.clone(),
             _palette: cx.observe_global::<fe_gpui::ActivePalette>(Self::follow_palette),
             find: None,
             focus: cx.focus_handle(),
@@ -883,7 +939,9 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Subscription {
-        cx.subscribe_in(view, window, |panel, view, event, window, cx| {
+        // The controls on failed blocks follow the grid as it scrolls.
+        let redraw = cx.observe(view, |_, _, cx| cx.notify());
+        let events = cx.subscribe_in(view, window, |panel, view, event, window, cx| {
             let Some(ix) = panel.sessions.iter().position(|s| &s.view == view) else {
                 return;
             };
@@ -897,7 +955,112 @@ impl TerminalPanel {
                 }
                 TerminalViewEvent::Exited(_) => panel.remove(ix, window, cx),
             }
-        })
+        });
+        Subscription::join(events, redraw)
+    }
+
+    /// The active session's failed blocks in view, and the row the user's
+    /// selection or else cursor is on. None for an agent's terminal or with
+    /// `terminal.command_blocks` off.
+    pub(crate) fn failed_blocks(&self, cx: &App) -> (Option<usize>, Vec<FailedBlock>) {
+        let Some(session) = self.sessions.get(self.active) else {
+            return (None, Vec::new());
+        };
+        if !self.settings.command_blocks || session.lane.is_some() {
+            return (None, Vec::new());
+        }
+        let Some(terminal) = session.view.read(cx).terminal() else {
+            return (None, Vec::new());
+        };
+        let (snapshot, blocks) = terminal.snapshot_with_blocks();
+        let last = snapshot.rows.len().saturating_sub(1);
+        let target =
+            (snapshot.selection.first().map(|span| span.row)).or(Some(snapshot.cursor.row));
+        let failed = blocks
+            .iter()
+            .filter_map(|block| {
+                let code = block.exit_code.filter(|code| *code != 0)?;
+                let end = block.end_row?;
+                // A block whose prompt scrolled off still has rows in view.
+                let first = usize::try_from(block.prompt_row).unwrap_or(0).min(last);
+                let end = usize::try_from(end).unwrap_or(0).clamp(first, last);
+                let row = usize::try_from(block.prompt_row).ok();
+                Some(FailedBlock {
+                    id: block.id,
+                    code,
+                    row,
+                    end_col: row.map_or(0, |row| snapshot.row_text(row).trim_end().chars().count()),
+                    rows: first..=end,
+                })
+            })
+            .collect();
+        (target, failed)
+    }
+
+    /// Asks the workbench to send block `id`'s command and last rows of
+    /// output, which exited `code`, to the agent.
+    fn send_block(&mut self, id: u64, code: i32, cx: &mut Context<Self>) {
+        let Some(view) = self.view() else { return };
+        let Some(terminal) = view.read(cx).terminal() else {
+            return;
+        };
+        let command = terminal.command_text(id).unwrap_or_default();
+        let output = last_rows(&terminal.command_output(id).unwrap_or_default(), SENT_ROWS);
+        cx.emit(TerminalPanelEvent::SendBlockRequested {
+            command,
+            output,
+            code,
+        });
+    }
+
+    /// `terminal.send_block_to_agent`: sends the failed block under the
+    /// selection or cursor, else the last one in view. Nothing without one.
+    pub(crate) fn send_current_block(&mut self, cx: &mut Context<Self>) {
+        let (target, failed) = self.failed_blocks(cx);
+        let chosen = target
+            .and_then(|row| failed.iter().find(|block| block.rows.contains(&row)))
+            .or(failed.last());
+        if let Some(block) = chosen.cloned() {
+            self.send_block(block.id, block.code, cx);
+        }
+    }
+
+    /// The *Send to an agent* controls at the end of the failed blocks'
+    /// prompt lines.
+    fn block_controls(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let Some(view) = self.view() else {
+            return Vec::new();
+        };
+        let cell = fe_terminal_view::cell_size(view.read(cx).style(), window);
+        let color = cx.theme().colors.text.muted;
+        let (_, failed) = self.failed_blocks(cx);
+        failed
+            .into_iter()
+            .filter_map(|block| {
+                let row = block.row?;
+                let (id, code) = (block.id, block.code);
+                let label = tr!("workbench-terminal-send-block");
+                div()
+                    .id(("terminal-send-block", id as usize))
+                    .debug_selector(move || format!("{}{id}", verbatim!("terminal-send-block-")))
+                    .absolute()
+                    .top(cell.height * row as f32)
+                    .left(cell.width * (block.end_col + 1) as f32)
+                    .h(cell.height)
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .text_xs()
+                    .text_color(color)
+                    .cursor_pointer()
+                    .child(label)
+                    .on_click(cx.listener(move |panel, _: &ClickEvent, _, cx| {
+                        panel.send_block(id, code, cx)
+                    }))
+                    .into_any_element()
+                    .into()
+            })
+            .collect()
     }
 
     /// Makes session `ix`, just started, active.
@@ -1734,6 +1897,7 @@ impl Render for TerminalPanel {
         } else {
             session
         };
+        let controls = self.block_controls(window, cx);
         let unstarted = self.unstarted_tasks(cx);
         let ui = fe_ui::ui_theme(cx);
         let find = (self.find.as_ref()).and_then(|find| find.render(view.as_ref(), &ui, cx));
@@ -1745,6 +1909,9 @@ impl Render for TerminalPanel {
         div()
             .track_focus(&self.focus)
             .key_context(context)
+            .on_action(
+                cx.listener(|panel, _: &SendBlockToAgent, _, cx| panel.send_current_block(cx)),
+            )
             .size_full()
             .flex()
             .flex_col()
@@ -1760,8 +1927,44 @@ impl Render for TerminalPanel {
                     .w_full()
                     .relative()
                     .children(unstarted)
-                    .children(session),
+                    .children(session)
+                    .children(controls),
             )
+    }
+}
+
+impl crate::Workbench {
+    /// Shows the chat with a failed terminal command's line and output
+    /// attached and the exit code in the prompt, unsent.
+    pub(crate) fn ask_about_block(
+        &mut self,
+        command: &str,
+        output: &str,
+        code: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = if command.is_empty() {
+            tr!("workbench-terminal-send-no-command").to_string()
+        } else {
+            command.lines().next().unwrap_or_default().to_owned()
+        };
+        let text = [verbatim!("$ "), command, verbatim!("\n"), output].concat();
+        self.ask_agent(
+            crate::chat_panel::agent_actions::AgentAsk {
+                prompt: tr!(
+                    "workbench-terminal-send-prompt",
+                    command = label.clone(),
+                    code = code
+                )
+                .to_string(),
+                context: Vec::new(),
+                output: vec![crate::chat_panel::agent_actions::text_item(&label, &text)],
+                send: false,
+            },
+            window,
+            cx,
+        );
     }
 }
 
@@ -1856,6 +2059,10 @@ mod terminal_panel_tests;
 #[cfg(test)]
 #[path = "tests/terminal_blocks.rs"]
 mod terminal_blocks_tests;
+
+#[cfg(test)]
+#[path = "tests/terminal_send_to_agent.rs"]
+mod terminal_send_to_agent_tests;
 
 #[cfg(test)]
 #[path = "tests/terminal_suggestion.rs"]

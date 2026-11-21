@@ -460,6 +460,11 @@ const MOVED: &[(&str, &str, &str)] = &[
         "terminal",
     ),
     ("terminal.next_prompt", "Terminal: Next Prompt", "terminal"),
+    (
+        "terminal.send_block_to_agent",
+        "Terminal: Send Command to Agent",
+        "terminal",
+    ),
     ("terminal.vi_mode", "Terminal: Vi Copy Mode", "terminal"),
     ("git.diff_index", "Git: Compare with Index", "workbench"),
     ("git.diff_head", "Git: Compare with HEAD", "workbench"),

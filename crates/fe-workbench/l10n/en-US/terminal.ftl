@@ -71,3 +71,14 @@ workbench-terminal-rename-status = Enter to rename, Escape to cancel
 workbench-terminal-find-placeholder = Find
 # Beside the query while none of the visible rows match it.
 workbench-terminal-find-no-results = No results
+
+## Sending a failed command to the agent
+
+# The control at the end of a failed command's prompt line.
+workbench-terminal-send-block = Send to an agent
+# The chat's prompt. $command is the command line, $code its exit code.
+workbench-terminal-send-prompt = `{ $command }` exited with code { $code }. What went wrong?
+# The attachment's name when the shell didn't mark the command line.
+workbench-terminal-send-no-command = Terminal command
+# The command's title in the palette.
+command-terminal-send_block_to_agent = Terminal: Send Command to Agent
