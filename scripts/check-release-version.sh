@@ -5,13 +5,28 @@
 # release's tag, so a release tagged otherwise would offer itself as its own update. The notes
 # file is the GitHub release's body, the Sparkle appcast's description and the What's New tab's
 # text (its rules: crates/fe-workbench/src/whats_new.rs).
-# Usage: scripts/check-release-version.sh vX.Y.Z
-#        scripts/check-release-version.sh --notes X.Y.Z   (the notes file only)
+# A tag is vX.Y.Z or vX.Y.Z-preview.N (N a number without a leading zero); nothing else, so
+# v0.3.0-preview, v0.3.0-preview.01 and v0.3.0-rc.1 are refused even if Cargo.toml says so.
+# Usage: scripts/check-release-version.sh vX.Y.Z[-preview.N]
+#        scripts/check-release-version.sh --notes X.Y.Z[-preview.N]   (the notes file only)
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 die() {
 	echo "check-release-version: $*" >&2
 	exit 1
+}
+
+# is_version V: V is X.Y.Z or X.Y.Z-preview.N.
+is_version() {
+	base=${1%%-preview.*}
+	case "$base" in
+	"" | *[!0-9.]* | .* | *. | *..*) return 1 ;;
+	esac
+	[ "$base" != "$1" ] || return 0
+	n=${1#*-preview.}
+	case "$n" in
+	"" | *[!0-9]* | 0?*) return 1 ;;
+	esac
 }
 
 # check_notes X.Y.Z: the file is there and not empty, and no line of it breaks a line-level rule:
@@ -47,15 +62,19 @@ version_of_cargo() {
 
 case "${1-}" in
 --notes)
-	[ $# -eq 2 ] && [ -n "$2" ] || die "usage: check-release-version.sh --notes X.Y.Z"
+	[ $# -eq 2 ] && [ -n "$2" ] || die "usage: check-release-version.sh --notes X.Y.Z[-preview.N]"
 	check_notes "$2"
 	exit 0
 	;;
 esac
 
-[ $# -eq 1 ] || die "usage: check-release-version.sh vX.Y.Z"
+[ $# -eq 1 ] || die "usage: check-release-version.sh vX.Y.Z[-preview.N]"
 version=$(version_of_cargo)
 [ -n "$version" ] || die "no [workspace.package] version in $root/Cargo.toml"
+case "$1" in
+v*) is_version "${1#v}" || die "the tag '$1' isn't vX.Y.Z or vX.Y.Z-preview.N (N a number without a leading zero)" ;;
+*) die "the tag '$1' isn't vX.Y.Z or vX.Y.Z-preview.N" ;;
+esac
 case "$1" in
 "v$version") echo "the tag $1 is Cargo.toml's version" ;;
 *) die "the tag '$1' isn't v$version: set Cargo.toml's version to the release's, commit it and tag that" ;;

@@ -4,14 +4,18 @@ set -eu
 
 usage() {
 	cat <<'EOF'
-Usage: scripts/draft-release-notes.sh [--since TAG] [--out PATH]
+Usage: scripts/draft-release-notes.sh [--since TAG] [--out PATH | --version VERSION]
 
 Prints a skeleton of release-notes/X.Y.Z.md for a person to edit, one bullet per commit
 subject in TAG..HEAD of the repository in the current directory (merges left out), oldest
 first, with the trailing task handles taken off.
 
-  --since TAG   where to start (default: the latest v* tag, by version)
+  --since TAG   where to start (default: the nearest v* tag behind HEAD, a stable release's
+                or a preview's alike)
   --out PATH    write the draft there instead of printing it; refused if PATH exists
+  --version V   write release-notes/V.md in the repository, V being X.Y.Z or X.Y.Z-preview.N
+                (a preview with N a number without a leading zero); refused if it exists.
+                Not with --out. A tag v<V> already on HEAD is not taken as the start
   -h, --help    this text
 
 A subject's task is its "(Mac T<n>)", else its last "(T<n>)". Its type comes from
@@ -42,18 +46,38 @@ need_arg() {
 
 since=""
 out=""
+version=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--since) need_arg "$@"; since=$2; shift 2 ;;
 	--out) need_arg "$@"; out=$2; shift 2 ;;
+	--version) need_arg "$@"; version=$2; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) die "unknown argument: $1 (see --help)" ;;
 	esac
 done
 
 git rev-parse --git-dir >/dev/null 2>&1 || die "not in a git repository"
+if [ -n "$version" ]; then
+	[ -z "$out" ] || die "--version and --out are two ways to say where the draft goes: pass one"
+	# X.Y.Z or X.Y.Z-preview.N, the forms scripts/check-release-version.sh accepts.
+	base=${version%%-preview.*}
+	case "$base" in
+	"" | *[!0-9.]* | .* | *. | *..*) die "--version must be X.Y.Z or X.Y.Z-preview.N, got '$version'" ;;
+	esac
+	if [ "$base" != "$version" ]; then
+		n=${version#*-preview.}
+		case "$n" in
+		"" | *[!0-9]* | 0?*) die "--version must be X.Y.Z or X.Y.Z-preview.N, got '$version'" ;;
+		esac
+	fi
+	top=$(git rev-parse --show-toplevel)
+	out="$top/release-notes/$version.md"
+fi
 if [ -z "$since" ]; then
-	since=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+	# The nearest tag behind HEAD of either kind: v0.3.0-preview.1 sorts after v0.3.0 by version,
+	# so the order of the history is what says which came last.
+	since=$(git describe --tags --abbrev=0 --match 'v*' --exclude "v${version:-}" HEAD 2>/dev/null) || since=""
 	[ -n "$since" ] || die "no v* tag to start from: pass --since"
 fi
 git rev-parse --verify --quiet "$since^{commit}" >/dev/null || die "--since $since is not a commit or tag"
@@ -127,6 +151,7 @@ draft() {
 	done
 }
 if [ -n "$out" ]; then
+	mkdir -p "$(dirname "$out")"
 	draft >"$out"
 	echo "$out"
 else

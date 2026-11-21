@@ -21,7 +21,9 @@ build first with 'cargo build --release -p fastedit'.
   --out DIR         where Tenmoku.app is written (default: target/bundle); an existing
                     Tenmoku.app there is replaced
   --version X.Y.Z   CFBundleShortVersionString and CFBundleVersion (default: the
-                    [workspace.package] version in Cargo.toml)
+                    [workspace.package] version in Cargo.toml); X.Y.Z-preview.N is
+                    allowed: its CFBundleVersion is X.Y.Z.preview.N, which Sparkle
+                    orders below X.Y.Z and by N
   --sparkle         embed Sparkle.framework, fetched by scripts/fetch-sparkle.sh
   --feed-url URL    the update feed, https only (default: TENMOKU_FEED_URL)
   --ed-public-key KEY  the feed's EdDSA public key (default: TENMOKU_ED_PUBLIC_KEY)
@@ -143,8 +145,24 @@ if [ -z "$version" ]; then
 	' "$root/Cargo.toml")
 	[ -n "$version" ] || die "no [workspace.package] version in $root/Cargo.toml"
 fi
+# X.Y.Z, or X.Y.Z-preview.N with N a number without a leading zero. Sparkle's comparator drops
+# everything from a "-" on (0.3.0-preview.1, 0.3.0-preview.2 and 0.3.0 compare equal), so a
+# preview's CFBundleVersion is X.Y.Z.preview.N: the letters make it older than X.Y.Z, and N
+# orders previews numerically. CFBundleShortVersionString keeps the version as given.
+build_version=$version
 case "$version" in
-*[!0-9.]* | .* | *. | *..*) die "version must be dotted numbers, got '$version'" ;;
+*-preview.*)
+	base=${version%%-preview.*}
+	n=${version#*-preview.}
+	case "$base" in
+	"" | *[!0-9.]* | .* | *. | *..*) die "version must be X.Y.Z or X.Y.Z-preview.N, got '$version'" ;;
+	esac
+	case "$n" in
+	"" | *[!0-9]* | 0?*) die "version must be X.Y.Z or X.Y.Z-preview.N, got '$version'" ;;
+	esac
+	build_version=$base.preview.$n
+	;;
+*[!0-9.]* | .* | *. | *..*) die "version must be X.Y.Z or X.Y.Z-preview.N, got '$version'" ;;
 esac
 
 [ -f "$binary" ] || die "binary not found: $binary (this script does not build; run cargo build --release -p fastedit)"
@@ -183,6 +201,9 @@ chmod 755 "$app/Contents/MacOS/tenmoku"
 
 plist="$app/Contents/Info.plist"
 sed "s/@VERSION@/$version/g" "$macos/Info.plist" >"$plist"
+if [ "$build_version" != "$version" ]; then
+	plutil -replace CFBundleVersion -string "$build_version" "$plist" || die "could not set CFBundleVersion"
+fi
 if [ -n "$feed_url" ] && [ -n "$ed_public_key" ]; then
 	# Not through sed above: a URL can hold /, & and other characters special to sed and XML.
 	plutil -replace SUFeedURL -string "$feed_url" "$plist" || die "could not set SUFeedURL"

@@ -57,6 +57,54 @@ expect CFBundleVersion "$version"
 ! grep -q '@VERSION@' "$plist" || fail "@VERSION@ left in Info.plist"
 ok "no @VERSION@ left"
 
+# Preview versions: the short string is shown as given, CFBundleVersion is X.Y.Z.preview.N
+# (Sparkle's comparator drops everything from a "-" on, so the full string orders nothing).
+build_of() { # build_of VERSION: bundles it, prints "short build"
+	rm -rf "$t/pv"
+	"$bundle" --binary "$t/tenmoku" --out "$t/pv" --version "$1" >"$t/pv.log" 2>&1 ||
+		{ cat "$t/pv.log"; fail "bundle-macos.sh --version $1 exited non-zero"; }
+	pp="$t/pv/Tenmoku.app/Contents/Info.plist"
+	echo "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$pp") $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$pp")"
+}
+[ "$(build_of 0.3.0-preview.2)" = "0.3.0-preview.2 0.3.0.preview.2" ] || fail "preview.2 short/build wrong"
+[ "$(build_of 0.3.0)" = "0.3.0 0.3.0" ] || fail "stable short/build wrong"
+for bad in 0.3.0-preview 0.3.0-preview.01 0.3.0-preview.x 0.3.0-rc.1 0.3.0-preview.1.2 -preview.1; do
+	if "$bundle" --binary "$t/tenmoku" --out "$t/pv" --version "$bad" >"$t/pv.log" 2>&1; then
+		fail "--version $bad was accepted"
+	fi
+done
+ok "preview versions: short string kept, CFBundleVersion X.Y.Z.preview.N, malformed refused"
+
+# Sparkle's own comparator orders those build versions: prev stable < preview.1 < preview.2 <
+# preview.10 < stable. Needs clang and a fetched Sparkle.framework (SPARKLE_FRAMEWORK or the
+# one scripts/fetch-sparkle.sh keeps in target/sparkle); skipped without them.
+fw=${SPARKLE_FRAMEWORK:-$(ls -d "$root"/target/sparkle/*/Sparkle.framework 2>/dev/null | head -n 1)}
+if [ -n "$fw" ] && [ -d "$fw" ] && command -v clang >/dev/null 2>&1; then
+	cat >"$t/cmp.m" <<'OBJC'
+#import <Foundation/Foundation.h>
+#import <Sparkle/Sparkle.h>
+int main(int argc, char **argv) {
+	@autoreleasepool {
+		for (int i = 1; i + 1 < argc; i += 2) {
+			long r = (long)[[SUStandardVersionComparator defaultComparator] compareVersion:@(argv[i]) toVersion:@(argv[i + 1])];
+			printf("%ld\n", r);
+		}
+	}
+}
+OBJC
+	clang -fobjc-arc "$t/cmp.m" -F"$(dirname "$fw")" -framework Sparkle -framework Foundation \
+		-Wl,-rpath,"$(dirname "$fw")" -o "$t/cmp" || fail "could not build the Sparkle comparator"
+	b1=$(build_of 0.3.0-preview.1 | cut -d' ' -f2)
+	b2=$(build_of 0.3.0-preview.2 | cut -d' ' -f2)
+	b10=$(build_of 0.3.0-preview.10 | cut -d' ' -f2)
+	bs=$(build_of 0.3.0 | cut -d' ' -f2)
+	got=$("$t/cmp" 0.2.9 "$b1" "$b1" "$b2" "$b2" "$b10" "$b10" "$bs" | tr '\n' ' ')
+	[ "$got" = "-1 -1 -1 -1 " ] || fail "Sparkle orders 0.2.9 < $b1 < $b2 < $b10 < $bs as '$got', expected -1 -1 -1 -1"
+	ok "Sparkle orders 0.2.9 < $b1 < $b2 < $b10 < $bs"
+else
+	ok "Sparkle comparator ordering skipped: no clang or no fetched Sparkle.framework"
+fi
+
 # T1272: document types for folders and text/source/data files, all Alternate and Editor.
 types=$(plutil -extract CFBundleDocumentTypes json -o - "$plist") || fail "Info.plist has no CFBundleDocumentTypes"
 n=$(/usr/libexec/PlistBuddy -c "Print :CFBundleDocumentTypes" "$plist" | grep -c 'LSHandlerRank = Alternate') || true

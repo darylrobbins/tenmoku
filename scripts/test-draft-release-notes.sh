@@ -160,11 +160,44 @@ grep -q 'no rgt' "$t/err.log" || fail "no line about the missing rgt: $(cat "$t/
 diff -u "$t/none.expected" "$t/none.md" || fail "with no rgt, the draft is not all Unsorted (diff above)"
 ok "with no rgt every line is under ## Unsorted, handles still stripped"
 
+# Previews: the previous tag is the nearest behind HEAD whatever its kind. By version sort,
+# v0.12.0-preview.1 comes after v0.12.0, so the order of the history has to decide.
+commit "Work for the first preview (T101)"
+git tag v0.12.0-preview.1
+commit "Work after the preview (T100)"
+git tag v0.12.0
+commit "Work for the next preview (T101)"
+RGT="$t/rgt" "$draft" --version 0.12.1-preview.1 >"$t/pv.log" 2>"$t/err.log" || { cat "$t/err.log"; fail "--version 0.12.1-preview.1 exited non-zero"; }
+[ "$(cat "$t/pv.log")" = "$(pwd -P)/release-notes/0.12.1-preview.1.md" ] || fail "--version did not print its path: $(cat "$t/pv.log")"
+printf '## Fixed\n\n- Work for the next preview\n' >"$t/pv.expected"
+diff -u "$t/pv.expected" "$repo/release-notes/0.12.1-preview.1.md" || fail "the preview's notes cover more than v0.12.0..HEAD (diff above)"
+grep -q 'v0.12.0..HEAD' "$t/err.log" || fail "the range after a stable tag is not v0.12.0..HEAD: $(cat "$t/err.log")"
+ok "--version 0.12.1-preview.1 writes release-notes/0.12.1-preview.1.md from the previous tag, v0.12.0"
+if RGT="$t/rgt" "$draft" --version 0.12.1-preview.1 >/dev/null 2>"$t/err.log"; then
+	fail "--version over an existing notes file was not refused"
+fi
+git tag v0.12.1-preview.1
+commit "Work for the second preview (T100)"
+RGT="$t/rgt" "$draft" --version 0.12.1-preview.2 >/dev/null 2>"$t/err.log" || { cat "$t/err.log"; fail "--version 0.12.1-preview.2 exited non-zero"; }
+grep -q 'v0.12.1-preview.1..HEAD' "$t/err.log" || fail "the range after a preview tag is not v0.12.1-preview.1..HEAD: $(cat "$t/err.log")"
+printf '## New\n\n- Work for the second preview\n' >"$t/pv2.expected"
+diff -u "$t/pv2.expected" "$repo/release-notes/0.12.1-preview.2.md" || fail "the second preview's notes are wrong (diff above)"
+ok "--version 0.12.1-preview.2 starts at the previous preview's tag"
+for bad in 0.12.1-preview 0.12.1-preview.01 0.12.1-rc.1 v0.12.1 -preview.1; do
+	if RGT="$t/rgt" "$draft" --version "$bad" >/dev/null 2>&1; then
+		fail "--version $bad was accepted"
+	fi
+done
+if RGT="$t/rgt" "$draft" --version 0.12.2 --out "$t/x.md" >/dev/null 2>&1; then
+	fail "--version with --out was accepted"
+fi
+ok "--version refuses malformed versions, and --out beside it"
+
 if RGT="$t/rgt" "$draft" --since v9.9.9 >/dev/null 2>"$t/err.log"; then
 	fail "an unknown --since was taken"
 fi
 grep -q 'v9.9.9' "$t/err.log" || fail "an unknown --since: $(cat "$t/err.log")"
-git tag -d v0.9.0 v0.10.0 >/dev/null
+git tag --list | xargs git tag -d >/dev/null
 if RGT="$t/rgt" "$draft" >/dev/null 2>"$t/err.log"; then
 	fail "no v* tag and no --since was taken"
 fi
