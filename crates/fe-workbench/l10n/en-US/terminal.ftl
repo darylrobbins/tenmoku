@@ -18,6 +18,24 @@ workbench-terminal-task-passed = { $label } ✓
 # terminal runs.
 workbench-terminal-lane = lane { $lane } · { $command }
 
+## Command blocks: the label at the right of a command's prompt row
+
+# A command that exited 0 and ran over a second. $duration is how long it
+# ran, as below.
+workbench-terminal-block-passed = ✓ { $duration }
+# A command that exited with another code. $code is the code, $duration how
+# long it ran, as below.
+workbench-terminal-block-failed = exit { $code } · { $duration }
+# The same, when the shell didn't mark when the command started.
+workbench-terminal-block-failed-untimed = exit { $code }
+# How long a command ran, under a minute: $seconds whole seconds and $tenths
+# tenths of one.
+workbench-terminal-duration-seconds = { $seconds }.{ $tenths } s
+# Under an hour: $minutes whole minutes and $seconds whole seconds.
+workbench-terminal-duration-minutes = { $minutes } min { $seconds } s
+# An hour or more: $hours whole hours and $minutes whole minutes.
+workbench-terminal-duration-hours = { $hours } h { $minutes } min
+
 ## The strip's buttons: their accessible names and tooltips
 
 workbench-terminal-new = New Terminal

@@ -90,6 +90,8 @@ mod shortcuts_editor;
 mod start_page;
 #[path = "audit/terminal.rs"]
 mod terminal;
+#[path = "audit/terminal_blocks.rs"]
+mod terminal_blocks;
 #[path = "audit/terminal_session.rs"]
 mod terminal_session;
 #[path = "audit/toast.rs"]
@@ -138,6 +140,7 @@ const SURFACES: &[&Surface] = &[
     &problems_detail::SURFACE,
     &terminal_session::SURFACE,
     &terminal::SURFACE,
+    &terminal_blocks::SURFACE,
     &git_log_card::SURFACE,
     &project_tree_menu::SURFACE,
     &runs::SURFACE,

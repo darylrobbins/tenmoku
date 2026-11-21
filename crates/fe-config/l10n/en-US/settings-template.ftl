@@ -411,6 +411,11 @@ settings-template-terminal-font_fallbacks =
     order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
     Or set font_family to a Nerd Font, such as "JetBrainsMono Nerd Font Mono".
 
+settings-template-terminal-command_blocks =
+    Mark each command the shell marks (OSC 133) with a green or red edge at its
+    left, by its exit code, and its exit code and how long it ran on its prompt
+    row.
+
 settings-template-chat-model =
     The Claude model new chats start with. A
     project file can't set any [chat] key.

@@ -4,13 +4,13 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use fe_terminal::{
-    CommandStatus, GridSize, OutputTap, Terminal, TerminalEvent, TerminalMatch, TerminalOptions,
-    TerminalQuery,
+    CommandBlock, CommandStatus, GridSize, OutputTap, Terminal, TerminalEvent, TerminalMatch,
+    TerminalOptions, TerminalQuery,
 };
 use gpui::{
-    App, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyContext, ParentElement, Pixels, Render, Styled, Subscription, Task, Window,
-    canvas, div, prelude::FluentBuilder as _, px,
+    App, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, Hsla,
+    InteractiveElement, IntoElement, KeyContext, ParentElement, Pixels, Render, SharedString,
+    Styled, Subscription, Task, Window, canvas, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::TerminalStyle;
@@ -36,6 +36,37 @@ pub enum TerminalViewEvent {
     /// marks say ([`Terminal::command_status`]): told as the session's
     /// output is read, whether or not the view is drawn.
     CommandStatus(CommandStatus),
+}
+
+/// How a view marks its session's command blocks (OSC 133;A to D,
+/// [`Terminal::command_blocks`]): an edge along each finished block's rows,
+/// [`TerminalView::BLOCK_EDGE`] wide down the grid's left edge and painted
+/// under the text, and a label at the right of its prompt row. The host gives the colours and the
+/// text, so this crate holds no UI text.
+#[derive(Clone)]
+pub struct CommandBlockLook {
+    /// The edge of a block whose command exited 0.
+    pub passed: Hsla,
+    /// The edge of a block whose command exited with another code.
+    pub failed: Hsla,
+    /// The label's colour.
+    pub label_color: Hsla,
+    /// The label a block's prompt row shows, if any: asked of blocks that
+    /// ended with an exit code.
+    pub label: BlockLabel,
+}
+
+/// What gives a command block's label: [`CommandBlockLook::label`].
+pub type BlockLabel = Rc<dyn Fn(&CommandBlock) -> Option<SharedString>>;
+
+impl std::fmt::Debug for CommandBlockLook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandBlockLook")
+            .field("passed", &self.passed)
+            .field("failed", &self.failed)
+            .field("label_color", &self.label_color)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A terminal session drawn in a window. The session starts on the view's
@@ -94,6 +125,8 @@ pub struct TerminalView {
     /// Whether the view drops everything meant for the pty: typed keys,
     /// pastes, composed text and the reports of focus and the mouse.
     pub(crate) read_only: bool,
+    /// How command blocks are marked: not at all while `None`.
+    pub(crate) blocks: Option<CommandBlockLook>,
     _focus_reports: [Subscription; 2],
     /// Redraws the cursor when the window gains or loses focus.
     _activation: Subscription,
@@ -102,6 +135,9 @@ pub struct TerminalView {
 impl EventEmitter<TerminalViewEvent> for TerminalView {}
 
 impl TerminalView {
+    /// A command block's edge's width.
+    pub const BLOCK_EDGE: Pixels = px(2.);
+
     /// A view that will run `options`' shell, drawn in `style`. Fails when
     /// the working directory isn't one.
     pub fn new(
@@ -149,6 +185,7 @@ impl TerminalView {
             vi: ViKeys::default(),
             vi_prompt_bounds: Rc::default(),
             read_only: false,
+            blocks: None,
             _focus_reports: focus_reports,
             _activation: activation,
         })
@@ -187,6 +224,20 @@ impl TerminalView {
     /// Whether the view drops input meant for the pty.
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// Marks the session's command blocks as `look` says, or, with `None`
+    /// (the default), not at all. Neither moves the grid or changes its size:
+    /// the edges are painted under the first column's text, and a label
+    /// only where its row is blank.
+    pub fn set_command_blocks(&mut self, look: Option<CommandBlockLook>, cx: &mut Context<Self>) {
+        self.blocks = look;
+        cx.notify();
+    }
+
+    /// How command blocks are marked, if they are.
+    pub fn command_blocks(&self) -> Option<&CommandBlockLook> {
+        self.blocks.as_ref()
     }
 
     /// Whether the view has focus in an active window: what decides a filled

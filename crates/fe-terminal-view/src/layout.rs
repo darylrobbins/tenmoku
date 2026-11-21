@@ -1,10 +1,11 @@
-//! Which cells paint what: background ranges, text runs and the cursor, in
-//! grid columns and rows, worked out from a [`Snapshot`] without a window.
-//! The element multiplies them by the cell size.
+//! Which cells paint what: background ranges, text runs, the cursor and
+//! command blocks' edges, in grid columns and rows, worked out from a
+//! [`Snapshot`] without a window. The element multiplies them by the cell
+//! size.
 
 use std::ops::Range;
 
-use fe_terminal::{Cell, CellFlags, Color, CursorShape, Snapshot, indexed_rgb};
+use fe_terminal::{Cell, CellFlags, Color, CommandBlock, CursorShape, Snapshot, indexed_rgb};
 use gpui::{Hsla, Rgba};
 
 use crate::TerminalStyle;
@@ -319,5 +320,67 @@ pub fn cursor(snapshot: &Snapshot, style: &TerminalStyle, focused: bool) -> Curs
             color,
         },
         CursorShape::Hidden => CursorLayout::Hidden,
+    }
+}
+
+/// A finished command block's edge: the grid rows it runs along, its prompt
+/// row to its last, and whether its command failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockEdge {
+    pub rows: Range<usize>,
+    /// Whether it exited with a code other than 0.
+    pub failed: bool,
+}
+
+/// The edges of `blocks` (rows relative to the view's top, as
+/// [`fe_terminal::Terminal::command_blocks`] gives them) on a grid `rows`
+/// tall: one for each block that ended with an exit code, none for one still
+/// running, waiting for its command, or ended without a code.
+pub fn block_edges(blocks: &[CommandBlock], rows: usize) -> Vec<BlockEdge> {
+    blocks
+        .iter()
+        .filter(|block| block.finished.is_some())
+        .filter_map(|block| {
+            let code = block.exit_code?;
+            let last = block.end_row?;
+            let first = usize::try_from(block.prompt_row.max(0)).ok()?;
+            let end = usize::try_from(last.saturating_add(1).max(0))
+                .ok()?
+                .min(rows);
+            (first < end).then_some(BlockEdge {
+                rows: first..end,
+                failed: code != 0,
+            })
+        })
+        .collect()
+}
+
+/// How many of `snapshot`'s columns on `row` are in use: up to and including
+/// the last cell with text, a colour of its own or the cursor. A label drawn
+/// on the row stays right of them.
+pub fn used_cols(snapshot: &Snapshot, row: usize) -> usize {
+    let Some(cells) = snapshot.rows.get(row) else {
+        return 0;
+    };
+    let used = cells
+        .iter()
+        .rposition(|cell| {
+            cell.ch != ' '
+                || cell.extra.is_some()
+                || cell.bg != Color::Background
+                || [
+                    CellFlags::INVERSE,
+                    CellFlags::UNDERLINE,
+                    CellFlags::STRIKEOUT,
+                ]
+                .into_iter()
+                .any(|flag| cell.flags.contains(flag))
+        })
+        .map_or(0, |col| col + 1);
+    let cursor = snapshot.cursor;
+    if cursor.row == row && cursor.shape != CursorShape::Hidden {
+        used.max(cursor.col + 1)
+    } else {
+        used
     }
 }

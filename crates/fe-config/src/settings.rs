@@ -365,6 +365,10 @@ pub struct TerminalSettings {
     /// Fonts to take a character from when the terminal's font lacks it, in
     /// order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
     pub font_fallbacks: Vec<String>,
+    /// Mark each command the shell marks (OSC 133) with an edge at its left,
+    /// green if it exited 0 and red if not, and its exit code and how long
+    /// it ran at the right of its prompt row.
+    pub command_blocks: bool,
 }
 
 impl Default for TerminalSettings {
@@ -376,6 +380,7 @@ impl Default for TerminalSettings {
             font_family: None,
             font_size: None,
             font_fallbacks: Vec::new(),
+            command_blocks: true,
         }
     }
 }

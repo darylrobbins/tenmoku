@@ -1794,6 +1794,11 @@
     "TerminalSettings": {
       "description": "Settings for the terminal panel. A project file may set all but the\nprogram it runs.",
       "properties": {
+        "command_blocks": {
+          "default": true,
+          "description": "Mark each command the shell marks (OSC 133) with an edge at its left,\ngreen if it exited 0 and red if not, and its exit code and how long\nit ran at the right of its prompt row.",
+          "type": "boolean"
+        },
         "font_fallbacks": {
           "default": [],
           "description": "Fonts to take a character from when the terminal's font lacks it, in\norder: \"Symbols Nerd Font Mono\" gives Nerd Font icons with any font.",
@@ -2549,6 +2554,7 @@
     "terminal": {
       "$ref": "#/$defs/TerminalSettings",
       "default": {
+        "command_blocks": true,
         "font_fallbacks": [],
         "scrollback": 10000,
         "shell": "",

@@ -1248,6 +1248,13 @@ Whether the status bar shows at the bottom of the window. View &gt; Toggle Statu
 
 The terminal panel.
 
+### `terminal.command_blocks`
+
+Mark each command the shell marks (OSC 133) with an edge at its left, green if it exited 0 and red if not, and its exit code and how long it ran at the right of its prompt row.
+
+- Type: boolean
+- Default: `true`
+
 ### `terminal.font_fallbacks`
 
 Fonts to take a character from when the terminal's font lacks it, in order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.

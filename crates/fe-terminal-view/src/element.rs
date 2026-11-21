@@ -1,7 +1,10 @@
 //! Paints a [`TerminalView`]'s grid: shapes each [`layout`] run with the
 //! window's text system and paints it, with the backgrounds, selection and
-//! cursor, as quads, and an input method's marked text over the cursor. Takes
-//! text input while the view is focused, and the mouse over it.
+//! cursor, as quads, and an input method's marked text over the cursor. With
+//! command blocks marked ([`TerminalView::set_command_blocks`]), each
+//! finished block's edge runs down the grid's left edge, under the text, and
+//! its label sits at the right of its prompt row. Takes text input while the
+//! view is focused, and the mouse over it.
 
 use std::ops::Range;
 
@@ -15,6 +18,7 @@ use gpui::{
 
 use crate::layout::{self, CursorLayout, Run};
 use crate::mouse::{self, Frame};
+use crate::view::CommandBlockLook;
 use crate::{TerminalStyle, TerminalView};
 
 /// The beam's width and the underline cursor's height.
@@ -133,6 +137,10 @@ pub struct PaintReport {
     /// A block cursor's character, and its underline and strikeout.
     pub cursor_text: Vec<PaintedText>,
     pub cursor_quads: Vec<Bounds<Pixels>>,
+    /// Command blocks' edges, and their colours.
+    pub block_edges: Vec<(Bounds<Pixels>, Hsla)>,
+    /// Command blocks' labels, each on its prompt row.
+    pub block_labels: Vec<PaintedText>,
 }
 
 pub(crate) struct Prepainted {
@@ -148,6 +156,10 @@ pub(crate) struct Prepainted {
     cursor: Option<Cursor>,
     /// Marked text over its background, at the cursor.
     marked: Option<(Bounds<Pixels>, Text)>,
+    /// Command blocks' edges, along the grid's left edge.
+    edges: Vec<(Bounds<Pixels>, Hsla)>,
+    /// Command blocks' labels, at the right of their prompt rows.
+    labels: Vec<Text>,
 }
 
 impl Prepainted {
@@ -203,6 +215,8 @@ impl Prepainted {
             cursor,
             cursor_text,
             cursor_quads,
+            block_edges: self.edges.clone(),
+            block_labels: texts(&self.labels),
         }
     }
 }
@@ -242,6 +256,7 @@ impl Element for TerminalElement {
         cx: &mut App,
     ) -> Prepainted {
         let style = self.view.read(cx).style.clone();
+        let blocks = self.view.read(cx).blocks.clone();
         let cell = cell_size(&style, window);
         let grid = grid_size(bounds.size, cell);
         // A window that's lost focus to another app keeps its focus handle.
@@ -258,11 +273,16 @@ impl Element for TerminalElement {
         let (snapshot, drag_scroll) = self.view.update(cx, |view, cx| {
             view.fit(grid, cx);
             let drag_scroll = view.drag_scroll(&frame);
-            (
-                view.terminal().map(|terminal| terminal.snapshot()),
-                drag_scroll,
-            )
+            // The blocks of the same moment as the grid, so their rows are
+            // its rows.
+            let snapshot = view.terminal().map(|terminal| match blocks {
+                Some(_) => terminal.snapshot_with_blocks(),
+                None => (terminal.snapshot(), Vec::new()),
+            });
+            (snapshot, drag_scroll)
         });
+        let (snapshot, command_blocks) = snapshot.unzip();
+        let command_blocks = command_blocks.unwrap_or_default();
         if let Some(snapshot) = &snapshot {
             frame.modes = snapshot.modes;
             // A read-only view tells its program nothing: the mouse selects
@@ -294,6 +314,8 @@ impl Element for TerminalElement {
             text: Vec::new(),
             cursor: None,
             marked: None,
+            edges: Vec::new(),
+            labels: Vec::new(),
         };
         let Some(snapshot) = snapshot else {
             return prepainted;
@@ -480,6 +502,35 @@ impl Element for TerminalElement {
                 },
             ));
         }
+        if let Some(look) = &blocks {
+            let grid_right = at(0, snapshot.cols).x;
+            for block in layout::block_edges(&command_blocks, snapshot.rows.len()) {
+                let colour = if block.failed {
+                    look.failed
+                } else {
+                    look.passed
+                };
+                let top = at(block.rows.start, 0).y;
+                let height = cell.height * block.rows.len() as f32;
+                prepainted.edges.push((
+                    Bounds::new(
+                        point(bounds.left(), top),
+                        size(TerminalView::BLOCK_EDGE, height),
+                    ),
+                    colour,
+                ));
+            }
+            prepainted.labels = block_labels(
+                look,
+                &command_blocks,
+                &snapshot,
+                grid_right,
+                &at,
+                &font,
+                &style,
+                window,
+            );
+        }
         if record {
             let report = prepainted.report();
             self.view.update(cx, |view, _| view.painted = report);
@@ -501,6 +552,10 @@ impl Element for TerminalElement {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, prepainted.background));
             for &(quad, colour) in &prepainted.quads {
+                window.paint_quad(fill(quad, colour));
+            }
+            // Under the text, so a glyph in the first column stays whole.
+            for &(quad, colour) in &prepainted.edges {
                 window.paint_quad(fill(quad, colour));
             }
             for text in &prepainted.text {
@@ -530,6 +585,9 @@ impl Element for TerminalElement {
                 }
                 None => {}
             }
+            for text in &prepainted.labels {
+                paint_text(text, line_height, window, cx);
+            }
             if let Some((bounds, text)) = &prepainted.marked {
                 window.paint_quad(fill(*bounds, prepainted.background));
                 paint_text(text, line_height, window, cx);
@@ -549,6 +607,52 @@ impl Element for TerminalElement {
             cx,
         );
     }
+}
+
+/// The labels `look` gives the finished blocks whose prompt row is on
+/// screen, each right-aligned to the grid's right edge (`grid_right`) on
+/// that row, in the terminal's font. One that would come within a cell of
+/// the row's text, or the cursor, is dropped: a label never covers what's
+/// typed.
+#[allow(clippy::too_many_arguments)]
+fn block_labels(
+    look: &CommandBlockLook,
+    blocks: &[fe_terminal::CommandBlock],
+    snapshot: &fe_terminal::Snapshot,
+    grid_right: Pixels,
+    at: &dyn Fn(usize, usize) -> Point<Pixels>,
+    font: &Font,
+    style: &TerminalStyle,
+    window: &mut Window,
+) -> Vec<Text> {
+    blocks
+        .iter()
+        .filter(|block| block.finished.is_some() && block.exit_code.is_some())
+        .filter_map(|block| {
+            let row = usize::try_from(block.prompt_row)
+                .ok()
+                .filter(|&row| row < snapshot.rows.len())?;
+            let text = (look.label)(block).filter(|text| !text.is_empty())?;
+            let run = TextRun {
+                len: text.len(),
+                font: font.clone(),
+                color: look.label_color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let line = window
+                .text_system()
+                .shape_line(text, style.font_size, &[run], None);
+            let left = grid_right - line.width;
+            // A blank cell between the row's text and the label.
+            let free = at(row, layout::used_cols(snapshot, row) + 1).x;
+            (left >= free).then(|| Text {
+                origin: point(left, at(row, 0).y),
+                line,
+            })
+        })
+        .collect()
 }
 
 /// `query`'s matches on screen; none when it doesn't compile.

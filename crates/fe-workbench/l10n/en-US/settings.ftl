@@ -179,6 +179,7 @@ workbench-settings-label-remote-dev_server = Dev Server
 workbench-settings-label-remote-ports = Ports
 workbench-settings-label-remote-reconnect_grace = Reconnect Grace
 workbench-settings-label-status_bar-visible = Visible
+workbench-settings-label-terminal-command_blocks = Command Blocks
 workbench-settings-label-terminal-font_fallbacks = Font Fallbacks
 workbench-settings-label-terminal-font_family = Font Family
 workbench-settings-label-terminal-font_size = Font Size

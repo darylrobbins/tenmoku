@@ -20,6 +20,12 @@
 //! sessions, which hangs their shells up. `terminal.find` opens a find row
 //! above the active one ([`terminal_find`]).
 //!
+//! Each command a session's shell marks (OSC 133) is a block: unless
+//! `terminal.command_blocks` is off, or the session is a lane's (an agent's
+//! terminal), it has an edge in celadon (exit 0) or shinsha (any other code)
+//! down the grid's left edge, under the text, and its exit code and duration
+//! at the right of its prompt row ([`block_label`]). Neither moves the grid.
+//!
 //! A project task runs in a tab of its own ([`TerminalPanel::add_task`]),
 //! named for it. Unlike a shell's, its
 //! session stays when it exits, with its output: its name gains a check mark
@@ -40,6 +46,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     rc::Rc,
+    time::Duration,
 };
 
 use fe_command::{CommandId, Source, Value};
@@ -47,7 +54,8 @@ use fe_config::TerminalSettings;
 use fe_editor::lane::LaneId;
 use fe_gpui::EditorTheme;
 use fe_terminal_view::{
-    CommandStatus, TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent,
+    CommandBlock, CommandBlockLook, CommandStatus, TerminalOptions, TerminalStyle, TerminalView,
+    TerminalViewEvent,
 };
 use fe_ui::{ActiveTheme as _, Icon, IconButton, IconRef, TAB_HEIGHT, Tab, TabBar, Tooltip};
 use gpui::{
@@ -145,6 +153,55 @@ struct Session {
 /// The theme token of the agent's colour: silver-blue, only ever an agent's
 /// signal, never the accent.
 const AGENT_TOKEN: &str = "agent.base";
+
+/// The label at the right of a finished command block's prompt row: `exit 1
+/// · 2.3 s` for a command that failed; `✓ 2.3 s` for one that passed, only
+/// once it ran over a second; none for a block with no exit code.
+pub(crate) fn block_label(block: &CommandBlock) -> Option<SharedString> {
+    let code = block.exit_code?;
+    let duration = block.duration();
+    if code == 0 {
+        let duration = duration.filter(|duration| *duration > Duration::from_secs(1))?;
+        return Some(tr!(
+            "workbench-terminal-block-passed",
+            duration = duration_text(duration)
+        ));
+    }
+    Some(match duration {
+        Some(duration) => tr!(
+            "workbench-terminal-block-failed",
+            code = code,
+            duration = duration_text(duration)
+        ),
+        None => tr!("workbench-terminal-block-failed-untimed", code = code),
+    })
+}
+
+/// How long a command ran: seconds to a tenth under a minute, then minutes
+/// and seconds, then hours and minutes.
+pub(crate) fn duration_text(duration: Duration) -> SharedString {
+    let tenths = duration.as_millis() / 100;
+    let secs = duration.as_secs();
+    if secs < 60 {
+        tr!(
+            "workbench-terminal-duration-seconds",
+            seconds = (tenths / 10) as u64,
+            tenths = (tenths % 10) as u64
+        )
+    } else if secs < 3600 {
+        tr!(
+            "workbench-terminal-duration-minutes",
+            minutes = secs / 60,
+            seconds = secs % 60
+        )
+    } else {
+        tr!(
+            "workbench-terminal-duration-hours",
+            hours = secs / 3600,
+            minutes = secs % 3600 / 60
+        )
+    }
+}
 
 impl Session {
     /// What its tab shows before its label: a task's run, or its shell's
@@ -397,6 +454,37 @@ impl TerminalPanel {
             session
                 .view
                 .update(cx, |view, cx| view.set_style(style, cx));
+        }
+    }
+
+    /// Marks the command blocks of each session but a lane's (an agent's
+    /// terminal, not coloured here) as `terminal.command_blocks` says, in the
+    /// theme's celadon and shinsha.
+    /// Done as the panel draws, so a new session, a theme or a settings
+    /// change shows in the frame that lays it out.
+    fn sync_blocks(&self, cx: &mut Context<Self>) {
+        let colors = &cx.theme().colors;
+        let look = (
+            colors.status.success,
+            colors.status.error,
+            colors.text.muted,
+        );
+        let on = self.settings.command_blocks;
+        for session in &self.sessions {
+            let wanted = (on && session.lane.is_none()).then_some(look);
+            session.view.update(cx, |view, cx| {
+                let shown = (view.command_blocks())
+                    .map(|look| (look.passed, look.failed, look.label_color));
+                if shown != wanted {
+                    let look = wanted.map(|(passed, failed, label_color)| CommandBlockLook {
+                        passed,
+                        failed,
+                        label_color,
+                        label: Rc::new(block_label),
+                    });
+                    view.set_command_blocks(look, cx);
+                }
+            });
         }
     }
 
@@ -1604,6 +1692,7 @@ impl Render for TerminalPanel {
         // shell exited: start one.
         let focused = self.focus.is_focused(window);
         self.start(window, cx);
+        self.sync_blocks(cx);
         if focused {
             self.focus_active(window, cx);
         }
@@ -1739,6 +1828,10 @@ mod terminal_font_fallbacks_tests;
 #[cfg(test)]
 #[path = "terminal_panel_tests.rs"]
 mod terminal_panel_tests;
+
+#[cfg(test)]
+#[path = "tests/terminal_blocks.rs"]
+mod terminal_blocks_tests;
 
 /// `terminal.rename`'s picker: the name as typed, and one row that applies
 /// it, or clears the custom name when it's empty.
