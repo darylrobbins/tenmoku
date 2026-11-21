@@ -388,7 +388,16 @@ impl Workbench {
     pub(crate) fn harpoon_toggle_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let modals = self.shell().read(cx).modals().clone();
         if modals.read(cx).modal() == Some(HARPOON_LIST) {
-            modals.update(cx, |layer, cx| layer.dismiss_modal(window, cx));
+            // As Escape does, through the picker: the layer's own
+            // `dismiss_modal` hides first, and then nothing gets focus back.
+            let picker = modals
+                .read(cx)
+                .modal_view()
+                .and_then(|view| view.clone().downcast::<Picker<HarpoonPicker>>().ok());
+            match picker {
+                Some(picker) => picker.update(cx, |picker, cx| picker.dismiss(window, cx)),
+                None => modals.update(cx, |layer, cx| layer.dismiss_modal(window, cx)),
+            }
             return;
         }
         let Some((root, file)) = self.harpoon_place(cx) else {

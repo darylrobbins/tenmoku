@@ -170,28 +170,19 @@ fn a_dismissed_list_picker_does_not_open_its_row(cx: &mut TestAppContext) {
     };
     for how in ["escape", "toggle"] {
         // The control: dismissed with no row confirmed, so nothing pending.
-        // Escape gives focus back to where it was; toggling off leaves it
-        // wherever the modal layer does, with or without an open.
+        // Either dismissal gives focus back to where it was before the picker.
         run("workbench.harpoon_toggle_list", cx);
         dismiss(how, cx);
         draw(cx);
-        let expected = focus(cx);
-        if how == "escape" {
-            assert_eq!(expected, before, "escape returns focus");
-        }
+        assert_eq!(focus(cx), before, "{how}: the control returns focus");
 
-        let pre_picker = focus(cx);
         run("workbench.harpoon_toggle_list", cx);
         // Not simulate_keystrokes, which parks: the read must stay pending.
         press("enter", cx);
         dismiss(how, cx);
         draw(cx);
         assert_eq!(tabs(&workbench, cx), (vec![], None), "{how}");
-        assert_eq!(
-            focus(cx),
-            pre_picker,
-            "{how}: focus is the pre-picker focus"
-        );
+        assert_eq!(focus(cx), before, "{how}: focus is the pre-picker focus");
         // Back to the start for the next case.
         cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
         draw(cx);
